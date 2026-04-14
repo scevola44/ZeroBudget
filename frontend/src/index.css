@@ -1,0 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Make EUR-formatted numbers visually tight/tabular. */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

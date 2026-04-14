@@ -1,0 +1,153 @@
+from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import select
+
+from app.deps import CurrentUser, DbSession
+from app.models import Category, CategoryGroup, MonthlyAssignment, Transaction
+from app.schemas.budget import (
+    AssignRequest,
+    BudgetCategoryRow,
+    BudgetGroupRow,
+    BudgetMonthResponse,
+)
+from app.services.budget_calc import (
+    AssignmentRow,
+    TxnRow,
+    compute_category_balances,
+    compute_ready_to_assign,
+    format_month,
+    month_start,
+    parse_month,
+)
+
+router = APIRouter(prefix="/api/budget", tags=["budget"])
+
+
+def _parse_month_or_400(value: str):
+    try:
+        return month_start(parse_month(value))
+    except (ValueError, IndexError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Month must be in YYYY-MM format",
+        ) from exc
+
+
+@router.get("/{month}", response_model=BudgetMonthResponse)
+async def get_budget_month(
+    month: str, db: DbSession, current_user: CurrentUser
+) -> BudgetMonthResponse:
+    target_month = _parse_month_or_400(month)
+
+    groups = (
+        (
+            await db.execute(
+                select(CategoryGroup)
+                .where(CategoryGroup.user_id == current_user.id)
+                .order_by(CategoryGroup.sort_order, CategoryGroup.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    categories = (
+        (
+            await db.execute(
+                select(Category)
+                .where(Category.user_id == current_user.id)
+                .order_by(Category.sort_order, Category.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    txn_rows_db = (
+        (
+            await db.execute(
+                select(Transaction).where(Transaction.user_id == current_user.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assignment_rows_db = (
+        (
+            await db.execute(
+                select(MonthlyAssignment).where(
+                    MonthlyAssignment.user_id == current_user.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    txns = [
+        TxnRow(category_id=t.category_id, date=t.date, amount_cents=t.amount_cents)
+        for t in txn_rows_db
+    ]
+    assignments = [
+        AssignmentRow(
+            category_id=a.category_id, month=a.month, amount_cents=a.amount_cents
+        )
+        for a in assignment_rows_db
+    ]
+
+    ready = compute_ready_to_assign(txns, assignments, target_month)
+    cat_ids = [c.id for c in categories]
+    balances = compute_category_balances(cat_ids, txns, assignments, target_month)
+
+    cats_by_group: dict[int, list[BudgetCategoryRow]] = {}
+    for c in categories:
+        b = balances[c.id]
+        cats_by_group.setdefault(c.group_id, []).append(
+            BudgetCategoryRow(
+                id=c.id,
+                name=c.name,
+                assigned_cents=b.assigned_cents,
+                activity_cents=b.activity_cents,
+                balance_cents=b.balance_cents,
+            )
+        )
+
+    return BudgetMonthResponse(
+        month=format_month(target_month),
+        ready_to_assign_cents=ready,
+        groups=[
+            BudgetGroupRow(id=g.id, name=g.name, categories=cats_by_group.get(g.id, []))
+            for g in groups
+        ],
+    )
+
+
+@router.post("/{month}/assign", status_code=status.HTTP_204_NO_CONTENT)
+async def upsert_assignment(
+    month: str,
+    payload: AssignRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> None:
+    target_month = _parse_month_or_400(month)
+
+    category = await db.get(Category, payload.category_id)
+    if category is None or category.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+
+    existing = await db.scalar(
+        select(MonthlyAssignment).where(
+            MonthlyAssignment.user_id == current_user.id,
+            MonthlyAssignment.category_id == payload.category_id,
+            MonthlyAssignment.month == target_month,
+        )
+    )
+    if existing is None:
+        db.add(
+            MonthlyAssignment(
+                user_id=current_user.id,
+                category_id=payload.category_id,
+                month=target_month,
+                amount_cents=payload.amount_cents,
+            )
+        )
+    else:
+        existing.amount_cents = payload.amount_cents
+    await db.commit()

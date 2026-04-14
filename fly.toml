@@ -1,0 +1,36 @@
+# Fly.io config for ZeroBudget.
+#
+# First-time setup:
+#   fly launch --no-deploy          # uses this file, prompts you for a name + region
+#   fly pg create                   # create a small Fly Postgres cluster
+#   fly pg attach <postgres-name>   # sets DATABASE_URL (as sqlalchemy-friendly URL)
+#   fly secrets set JWT_SECRET="$(openssl rand -hex 32)"
+#   fly deploy
+#
+# DATABASE_URL from ``fly pg attach`` starts with ``postgres://`` but the app
+# expects ``postgresql+asyncpg://``. Either set it manually via ``fly secrets
+# set DATABASE_URL=postgresql+asyncpg://...`` or add a small env-rewriter to
+# the entrypoint later.
+
+app = "zerobudget"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8000"
+  CORS_ORIGINS = ""
+  # STATIC_DIR is set in the Dockerfile
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256
