@@ -1,0 +1,2 @@
+# Secrets file for the prod compose stack. Never commit.
+.env
