@@ -15,17 +15,22 @@ export function formatCents(cents: number): string {
 
 /**
  * Parse a user-entered amount string into signed integer cents.
- * Accepts: "1234.56", "1,234.56", "-42", "42,50" (comma decimal), "€123.45".
- * Returns null if the value can't be interpreted as a number.
+ *
+ * European-first: when both '.' and ',' appear, '.' is treated as the
+ * thousands separator and ',' as the decimal (so "1.234,56" → 123456 cents).
+ * A bare comma is also treated as a decimal separator. Currency symbols and
+ * whitespace are stripped. Returns null for empty, non-numeric, or
+ * symbol-only input.
  */
 export function parseAmountToCents(raw: string): number | null {
   if (!raw) return null;
-  // Strip currency symbols and whitespace, normalize comma decimals.
   let s = raw.replace(/[€$\s]/g, "");
-  // If the string has both '.' and ',' assume '.' is thousand sep (European).
+  // Reject input that has no digits at all — guards against "€€€" and the
+  // like, where Number("") silently returns 0.
+  if (!/\d/.test(s)) return null;
   if (s.includes(",") && s.includes(".")) {
     s = s.replace(/\./g, "").replace(",", ".");
-  } else if (s.includes(",") && !s.includes(".")) {
+  } else if (s.includes(",")) {
     s = s.replace(",", ".");
   }
   const num = Number(s);

@@ -48,3 +48,40 @@ async def client() -> AsyncIterator[AsyncClient]:
 
     app.dependency_overrides.clear()
     await engine.dispose()
+
+
+async def register_user(
+    client: AsyncClient, email: str = "user@example.com", password: str = "supersecret"
+) -> dict[str, str]:
+    """Register a user and return an Authorization header dict."""
+    r = await client.post(
+        "/api/auth/register", json={"email": email, "password": password}
+    )
+    assert r.status_code == 201, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+async def create_account(client: AsyncClient, headers: dict[str, str], name: str = "Checking") -> int:
+    r = await client.post(
+        "/api/accounts", json={"name": name, "type": "checking"}, headers=headers
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+async def create_group(client: AsyncClient, headers: dict[str, str], name: str = "Bills") -> int:
+    r = await client.post("/api/category-groups", json={"name": name}, headers=headers)
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+async def create_category(
+    client: AsyncClient, headers: dict[str, str], group_id: int, name: str = "Rent"
+) -> int:
+    r = await client.post(
+        "/api/categories",
+        json={"group_id": group_id, "name": name},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
