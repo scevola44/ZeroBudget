@@ -129,8 +129,8 @@ async def test_multi_group_budget_response_shape(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_ready_to_assign_respects_month_boundary(client: AsyncClient):
-    """Assigning in May shouldn't reduce Ready-to-Assign for April."""
+async def test_future_assignment_reduces_past_month_ready_to_assign(client: AsyncClient):
+    """Assigning in May must also reduce Ready-to-Assign for April (global pool)."""
     headers = await register_user(client)
     account = await create_account(client, headers)
     group = await create_group(client, headers)
@@ -141,5 +141,5 @@ async def test_ready_to_assign_respects_month_boundary(client: AsyncClient):
 
     april = (await client.get("/api/budget/2026-04", headers=headers)).json()
     may = (await client.get("/api/budget/2026-05", headers=headers)).json()
-    assert april["ready_to_assign_cents"] == 100_000
+    assert april["ready_to_assign_cents"] == 60_000
     assert may["ready_to_assign_cents"] == 60_000
