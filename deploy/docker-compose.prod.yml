@@ -1,0 +1,68 @@
+# Production stack for the self-hosted Proxmox LXC.
+#
+# Pull-based deploy: GitHub Actions pushes a new image to GHCR on every merge
+# to `develop`, and Watchtower (running here) polls GHCR, detects the new
+# digest for the `:develop` tag, and restarts the `app` container in place.
+# Nothing inbound from the internet is required.
+#
+# Usage on the LXC:
+#   cp .env.example .env          # then fill in real secrets
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zerobudget
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: zerobudget
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zerobudget"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    image: ghcr.io/scevola44/zerobudget:develop
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://zerobudget:${POSTGRES_PASSWORD}@db:5432/zerobudget
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+    ports:
+      # Bind to the LXC's LAN interface only — still no inbound from the
+      # internet. Put a reverse proxy in front of this if public access is
+      # ever needed (out of scope for this file).
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health', timeout=2).status == 200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    labels:
+      # Opt this container in to Watchtower polling. Combined with
+      # `--label-enable` below, Postgres is never touched by Watchtower.
+      com.centurylinklabs.watchtower.enable: "true"
+
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # GHCR pull credentials — written by `docker login ghcr.io` on the host.
+      # See deploy/README.md for the bootstrap steps.
+      - /root/.docker/config.json:/config.json:ro
+    command:
+      - --label-enable
+      - --cleanup
+      - --interval=300
+
+volumes:
+  pgdata:

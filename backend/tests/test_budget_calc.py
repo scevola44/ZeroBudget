@@ -47,18 +47,18 @@ def test_ready_to_assign_shrinks_as_money_is_assigned():
     assert compute_ready_to_assign(txns, assigns, APRIL) == 40_000
 
 
-def test_ready_to_assign_ignores_future_inflow_and_assignments():
+def test_ready_to_assign_reflects_global_assignment_state():
     txns = [
         TxnRow(category_id=None, date=date(2026, 4, 3), amount_cents=100_000),
-        TxnRow(category_id=None, date=date(2026, 5, 3), amount_cents=50_000),  # future
+        TxnRow(category_id=None, date=date(2026, 5, 3), amount_cents=50_000),  # future inflow
     ]
     assigns = [
         AssignmentRow(category_id=1, month=APRIL, amount_cents=30_000),
-        AssignmentRow(category_id=1, month=MAY, amount_cents=20_000),  # future
+        AssignmentRow(category_id=1, month=MAY, amount_cents=20_000),
     ]
-    # For April: only April inflow and April assignment count.
-    assert compute_ready_to_assign(txns, assigns, APRIL) == 70_000
-    # For May: everything through end of May counts.
+    # April sees only its inflows but deducts ALL assignments (global pool).
+    assert compute_ready_to_assign(txns, assigns, APRIL) == 50_000
+    # May sees all inflows through May and also deducts all assignments.
     assert compute_ready_to_assign(txns, assigns, MAY) == 100_000
 
 
