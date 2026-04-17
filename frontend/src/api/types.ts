@@ -10,6 +10,9 @@ export type Account = {
   name: string;
   type: AccountType;
   balance_cents: number;
+  plaid_item_id: number | null;
+  plaid_mask: string | null;
+  institution_name: string | null;
 };
 
 export type Category = {

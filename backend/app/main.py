@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.db import Base, engine
 from app.models import *  # noqa: F401,F403 — register models on Base.metadata
-from app.routers import accounts, auth, budget, categories, transactions
+from app.routers import accounts, auth, budget, categories, plaid, transactions
 
 settings = get_settings()
 
@@ -40,6 +40,7 @@ app.include_router(accounts.router)
 app.include_router(categories.router)
 app.include_router(transactions.router)
 app.include_router(budget.router)
+app.include_router(plaid.router)
 
 
 @app.get("/api/health", tags=["health"])
