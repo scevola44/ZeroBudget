@@ -47,19 +47,29 @@ def test_ready_to_assign_shrinks_as_money_is_assigned():
     assert compute_ready_to_assign(txns, assigns, APRIL) == 40_000
 
 
-def test_ready_to_assign_reflects_global_assignment_state():
+def test_ready_to_assign_scoped_to_requested_month():
     txns = [
         TxnRow(category_id=None, date=date(2026, 4, 3), amount_cents=100_000),
-        TxnRow(category_id=None, date=date(2026, 5, 3), amount_cents=50_000),  # future inflow
+        TxnRow(category_id=None, date=date(2026, 5, 3), amount_cents=50_000),
     ]
     assigns = [
         AssignmentRow(category_id=1, month=APRIL, amount_cents=30_000),
         AssignmentRow(category_id=1, month=MAY, amount_cents=20_000),
     ]
-    # April sees only its inflows but deducts ALL assignments (global pool).
-    assert compute_ready_to_assign(txns, assigns, APRIL) == 50_000
-    # May sees all inflows through May and also deducts all assignments.
+    # April sees its inflows and deducts only through-April assignments.
+    assert compute_ready_to_assign(txns, assigns, APRIL) == 70_000
+    # May sees all inflows through May and deducts all through-May assignments.
     assert compute_ready_to_assign(txns, assigns, MAY) == 100_000
+
+
+def test_past_month_unaffected_by_future_assignments():
+    MARCH = date(2026, 3, 1)
+    txns = [TxnRow(category_id=None, date=date(2026, 4, 3), amount_cents=100_000)]
+    assigns = [
+        AssignmentRow(category_id=1, month=APRIL, amount_cents=50_000),
+        AssignmentRow(category_id=1, month=MAY, amount_cents=50_000),
+    ]
+    assert compute_ready_to_assign(txns, assigns, MARCH) == 0
 
 
 def test_category_balance_for_single_month():

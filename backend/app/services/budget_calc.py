@@ -71,20 +71,29 @@ def compute_ready_to_assign(
 ) -> int:
     """Money on hand that has not yet been assigned to any category.
 
-    Inflows are counted up through the end of ``through_month``; all
-    assignments across every month are deducted so the result always
-    reflects the true global remaining pool.
+    Inflows are scoped to ``through_month`` and earlier. Assignments from
+    future months reduce the pool when they exceed future inflows — the
+    shortfall must be drawn from money already on hand.
     ``through_month`` must be a first-of-month date.
     """
     boundary = next_month_start(through_month)
 
-    unassigned_inflow = sum(
+    inflow_through_month = sum(
         t.amount_cents
         for t in transactions
         if t.category_id is None and t.date < boundary
     )
-    total_assigned = sum(a.amount_cents for a in assignments)
-    return unassigned_inflow - total_assigned
+    assigned_through_month = sum(a.amount_cents for a in assignments if a.month < boundary)
+
+    future_inflow = sum(
+        t.amount_cents
+        for t in transactions
+        if t.category_id is None and t.date >= boundary
+    )
+    future_assigned = sum(a.amount_cents for a in assignments if a.month >= boundary)
+    future_overdraft = max(0, future_assigned - future_inflow)
+
+    return inflow_through_month - assigned_through_month - future_overdraft
 
 
 def compute_category_balances(
