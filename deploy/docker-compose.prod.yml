@@ -35,6 +35,11 @@ services:
       DATABASE_URL: postgresql+asyncpg://zerobudget:${POSTGRES_PASSWORD}@db:5432/zerobudget
       JWT_SECRET: ${JWT_SECRET}
       CORS_ORIGINS: ${CORS_ORIGINS}
+      PLAID_CLIENT_ID: ${PLAID_CLIENT_ID:-}
+      PLAID_SECRET: ${PLAID_SECRET:-}
+      PLAID_ENV: ${PLAID_ENV:-sandbox}
+      PLAID_COUNTRY_CODES: ${PLAID_COUNTRY_CODES:-IE,FR,DE,ES,NL,IT,BE,AT,PT}
+      PLAID_ENCRYPTION_KEY: ${PLAID_ENCRYPTION_KEY:-}
     ports:
       # Bind to the LXC's LAN interface only — still no inbound from the
       # internet. Put a reverse proxy in front of this if public access is
