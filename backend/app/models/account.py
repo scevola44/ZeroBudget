@@ -19,3 +19,14 @@ class Account(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    # Plaid linkage. All NULL for manual accounts; all populated for linked
+    # accounts (with one row in plaid_items per item_id).
+    plaid_item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("plaid_items.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    plaid_account_id: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True
+    )
+    plaid_mask: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    plaid_official_name: Mapped[str | None] = mapped_column(String(255), nullable=True)

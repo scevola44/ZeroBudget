@@ -16,6 +16,8 @@ dependencies = [
     "pyjwt>=2.9",
     "python-multipart>=0.0.9",
     "email-validator>=2.2",
+    "plaid-python>=22.0",
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

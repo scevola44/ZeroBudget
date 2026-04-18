@@ -18,3 +18,7 @@ class AccountResponse(BaseModel):
     name: str
     type: str
     balance_cents: int = 0
+    # Plaid metadata (all None for manual accounts).
+    plaid_item_id: int | None = None
+    plaid_mask: str | None = None
+    institution_name: str | None = None
