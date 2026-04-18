@@ -40,6 +40,7 @@ export function AccountDetailPage() {
   const [amount, setAmount] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [editingCategoryTxnId, setEditingCategoryTxnId] = useState<number | null>(null);
 
   const createTxn = useMutation({
     mutationFn: (body: {
@@ -68,6 +69,20 @@ export function AccountDetailPage() {
       void qc.invalidateQueries({ queryKey: ["transactions", accountId] });
       void qc.invalidateQueries({ queryKey: ["accounts"] });
       void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+  });
+
+  const updateCategory = useMutation({
+    mutationFn: ({ txnId, categoryId: catId }: { txnId: number; categoryId: number | null }) =>
+      api<Transaction>(`/api/transactions/${txnId}`, {
+        method: "PATCH",
+        body: { category_id: catId },
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["transactions", accountId] });
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+      setEditingCategoryTxnId(null);
     },
   });
 
@@ -204,8 +219,34 @@ export function AccountDetailPage() {
                   <tr key={t.id} className="border-t border-slate-100">
                     <td className="px-5 py-2 text-slate-600">{t.date}</td>
                     <td className="px-5 py-2">{t.payee || <span className="text-slate-400">—</span>}</td>
-                    <td className="px-5 py-2 text-slate-600">
-                      {cat ? `${cat.groupName} › ${cat.name}` : <span className="text-slate-400">Unassigned</span>}
+                    <td className="px-5 py-2">
+                      {editingCategoryTxnId === t.id ? (
+                        <select
+                          autoFocus
+                          defaultValue={t.category_id ?? ""}
+                          onChange={(e) => {
+                            const newId = e.target.value === "" ? null : Number(e.target.value);
+                            updateCategory.mutate({ txnId: t.id, categoryId: newId });
+                          }}
+                          onBlur={() => setEditingCategoryTxnId(null)}
+                          onKeyDown={(e) => { if (e.key === "Escape") setEditingCategoryTxnId(null); }}
+                          className="border border-indigo-300 rounded-md px-2 py-0.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value="">— Unassigned —</option>
+                          {flatCategories.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.groupName} › {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <button
+                          className="text-slate-600 hover:bg-slate-100 rounded px-1 py-0.5 text-left w-full"
+                          onClick={() => setEditingCategoryTxnId(t.id)}
+                        >
+                          {cat ? `${cat.groupName} › ${cat.name}` : <span className="text-slate-400">Unassigned</span>}
+                        </button>
+                      )}
                     </td>
                     <td className="px-5 py-2 text-slate-500">{t.memo}</td>
                     <td
