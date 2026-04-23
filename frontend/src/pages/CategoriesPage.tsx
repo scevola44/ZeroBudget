@@ -42,7 +42,7 @@ export function CategoriesPage() {
       <h1 className="text-2xl font-semibold">Categories</h1>
 
       <form
-        className="bg-white border border-slate-200 rounded-2xl p-5 flex gap-3 items-end"
+        className="bg-white border border-slate-200 rounded-2xl p-5 flex flex-col sm:flex-row gap-3 sm:items-end"
         onSubmit={(e) => {
           e.preventDefault();
           if (newGroup.trim()) createGroup.mutate(newGroup.trim());

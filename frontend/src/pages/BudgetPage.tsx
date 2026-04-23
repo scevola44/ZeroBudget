@@ -37,14 +37,14 @@ export function BudgetPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setMonth((m) => shiftMonth(m, -1))}
-            className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+            className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
           >
             ←
           </button>
-          <div className="min-w-[10rem] text-center font-medium">{monthLabel(month)}</div>
+          <div className="min-w-[8rem] text-center font-medium">{monthLabel(month)}</div>
           <button
             onClick={() => setMonth((m) => shiftMonth(m, 1))}
-            className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+            className="px-3 py-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
           >
             →
           </button>
@@ -79,6 +79,7 @@ export function BudgetPage() {
           {group.categories.length === 0 ? (
             <div className="px-5 py-4 text-sm text-slate-500">No categories in this group.</div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-xs uppercase text-slate-500">
                 <tr>
@@ -100,6 +101,7 @@ export function BudgetPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </section>
       ))}
