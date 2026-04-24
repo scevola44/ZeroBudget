@@ -107,12 +107,13 @@ export function AccountsPage() {
           <div className="p-5 text-slate-500">No accounts yet. Add one above or link a bank.</div>
         )}
         {accountsQuery.data && accountsQuery.data.length > 0 && (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-xs uppercase text-slate-500">
               <tr>
                 <th className="text-left px-5 py-2">Name</th>
-                <th className="text-left px-5 py-2">Type</th>
-                <th className="text-left px-5 py-2">Bank</th>
+                <th className="hidden sm:table-cell text-left px-5 py-2">Type</th>
+                <th className="hidden sm:table-cell text-left px-5 py-2">Bank</th>
                 <th className="text-right px-5 py-2">Balance</th>
                 <th className="px-5 py-2"></th>
               </tr>
@@ -140,6 +141,7 @@ export function AccountsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
@@ -193,8 +195,8 @@ function AccountRow({
           <span className="ml-2 text-xs text-slate-400">••{account.plaid_mask}</span>
         )}
       </td>
-      <td className="px-5 py-3 capitalize text-slate-600">{account.type}</td>
-      <td className="px-5 py-3 text-slate-600">
+      <td className="hidden sm:table-cell px-5 py-3 capitalize text-slate-600">{account.type}</td>
+      <td className="hidden sm:table-cell px-5 py-3 text-slate-600">
         {account.institution_name ?? <span className="text-slate-400">Manual</span>}
       </td>
       <td className="px-5 py-3 text-right tabular-nums">{formatCents(account.balance_cents)}</td>
@@ -204,7 +206,7 @@ function AccountRow({
             <button
               onClick={() => syncMutation.mutate(account.plaid_item_id!)}
               disabled={syncMutation.isPending}
-              className="text-xs text-indigo-600 hover:underline disabled:text-slate-400"
+              className="text-xs text-indigo-600 hover:underline disabled:text-slate-400 px-2 py-1"
             >
               {syncMutation.isPending ? "Syncing…" : "Sync"}
             </button>
@@ -215,7 +217,7 @@ function AccountRow({
                 }
               }}
               disabled={unlinkMutation.isPending}
-              className="text-xs text-red-600 hover:underline disabled:text-slate-400"
+              className="text-xs text-red-600 hover:underline disabled:text-slate-400 px-2 py-1"
             >
               Unlink
             </button>

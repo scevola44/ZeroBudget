@@ -201,13 +201,14 @@ export function AccountDetailPage() {
           <div className="p-5 text-slate-500">No transactions yet.</div>
         )}
         {txnsQuery.data && txnsQuery.data.length > 0 && (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-xs uppercase text-slate-500">
               <tr>
                 <th className="text-left px-5 py-2">Date</th>
                 <th className="text-left px-5 py-2">Payee</th>
                 <th className="text-left px-5 py-2">Category</th>
-                <th className="text-left px-5 py-2">Memo</th>
+                <th className="hidden sm:table-cell text-left px-5 py-2">Memo</th>
                 <th className="text-right px-5 py-2">Amount</th>
                 <th className="px-5 py-2"></th>
               </tr>
@@ -248,7 +249,7 @@ export function AccountDetailPage() {
                         </button>
                       )}
                     </td>
-                    <td className="px-5 py-2 text-slate-500">{t.memo}</td>
+                    <td className="hidden sm:table-cell px-5 py-2 text-slate-500">{t.memo}</td>
                     <td
                       className={`px-5 py-2 text-right tabular-nums ${
                         t.amount_cents >= 0 ? "text-emerald-700" : "text-slate-900"
@@ -259,7 +260,7 @@ export function AccountDetailPage() {
                     <td className="px-5 py-2 text-right">
                       <button
                         onClick={() => deleteTxn.mutate(t.id)}
-                        className="text-xs text-slate-500 hover:text-red-600"
+                        className="text-xs text-slate-500 hover:text-red-600 px-2 py-1"
                       >
                         Delete
                       </button>
@@ -269,6 +270,7 @@ export function AccountDetailPage() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
