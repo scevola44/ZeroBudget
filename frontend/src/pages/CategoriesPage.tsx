@@ -42,54 +42,54 @@ export function CategoriesPage() {
       <h1 className="text-2xl font-semibold">Categories</h1>
 
       <form
-        className="bg-white border border-slate-200 rounded-2xl p-5 flex flex-col sm:flex-row gap-3 sm:items-end"
+        className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 flex flex-col sm:flex-row gap-3 sm:items-end"
         onSubmit={(e) => {
           e.preventDefault();
           if (newGroup.trim()) createGroup.mutate(newGroup.trim());
         }}
       >
         <div className="flex-1 space-y-1">
-          <label className="text-sm font-medium text-slate-700">New category group</label>
+          <label className="text-sm font-medium text-stone-700 dark:text-stone-300">New category group</label>
           <input
             value={newGroup}
             onChange={(e) => setNewGroup(e.target.value)}
             placeholder="e.g. Bills"
-            className="w-full border border-slate-300 rounded-lg px-3 py-2"
+            className="w-full border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2"
           />
         </div>
         <button
           type="submit"
-          className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg px-4 py-2"
+          className="bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-medium rounded-lg px-4 py-2"
         >
           Add group
         </button>
       </form>
 
-      {groupsQuery.isLoading && <div className="text-slate-500">Loading…</div>}
+      {groupsQuery.isLoading && <div className="text-stone-500 dark:text-stone-400">Loading…</div>}
 
       {groupsQuery.data?.map((group) => (
         <section
           key={group.id}
-          className="bg-white border border-slate-200 rounded-2xl overflow-hidden"
+          className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl overflow-hidden"
         >
-          <header className="px-5 py-3 bg-slate-50 border-b border-slate-200 text-sm font-semibold text-slate-700">
+          <header className="px-5 py-3 bg-stone-50 dark:bg-stone-800 border-b border-stone-200 dark:border-stone-700 text-sm font-semibold text-stone-700 dark:text-stone-200">
             {group.name}
           </header>
           <ul>
             {group.categories.map((c) => (
               <li
                 key={c.id}
-                className="px-5 py-2 border-t border-slate-100 first:border-t-0 text-sm"
+                className="px-5 py-2 border-t border-stone-100 dark:border-stone-800 first:border-t-0 text-sm"
               >
                 {c.name}
               </li>
             ))}
             {group.categories.length === 0 && (
-              <li className="px-5 py-2 text-sm text-slate-500">No categories yet.</li>
+              <li className="px-5 py-2 text-sm text-stone-500 dark:text-stone-400">No categories yet.</li>
             )}
           </ul>
           <form
-            className="px-5 py-3 border-t border-slate-100 flex gap-2"
+            className="px-5 py-3 border-t border-stone-100 dark:border-stone-800 flex gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               const name = (newCategoryByGroup[group.id] ?? "").trim();
@@ -102,11 +102,11 @@ export function CategoriesPage() {
                 setNewCategoryByGroup((m) => ({ ...m, [group.id]: e.target.value }))
               }
               placeholder="New category"
-              className="flex-1 border border-slate-300 rounded-lg px-3 py-1.5 text-sm"
+              className="flex-1 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 text-sm"
             />
             <button
               type="submit"
-              className="bg-slate-800 hover:bg-slate-900 text-white text-sm rounded-lg px-3 py-1.5"
+              className="bg-stone-800 hover:bg-stone-900 dark:bg-stone-700 dark:hover:bg-stone-600 text-white text-sm rounded-lg px-3 py-1.5"
             >
               Add
             </button>
@@ -115,7 +115,7 @@ export function CategoriesPage() {
       ))}
 
       {groupsQuery.data && groupsQuery.data.length === 0 && (
-        <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-8 text-center text-slate-600">
+        <div className="bg-white dark:bg-stone-900 border border-dashed border-stone-300 dark:border-stone-700 rounded-2xl p-8 text-center text-stone-600 dark:text-stone-400">
           No category groups yet. Create your first one above.
         </div>
       )}

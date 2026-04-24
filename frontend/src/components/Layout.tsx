@@ -6,7 +6,9 @@ import { useAuth } from "../auth/AuthContext";
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
   `block px-4 py-2 rounded-lg text-sm font-medium ${
-    isActive ? "bg-indigo-600 text-white" : "text-slate-700 hover:bg-slate-200"
+    isActive
+      ? "bg-indigo-600 dark:bg-indigo-500 text-white"
+      : "text-stone-700 dark:text-stone-300 hover:bg-stone-200 dark:hover:bg-stone-800"
   }`;
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -30,17 +32,17 @@ export function Layout({ children }: { children: ReactNode }) {
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-56 bg-white border-r border-slate-200 flex flex-col transition-transform duration-200 md:relative md:translate-x-0 md:flex ${
+        className={`fixed inset-y-0 left-0 z-40 w-56 bg-white dark:bg-stone-900 border-r border-stone-200 dark:border-stone-700 flex flex-col transition-transform duration-200 md:relative md:translate-x-0 md:flex ${
           menuOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="px-5 py-5 border-b border-slate-200 flex items-center justify-between">
+        <div className="px-5 py-5 border-b border-stone-200 dark:border-stone-700 flex items-center justify-between">
           <div>
             <div className="text-lg font-semibold">ZeroBudget</div>
-            <div className="text-xs text-slate-500">every euro has a job</div>
+            <div className="text-xs text-stone-500 dark:text-stone-400">every euro has a job</div>
           </div>
           <button
-            className="md:hidden p-1 rounded text-slate-500 hover:bg-slate-100"
+            className="md:hidden p-1 rounded text-stone-500 dark:text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
             onClick={closeMenu}
             aria-label="Close menu"
           >
@@ -60,14 +62,14 @@ export function Layout({ children }: { children: ReactNode }) {
             Categories
           </NavLink>
         </nav>
-        <div className="p-3 border-t border-slate-200 text-sm">
-          <div className="text-slate-500 truncate mb-2">{user?.email}</div>
+        <div className="p-3 border-t border-stone-200 dark:border-stone-700 text-sm">
+          <div className="text-stone-500 dark:text-stone-400 truncate mb-2">{user?.email}</div>
           <button
             onClick={() => {
               logout();
               navigate("/login", { replace: true });
             }}
-            className="w-full px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
+            className="w-full px-3 py-1.5 rounded-lg bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 dark:hover:bg-stone-700 text-stone-700 dark:text-stone-200"
           >
             Log out
           </button>
@@ -77,9 +79,9 @@ export function Layout({ children }: { children: ReactNode }) {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Mobile top bar */}
-        <header className="md:hidden flex items-center px-4 py-3 bg-white border-b border-slate-200 sticky top-0 z-20">
+        <header className="md:hidden flex items-center px-4 py-3 bg-white dark:bg-stone-900 border-b border-stone-200 dark:border-stone-700 sticky top-0 z-20">
           <button
-            className="p-2 -ml-2 rounded text-slate-600 hover:bg-slate-100"
+            className="p-2 -ml-2 rounded text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800"
             onClick={() => setMenuOpen(true)}
             aria-label="Open menu"
           >
