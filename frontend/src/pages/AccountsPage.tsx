@@ -53,28 +53,28 @@ export function AccountsPage() {
       />
 
       <form
-        className="bg-white border border-slate-200 rounded-2xl p-5 flex flex-col sm:flex-row gap-3 sm:items-end"
+        className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 flex flex-col sm:flex-row gap-3 sm:items-end"
         onSubmit={(e) => {
           e.preventDefault();
           if (name.trim()) createMutation.mutate({ name: name.trim(), type });
         }}
       >
         <div className="flex-1 space-y-1">
-          <label className="text-sm font-medium text-slate-700">Name</label>
+          <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Name</label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
             placeholder="e.g. Checking"
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-full border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium text-slate-700">Type</label>
+          <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Type</label>
           <select
             value={type}
             onChange={(e) => setType(e.target.value)}
-            className="border border-slate-300 rounded-lg px-3 py-2 bg-white"
+            className="border border-stone-300 dark:border-stone-600 rounded-lg px-3 py-2 bg-white dark:bg-stone-900"
           >
             <option value="checking">Checking</option>
             <option value="savings">Savings</option>
@@ -84,32 +84,32 @@ export function AccountsPage() {
         <button
           type="submit"
           disabled={createMutation.isPending}
-          className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-medium rounded-lg px-4 py-2"
+          className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-medium rounded-lg px-4 py-2"
         >
           Add account
         </button>
       </form>
 
       {feedback && (
-        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl px-4 py-3 text-sm">
+        <div className="bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 rounded-xl px-4 py-3 text-sm">
           {feedback}
         </div>
       )}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl px-4 py-3 text-sm">
+        <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 rounded-xl px-4 py-3 text-sm">
           {error}
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
-        {accountsQuery.isLoading && <div className="p-5 text-slate-500">Loading…</div>}
+      <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl overflow-hidden">
+        {accountsQuery.isLoading && <div className="p-5 text-stone-500 dark:text-stone-400">Loading…</div>}
         {accountsQuery.data && accountsQuery.data.length === 0 && (
-          <div className="p-5 text-slate-500">No accounts yet. Add one above or link a bank.</div>
+          <div className="p-5 text-stone-500 dark:text-stone-400">No accounts yet. Add one above or link a bank.</div>
         )}
         {accountsQuery.data && accountsQuery.data.length > 0 && (
           <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-xs uppercase text-slate-500">
+            <thead className="text-xs uppercase text-stone-500 dark:text-stone-400">
               <tr>
                 <th className="text-left px-5 py-2">Name</th>
                 <th className="hidden sm:table-cell text-left px-5 py-2">Type</th>
@@ -186,18 +186,18 @@ function AccountRow({
   const isLinked = account.plaid_item_id !== null;
 
   return (
-    <tr className="border-t border-slate-100">
+    <tr className="border-t border-stone-100 dark:border-stone-800">
       <td className="px-5 py-3">
-        <Link to={`/accounts/${account.id}`} className="text-indigo-600 hover:underline">
+        <Link to={`/accounts/${account.id}`} className="text-indigo-600 dark:text-indigo-400 hover:underline">
           {account.name}
         </Link>
         {account.plaid_mask && (
-          <span className="ml-2 text-xs text-slate-400">••{account.plaid_mask}</span>
+          <span className="ml-2 text-xs text-stone-400 dark:text-stone-500">••{account.plaid_mask}</span>
         )}
       </td>
-      <td className="hidden sm:table-cell px-5 py-3 capitalize text-slate-600">{account.type}</td>
-      <td className="hidden sm:table-cell px-5 py-3 text-slate-600">
-        {account.institution_name ?? <span className="text-slate-400">Manual</span>}
+      <td className="hidden sm:table-cell px-5 py-3 capitalize text-stone-600 dark:text-stone-400">{account.type}</td>
+      <td className="hidden sm:table-cell px-5 py-3 text-stone-600 dark:text-stone-400">
+        {account.institution_name ?? <span className="text-stone-400 dark:text-stone-500">Manual</span>}
       </td>
       <td className="px-5 py-3 text-right tabular-nums">{formatCents(account.balance_cents)}</td>
       <td className="px-5 py-3 text-right space-x-2">
@@ -206,7 +206,7 @@ function AccountRow({
             <button
               onClick={() => syncMutation.mutate(account.plaid_item_id!)}
               disabled={syncMutation.isPending}
-              className="text-xs text-indigo-600 hover:underline disabled:text-slate-400 px-2 py-1"
+              className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline disabled:text-stone-400 dark:disabled:text-stone-500 px-2 py-1"
             >
               {syncMutation.isPending ? "Syncing…" : "Sync"}
             </button>
@@ -217,7 +217,7 @@ function AccountRow({
                 }
               }}
               disabled={unlinkMutation.isPending}
-              className="text-xs text-red-600 hover:underline disabled:text-slate-400 px-2 py-1"
+              className="text-xs text-red-600 dark:text-red-400 hover:underline disabled:text-stone-400 dark:disabled:text-stone-500 px-2 py-1"
             >
               Unlink
             </button>
@@ -282,17 +282,17 @@ function PlaidLinkCard({
   }, [linkToken, ready, open]);
 
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl p-5 flex items-center justify-between gap-4">
+    <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 flex items-center justify-between gap-4">
       <div>
         <div className="font-medium">Link a bank account</div>
-        <div className="text-sm text-slate-500">
+        <div className="text-sm text-stone-500 dark:text-stone-400">
           Import transactions automatically via Plaid. EUR accounts only.
         </div>
       </div>
       <button
         onClick={handleClick}
         disabled={isRequesting || Boolean(linkToken)}
-        className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-medium rounded-lg px-4 py-2"
+        className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-medium rounded-lg px-4 py-2"
       >
         {isRequesting ? "Loading…" : linkToken ? "Opening…" : "Link bank account"}
       </button>
