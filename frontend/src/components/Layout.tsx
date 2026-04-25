@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
+import { BrandHeader } from "./BrandHeader";
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
   `block px-4 py-2 rounded-lg text-sm font-medium ${
@@ -38,7 +39,9 @@ export function Layout({ children }: { children: ReactNode }) {
       >
         <div className="px-5 py-5 border-b border-stone-200 dark:border-stone-700 flex items-center justify-between">
           <div>
-            <div className="text-lg font-semibold">ZeroBudget</div>
+            <div className="text-lg font-semibold">
+              <BrandHeader />
+            </div>
             <div className="text-xs text-stone-500 dark:text-stone-400">every euro has a job</div>
           </div>
           <button
@@ -89,7 +92,9 @@ export function Layout({ children }: { children: ReactNode }) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <span className="ml-3 font-semibold">ZeroBudget</span>
+          <div className="ml-3 font-semibold">
+            <BrandHeader />
+          </div>
         </header>
 
         <main className="flex-1 p-4 md:p-8 overflow-x-auto">{children}</main>
