@@ -88,12 +88,23 @@ async def create_group(client: AsyncClient, headers: dict[str, str], name: str =
 
 
 async def create_category(
-    client: AsyncClient, headers: dict[str, str], group_id: int, name: str = "Rent"
+    client: AsyncClient,
+    headers: dict[str, str],
+    group_id: int,
+    name: str = "Rent",
+    *,
+    goal_kind: str = "monthly",
+    goal_amount_cents: int = 10_000,
+    goal_target_month: str | None = None,
 ) -> int:
-    r = await client.post(
-        "/api/categories",
-        json={"group_id": group_id, "name": name},
-        headers=headers,
-    )
+    body: dict = {
+        "group_id": group_id,
+        "name": name,
+        "goal_kind": goal_kind,
+        "goal_amount_cents": goal_amount_cents,
+    }
+    if goal_target_month is not None:
+        body["goal_target_month"] = goal_target_month
+    r = await client.post("/api/categories", json=body, headers=headers)
     assert r.status_code == 201, r.text
     return r.json()["id"]

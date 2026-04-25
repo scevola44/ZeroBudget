@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
@@ -18,6 +20,29 @@ from app.services.budget_calc import (
     month_start,
     parse_month,
 )
+
+
+def _needed_this_month(category: Category, balance_cents: int, month_first: date) -> int | None:
+    """How much the user should fund this category in ``month_first`` to stay on
+    track. ``None`` when no meaningful suggestion exists (target_date already
+    in the past)."""
+    if category.goal_kind == "monthly":
+        return max(0, category.goal_amount_cents - balance_cents)
+    if category.goal_kind == "yearly":
+        per_month = category.goal_amount_cents // 12
+        return max(0, per_month - max(0, balance_cents))
+    if category.goal_kind == "target_date":
+        target = category.goal_target_month
+        if target is None or target < month_first:
+            return None
+        months_left = (
+            (target.year - month_first.year) * 12
+            + (target.month - month_first.month)
+            + 1
+        )
+        remaining = max(0, category.goal_amount_cents - max(0, balance_cents))
+        return remaining // months_left if months_left > 0 else remaining
+    return None
 
 router = APIRouter(prefix="/api/budget", tags=["budget"])
 
@@ -106,6 +131,10 @@ async def get_budget_month(
                 assigned_cents=b.assigned_cents,
                 activity_cents=b.activity_cents,
                 balance_cents=b.balance_cents,
+                goal_kind=c.goal_kind,
+                goal_amount_cents=c.goal_amount_cents,
+                goal_target_month=c.goal_target_month,
+                needed_this_month_cents=_needed_this_month(c, b.balance_cents, target_month),
             )
         )
 

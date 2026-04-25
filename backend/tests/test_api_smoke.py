@@ -54,7 +54,12 @@ async def test_full_zero_based_flow(client: AsyncClient):
 
     cat = await client.post(
         "/api/categories",
-        json={"group_id": group_id, "name": "Rent"},
+        json={
+            "group_id": group_id,
+            "name": "Rent",
+            "goal_kind": "monthly",
+            "goal_amount_cents": 50_000,
+        },
         headers=headers,
     )
     assert cat.status_code == 201, cat.text
