@@ -13,6 +13,8 @@ export function CategoriesPage() {
 
   const [newGroup, setNewGroup] = useState("");
   const [newCategoryByGroup, setNewCategoryByGroup] = useState<Record<number, string>>({});
+  const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState("");
 
   const createGroup = useMutation({
     mutationFn: (name: string) =>
@@ -32,6 +34,19 @@ export function CategoriesPage() {
       }),
     onSuccess: (_data, vars) => {
       setNewCategoryByGroup((m) => ({ ...m, [vars.groupId]: "" }));
+      void qc.invalidateQueries({ queryKey: ["category-groups"] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+  });
+
+  const updateCategory = useMutation({
+    mutationFn: (vars: { categoryId: number; name: string }) =>
+      api(`/api/categories/${vars.categoryId}`, {
+        method: "PATCH",
+        body: { name: vars.name },
+      }),
+    onSuccess: () => {
+      setEditingCategoryId(null);
       void qc.invalidateQueries({ queryKey: ["category-groups"] });
       void qc.invalidateQueries({ queryKey: ["budget"] });
     },
@@ -81,7 +96,42 @@ export function CategoriesPage() {
                 key={c.id}
                 className="px-5 py-2 border-t border-stone-100 dark:border-stone-800 first:border-t-0 text-sm"
               >
-                {c.name}
+                {editingCategoryId === c.id ? (
+                  <input
+                    autoFocus
+                    value={editingCategoryName}
+                    onChange={(e) => setEditingCategoryName(e.target.value)}
+                    onBlur={() => {
+                      if (editingCategoryName.trim() && editingCategoryName !== c.name) {
+                        updateCategory.mutate({ categoryId: c.id, name: editingCategoryName.trim() });
+                      } else {
+                        setEditingCategoryId(null);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        if (editingCategoryName.trim() && editingCategoryName !== c.name) {
+                          updateCategory.mutate({ categoryId: c.id, name: editingCategoryName.trim() });
+                        } else {
+                          setEditingCategoryId(null);
+                        }
+                      } else if (e.key === "Escape") {
+                        setEditingCategoryId(null);
+                      }
+                    }}
+                    className="w-full border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                ) : (
+                  <span
+                    onClick={() => {
+                      setEditingCategoryId(c.id);
+                      setEditingCategoryName(c.name);
+                    }}
+                    className="cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400"
+                  >
+                    {c.name}
+                  </span>
+                )}
               </li>
             ))}
             {group.categories.length === 0 && (
