@@ -15,11 +15,16 @@ export type Account = {
   institution_name: string | null;
 };
 
+export type GoalKind = "monthly" | "yearly" | "target_date";
+
 export type Category = {
   id: number;
   group_id: number;
   name: string;
   sort_order: number;
+  goal_kind: GoalKind;
+  goal_amount_cents: number;
+  goal_target_month: string | null; // ISO "YYYY-MM-DD", first-of-month
 };
 
 export type CategoryGroup = {
@@ -45,6 +50,10 @@ export type BudgetCategoryRow = {
   assigned_cents: number;
   activity_cents: number;
   balance_cents: number;
+  goal_kind: GoalKind;
+  goal_amount_cents: number;
+  goal_target_month: string | null;
+  needed_this_month_cents: number | null;
 };
 
 export type BudgetGroupRow = {
