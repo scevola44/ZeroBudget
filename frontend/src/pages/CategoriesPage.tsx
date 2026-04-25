@@ -41,17 +41,17 @@ function SortableGroupHeader({ group }: { group: CategoryGroup }) {
 function SortableCategoryItem({
   category,
   isEditing,
-  editingCategoryName,
+  editingDraft,
   onEditStart,
-  onEditChange,
+  onDraftChange,
   onEditSave,
   onEditCancel,
 }: {
   category: Category;
   isEditing: boolean;
-  editingCategoryName: string;
+  editingDraft: NewCategoryDraft;
   onEditStart: () => void;
-  onEditChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onDraftChange: (patch: Partial<NewCategoryDraft>) => void;
   onEditSave: () => void;
   onEditCancel: () => void;
 }) {
@@ -64,29 +64,83 @@ function SortableCategoryItem({
     transition: "opacity 200ms ease",
   };
 
+  const needsMonth = editingDraft.kind === "target_date";
+  const amountCents = parseAmountToCents(editingDraft.amount);
+  const monthOk = !needsMonth || /^\d{4}-\d{2}$/.test(editingDraft.targetMonth);
+  const canSave =
+    editingDraft.name.trim().length > 0 &&
+    amountCents !== null &&
+    amountCents > 0 &&
+    monthOk;
+
   return (
     <li
       {...attributes}
       style={style}
-      className="px-5 py-2 border-t border-stone-100 dark:border-stone-800 first:border-t-0 text-sm flex items-center gap-2"
+      className="px-5 py-2 border-t border-stone-100 dark:border-stone-800 first:border-t-0 text-sm flex items-start gap-2"
     >
-      <DragHandle listeners={listeners} />
+      <div className="mt-2">
+        <DragHandle listeners={listeners} />
+      </div>
       {isEditing ? (
-        <input
-          autoFocus
-          value={editingCategoryName}
-          onChange={onEditChange}
-          onBlur={onEditSave}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              onEditSave();
-            } else if (e.key === "Escape") {
-              onEditCancel();
-            }
+        <form
+          className="flex-1 grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto] gap-2 items-center"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (canSave) onEditSave();
           }}
-          className="flex-1 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          onClick={(e) => e.stopPropagation()}
-        />
+          onKeyDown={(e) => {
+            if (e.key === "Escape") onEditCancel();
+          }}
+        >
+          <input
+            autoFocus
+            value={editingDraft.name}
+            onChange={(e) => onDraftChange({ name: e.target.value })}
+            placeholder="Category name"
+            className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <select
+            value={editingDraft.kind}
+            onChange={(e) => onDraftChange({ kind: e.target.value as GoalKind })}
+            className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-2 py-1.5"
+          >
+            <option value="monthly">Monthly</option>
+            <option value="yearly">Yearly</option>
+            <option value="target_date">By a specific month</option>
+          </select>
+          <input
+            value={editingDraft.amount}
+            onChange={(e) => onDraftChange({ amount: e.target.value })}
+            inputMode="decimal"
+            placeholder="Amount"
+            className="w-28 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 tabular-nums"
+          />
+          {needsMonth && (
+            <input
+              type="month"
+              value={editingDraft.targetMonth}
+              onChange={(e) => onDraftChange({ targetMonth: e.target.value })}
+              className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5"
+            />
+          )}
+          <div className="flex gap-1">
+            <button
+              type="submit"
+              disabled={!canSave}
+              className="bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg px-3 py-1.5"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={onEditCancel}
+              className="border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-3 py-1.5"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
       ) : (
         <button
           type="button"
@@ -135,7 +189,7 @@ export function CategoriesPage() {
   const [newGroup, setNewGroup] = useState("");
   const [draftByGroup, setDraftByGroup] = useState<Record<number, NewCategoryDraft>>({});
   const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
-  const [editingCategoryName, setEditingCategoryName] = useState("");
+  const [editingDraft, setEditingDraft] = useState<NewCategoryDraft>(EMPTY_DRAFT);
 
   function getDraft(groupId: number): NewCategoryDraft {
     return draftByGroup[groupId] ?? EMPTY_DRAFT;
@@ -185,10 +239,21 @@ export function CategoriesPage() {
   });
 
   const updateCategory = useMutation({
-    mutationFn: (vars: { categoryId: number; name: string }) =>
+    mutationFn: (vars: {
+      categoryId: number;
+      name: string;
+      goalKind: GoalKind;
+      goalAmountCents: number;
+      goalTargetMonth: string | null;
+    }) =>
       api(`/api/categories/${vars.categoryId}`, {
         method: "PATCH",
-        body: { name: vars.name },
+        body: {
+          name: vars.name,
+          goal_kind: vars.goalKind,
+          goal_amount_cents: vars.goalAmountCents,
+          goal_target_month: vars.goalTargetMonth,
+        },
       }),
     onSuccess: () => {
       setEditingCategoryId(null);
@@ -321,20 +386,34 @@ export function CategoriesPage() {
                       key={c.id}
                       category={c}
                       isEditing={editingCategoryId === c.id}
-                      editingCategoryName={editingCategoryName}
+                      editingDraft={editingDraft}
                       onEditStart={() => {
                         setEditingCategoryId(c.id);
-                        setEditingCategoryName(c.name);
+                        setEditingDraft({
+                          name: c.name,
+                          kind: c.goal_kind,
+                          amount: (c.goal_amount_cents / 100).toFixed(2),
+                          targetMonth: c.goal_target_month?.slice(0, 7) ?? "",
+                        });
                       }}
-                      onEditChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                        setEditingCategoryName(e.target.value)
-                      }
+                      onDraftChange={(patch) => setEditingDraft((d) => ({ ...d, ...patch }))}
                       onEditSave={() => {
-                        if (editingCategoryName.trim() && editingCategoryName !== c.name) {
-                          updateCategory.mutate({ categoryId: c.id, name: editingCategoryName.trim() });
-                        } else {
-                          setEditingCategoryId(null);
-                        }
+                        const trimmedName = editingDraft.name.trim();
+                        const amountCents = parseAmountToCents(editingDraft.amount);
+                        const needsMonth = editingDraft.kind === "target_date";
+                        if (
+                          !trimmedName ||
+                          !amountCents ||
+                          amountCents <= 0 ||
+                          (needsMonth && !/^\d{4}-\d{2}$/.test(editingDraft.targetMonth))
+                        ) return;
+                        updateCategory.mutate({
+                          categoryId: c.id,
+                          name: trimmedName,
+                          goalKind: editingDraft.kind,
+                          goalAmountCents: amountCents,
+                          goalTargetMonth: needsMonth ? `${editingDraft.targetMonth}-01` : null,
+                        });
                       }}
                       onEditCancel={() => setEditingCategoryId(null)}
                     />
