@@ -17,8 +17,10 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import { api } from "../api/client";
-import type { CategoryGroup } from "../api/types";
+import type { Category, CategoryGroup, GoalKind } from "../api/types";
 import { DragHandle } from "../components/DragHandle";
+import { formatGoal } from "../lib/goal";
+import { parseAmountToCents } from "../lib/money";
 
 function SortableGroupHeader({ group }: { group: CategoryGroup }) {
   const { attributes, listeners, isDragging } = useSortable({ id: `group-${group.id}` });
@@ -36,8 +38,26 @@ function SortableGroupHeader({ group }: { group: CategoryGroup }) {
   );
 }
 
-function SortableCategoryItem({ categoryId, categoryName, isEditing, editingCategoryName, onEditStart, onEditChange, onEditSave, onEditCancel }: any) {
-  const { attributes, listeners, isDragging, transform } = useSortable({ id: `category-${categoryId}` });
+function SortableCategoryItem({
+  category,
+  isEditing,
+  editingCategoryName,
+  onEditStart,
+  onEditChange,
+  onEditSave,
+  onEditCancel,
+}: {
+  category: Category;
+  isEditing: boolean;
+  editingCategoryName: string;
+  onEditStart: () => void;
+  onEditChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onEditSave: () => void;
+  onEditCancel: () => void;
+}) {
+  const { attributes, listeners, isDragging, transform } = useSortable({
+    id: `category-${category.id}`,
+  });
   const style = {
     transform: CSS.Transform.toString(transform),
     opacity: isDragging ? 0.5 : 1,
@@ -68,16 +88,36 @@ function SortableCategoryItem({ categoryId, categoryName, isEditing, editingCate
           onClick={(e) => e.stopPropagation()}
         />
       ) : (
-        <span
+        <button
+          type="button"
           onClick={() => onEditStart()}
-          className="cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 flex-1"
+          className="text-left cursor-pointer flex-1 group"
         >
-          {categoryName}
-        </span>
+          <div className="group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
+            {category.name}
+          </div>
+          <div className="text-xs text-stone-500 dark:text-stone-400">
+            {formatGoal(category)}
+          </div>
+        </button>
       )}
     </li>
   );
 }
+
+type NewCategoryDraft = {
+  name: string;
+  kind: GoalKind;
+  amount: string;
+  targetMonth: string;
+};
+
+const EMPTY_DRAFT: NewCategoryDraft = {
+  name: "",
+  kind: "monthly",
+  amount: "",
+  targetMonth: "",
+};
 
 export function CategoriesPage() {
   const qc = useQueryClient();
@@ -93,9 +133,19 @@ export function CategoriesPage() {
   });
 
   const [newGroup, setNewGroup] = useState("");
-  const [newCategoryByGroup, setNewCategoryByGroup] = useState<Record<number, string>>({});
+  const [draftByGroup, setDraftByGroup] = useState<Record<number, NewCategoryDraft>>({});
   const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState("");
+
+  function getDraft(groupId: number): NewCategoryDraft {
+    return draftByGroup[groupId] ?? EMPTY_DRAFT;
+  }
+  function setDraft(groupId: number, patch: Partial<NewCategoryDraft>) {
+    setDraftByGroup((m) => ({ ...m, [groupId]: { ...getDraft(groupId), ...patch } }));
+  }
+  function resetDraft(groupId: number) {
+    setDraftByGroup((m) => ({ ...m, [groupId]: EMPTY_DRAFT }));
+  }
 
   const createGroup = useMutation({
     mutationFn: (name: string) =>
@@ -108,13 +158,27 @@ export function CategoriesPage() {
   });
 
   const createCategory = useMutation({
-    mutationFn: (vars: { groupId: number; name: string }) =>
+    mutationFn: (vars: {
+      groupId: number;
+      name: string;
+      goalKind: GoalKind;
+      goalAmountCents: number;
+      goalTargetMonth: string | null;
+    }) =>
       api("/api/categories", {
         method: "POST",
-        body: { group_id: vars.groupId, name: vars.name },
+        body: {
+          group_id: vars.groupId,
+          name: vars.name,
+          goal_kind: vars.goalKind,
+          goal_amount_cents: vars.goalAmountCents,
+          ...(vars.goalTargetMonth !== null
+            ? { goal_target_month: vars.goalTargetMonth }
+            : {}),
+        },
       }),
     onSuccess: (_data, vars) => {
-      setNewCategoryByGroup((m) => ({ ...m, [vars.groupId]: "" }));
+      resetDraft(vars.groupId);
       void qc.invalidateQueries({ queryKey: ["category-groups"] });
       void qc.invalidateQueries({ queryKey: ["budget"] });
     },
@@ -255,8 +319,7 @@ export function CategoriesPage() {
                   {group.categories.map((c) => (
                     <SortableCategoryItem
                       key={c.id}
-                      categoryId={c.id}
-                      categoryName={c.name}
+                      category={c}
                       isEditing={editingCategoryId === c.id}
                       editingCategoryName={editingCategoryName}
                       onEditStart={() => {
@@ -281,29 +344,12 @@ export function CategoriesPage() {
                   )}
                 </ul>
               </SortableContext>
-              <form
-                className="px-5 py-3 border-t border-stone-100 dark:border-stone-800 flex gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const name = (newCategoryByGroup[group.id] ?? "").trim();
-                  if (name) createCategory.mutate({ groupId: group.id, name });
-                }}
-              >
-                <input
-                  value={newCategoryByGroup[group.id] ?? ""}
-                  onChange={(e) =>
-                    setNewCategoryByGroup((m) => ({ ...m, [group.id]: e.target.value }))
-                  }
-                  placeholder="New category"
-                  className="flex-1 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 text-sm"
-                />
-                <button
-                  type="submit"
-                  className="bg-stone-800 hover:bg-stone-900 dark:bg-stone-700 dark:hover:bg-stone-600 text-white text-sm rounded-lg px-3 py-1.5"
-                >
-                  Add
-                </button>
-              </form>
+              <NewCategoryForm
+                groupId={group.id}
+                draft={getDraft(group.id)}
+                onChange={(patch) => setDraft(group.id, patch)}
+                onSubmit={(payload) => createCategory.mutate(payload)}
+              />
             </section>
           ))}
         </SortableContext>
@@ -315,5 +361,84 @@ export function CategoriesPage() {
         )}
       </div>
     </DndContext>
+  );
+}
+
+function NewCategoryForm({
+  groupId,
+  draft,
+  onChange,
+  onSubmit,
+}: {
+  groupId: number;
+  draft: NewCategoryDraft;
+  onChange: (patch: Partial<NewCategoryDraft>) => void;
+  onSubmit: (vars: {
+    groupId: number;
+    name: string;
+    goalKind: GoalKind;
+    goalAmountCents: number;
+    goalTargetMonth: string | null;
+  }) => void;
+}) {
+  const name = draft.name.trim();
+  const amountCents = parseAmountToCents(draft.amount);
+  const needsMonth = draft.kind === "target_date";
+  const monthOk = !needsMonth || /^\d{4}-\d{2}$/.test(draft.targetMonth);
+  const canSubmit = name.length > 0 && amountCents !== null && amountCents > 0 && monthOk;
+
+  return (
+    <form
+      className="px-5 py-3 border-t border-stone-100 dark:border-stone-800 grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto] gap-2 sm:items-end"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!canSubmit) return;
+        onSubmit({
+          groupId,
+          name,
+          goalKind: draft.kind,
+          goalAmountCents: amountCents!,
+          goalTargetMonth: needsMonth ? `${draft.targetMonth}-01` : null,
+        });
+      }}
+    >
+      <input
+        value={draft.name}
+        onChange={(e) => onChange({ name: e.target.value })}
+        placeholder="New category"
+        className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 text-sm"
+      />
+      <select
+        value={draft.kind}
+        onChange={(e) => onChange({ kind: e.target.value as GoalKind })}
+        className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-2 py-1.5 text-sm"
+      >
+        <option value="monthly">Monthly</option>
+        <option value="yearly">Yearly</option>
+        <option value="target_date">By a specific month</option>
+      </select>
+      <input
+        value={draft.amount}
+        onChange={(e) => onChange({ amount: e.target.value })}
+        inputMode="decimal"
+        placeholder="Amount"
+        className="w-28 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 text-sm tabular-nums"
+      />
+      {needsMonth && (
+        <input
+          type="month"
+          value={draft.targetMonth}
+          onChange={(e) => onChange({ targetMonth: e.target.value })}
+          className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 text-sm"
+        />
+      )}
+      <button
+        type="submit"
+        disabled={!canSubmit}
+        className="bg-stone-800 hover:bg-stone-900 dark:bg-stone-700 dark:hover:bg-stone-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg px-3 py-1.5"
+      >
+        Add
+      </button>
+    </form>
   );
 }

@@ -27,6 +27,10 @@ async def test_create_group_and_nested_category(client: AsyncClient):
     assert len(body) == 1
     assert body[0]["name"] == "Bills"
     assert [c["name"] for c in body[0]["categories"]] == ["Rent", "Electricity"]
+    rent = body[0]["categories"][0]
+    assert rent["goal_kind"] == "monthly"
+    assert rent["goal_amount_cents"] == 10_000
+    assert rent["goal_target_month"] is None
 
 
 @pytest.mark.asyncio
@@ -97,7 +101,12 @@ async def test_cannot_create_category_in_other_users_group(client: AsyncClient):
 
     r = await client.post(
         "/api/categories",
-        json={"group_id": g, "name": "Hijack"},
+        json={
+            "group_id": g,
+            "name": "Hijack",
+            "goal_kind": "monthly",
+            "goal_amount_cents": 10_000,
+        },
         headers=bob,
     )
     assert r.status_code == 404

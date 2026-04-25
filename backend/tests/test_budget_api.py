@@ -129,6 +129,57 @@ async def test_multi_group_budget_response_shape(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_budget_row_includes_goal_fields(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    cat = await create_category(
+        client,
+        headers,
+        group,
+        name="Trip",
+        goal_kind="target_date",
+        goal_amount_cents=120_000,
+        goal_target_month="2026-09-01",
+    )
+    await _add_inflow(client, headers, account, 200_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", cat, 0)
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    row = body["groups"][0]["categories"][0]
+    assert row["goal_kind"] == "target_date"
+    assert row["goal_amount_cents"] == 120_000
+    assert row["goal_target_month"] == "2026-09-01"
+    # April → September is 6 months inclusive, balance is 0, so we should
+    # need ~120_000/6 = 20_000 each month.
+    assert row["needed_this_month_cents"] == 20_000
+
+
+@pytest.mark.asyncio
+async def test_monthly_goal_needed_drops_to_zero_when_balance_meets_goal(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    cat = await create_category(
+        client,
+        headers,
+        group,
+        name="Rent",
+        goal_kind="monthly",
+        goal_amount_cents=50_000,
+    )
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", cat, 50_000)
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    row = body["groups"][0]["categories"][0]
+    assert row["goal_kind"] == "monthly"
+    assert row["needed_this_month_cents"] == 0
+
+
+@pytest.mark.asyncio
 async def test_future_assignment_reduces_past_month_ready_to_assign(client: AsyncClient):
     """Assigning in May must also reduce Ready-to-Assign for April (global pool)."""
     headers = await register_user(client)

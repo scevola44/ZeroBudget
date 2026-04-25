@@ -10,6 +10,7 @@ from app.schemas.category import (
     CategoryGroupUpdate,
     CategoryResponse,
     CategoryUpdate,
+    _validate_goal_combo,
 )
 
 router = APIRouter(prefix="/api", tags=["categories"])
@@ -129,6 +130,9 @@ async def create_category(
         group_id=payload.group_id,
         name=payload.name,
         sort_order=payload.sort_order,
+        goal_kind=payload.goal_kind,
+        goal_amount_cents=payload.goal_amount_cents,
+        goal_target_month=payload.goal_target_month,
     )
     db.add(category)
     await db.commit()
@@ -151,6 +155,32 @@ async def update_category(
         category.name = payload.name
     if payload.sort_order is not None:
         category.sort_order = payload.sort_order
+
+    # Goal updates: merge any explicitly-set goal fields with the persisted
+    # row, then re-run the cross-field rule on the resulting triple.
+    fields_set = payload.model_fields_set
+    if fields_set & {"goal_kind", "goal_amount_cents", "goal_target_month"}:
+        new_kind = payload.goal_kind if "goal_kind" in fields_set else category.goal_kind
+        new_amount = (
+            payload.goal_amount_cents
+            if "goal_amount_cents" in fields_set
+            else category.goal_amount_cents
+        )
+        new_target = (
+            payload.goal_target_month
+            if "goal_target_month" in fields_set
+            else category.goal_target_month
+        )
+        try:
+            _validate_goal_combo(new_kind, new_amount, new_target)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        category.goal_kind = new_kind
+        category.goal_amount_cents = new_amount
+        category.goal_target_month = new_target
+
     await db.commit()
     await db.refresh(category)
     return CategoryResponse.model_validate(category)

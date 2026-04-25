@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { BudgetCategoryRow, BudgetMonth } from "../api/types";
 import { currentMonth, monthLabel, shiftMonth } from "../lib/dates";
+import { formatGoal } from "../lib/goal";
 import { formatCents, parseAmountToCents } from "../lib/money";
 
 const COLLAPSED_GROUPS_STORAGE_KEY = "budget:collapsed-groups";
@@ -220,9 +221,20 @@ function CategoryRow({
     setEditing(false);
   }
 
+  const needed = cat.needed_this_month_cents;
   return (
     <tr className="border-t border-stone-100 dark:border-stone-800">
-      <td className="px-5 py-2">{cat.name}</td>
+      <td className="px-5 py-2">
+        <div>{cat.name}</div>
+        <div className="text-xs text-stone-500 dark:text-stone-400 flex items-center gap-2">
+          <span>{formatGoal(cat)}</span>
+          {needed !== null && needed > 0 && (
+            <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-200 text-[10px] font-semibold tabular-nums">
+              Need {formatCents(needed)}
+            </span>
+          )}
+        </div>
+      </td>
       <td className="px-5 py-2 text-right tabular-nums">
         {editing ? (
           <input
