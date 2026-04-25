@@ -26,6 +26,12 @@ class Transaction(Base):
     memo: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     # Signed integer cents. Positive = inflow, negative = outflow.
     amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # Plaid's globally-unique transaction id. NULL for manually-entered rows;
+    # globally unique for imported rows so /transactions/sync retries stay
+    # idempotent.
+    plaid_transaction_id: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

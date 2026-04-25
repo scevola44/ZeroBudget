@@ -5,9 +5,10 @@ Every euro gets a job: you assign incoming money to categories for each month,
 and the app tells you how much is still waiting to be assigned.
 
 > **Status:** skeleton. Accounts, categories, transactions, monthly assignments,
-> and the "Ready to Assign" zero-based view are in place. Reports, goals,
-> imports, transfers, multi-currency, and the mobile client are intentionally
-> out of scope for this first pass — they'll be added iteratively.
+> the "Ready to Assign" zero-based view, and **Plaid bank linking (Sandbox,
+> EUR-only)** are in place. Reports, goals, transfers, multi-currency, and the
+> mobile client are intentionally out of scope for this first pass — they'll be
+> added iteratively.
 
 ## Stack
 
@@ -108,3 +109,23 @@ This is a starting point. Natural next steps:
 - CSV / OFX import
 - Reports (spending by category, net worth over time)
 - React Native / Expo client reusing the same REST API
+
+## Plaid bank linking
+
+Plaid Link is wired up in the Accounts page. It runs against **Plaid Sandbox**
+and only imports EUR-denominated accounts/transactions — non-EUR data is
+rejected at the boundary (ZeroBudget is EUR-only).
+
+Set these environment variables to enable it:
+
+| Variable | Notes |
+|---|---|
+| `PLAID_CLIENT_ID` | from dashboard.plaid.com |
+| `PLAID_SECRET` | Sandbox secret |
+| `PLAID_ENV` | `sandbox` (default) or `production` |
+| `PLAID_PRODUCTS` | default `transactions` |
+| `PLAID_COUNTRY_CODES` | default `IE,FR,DE,ES,NL,IT,BE,AT,PT` (EUR zone) |
+| `PLAID_ENCRYPTION_KEY` | Fernet key — generate via `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+
+Without these set, the `Link bank account` button returns a 503. The rest of
+the app works unchanged.
