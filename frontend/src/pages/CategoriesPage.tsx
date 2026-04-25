@@ -4,6 +4,10 @@ import {
   DndContext,
   DragEndEvent,
   closestCenter,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -22,12 +26,11 @@ function SortableGroupHeader({ group }: { group: CategoryGroup }) {
   return (
     <header
       {...attributes}
-      {...listeners}
-      className={`px-5 py-3 bg-stone-50 dark:bg-stone-800 border-b border-stone-200 dark:border-stone-700 text-sm font-semibold text-stone-700 dark:text-stone-200 flex items-center gap-2 cursor-grab active:cursor-grabbing transition-opacity ${
+      className={`px-5 py-3 bg-stone-50 dark:bg-stone-800 border-b border-stone-200 dark:border-stone-700 text-sm font-semibold text-stone-700 dark:text-stone-200 flex items-center gap-2 transition-opacity ${
         isDragging ? "opacity-50" : ""
       }`}
     >
-      <DragHandle id={`group-${group.id}`} />
+      <DragHandle listeners={listeners} />
       {group.name}
     </header>
   );
@@ -44,11 +47,10 @@ function SortableCategoryItem({ categoryId, categoryName, isEditing, editingCate
   return (
     <li
       {...attributes}
-      {...listeners}
       style={style}
       className="px-5 py-2 border-t border-stone-100 dark:border-stone-800 first:border-t-0 text-sm flex items-center gap-2"
     >
-      <DragHandle id={`category-${categoryId}`} />
+      <DragHandle listeners={listeners} />
       {isEditing ? (
         <input
           autoFocus
@@ -79,6 +81,12 @@ function SortableCategoryItem({ categoryId, categoryName, isEditing, editingCate
 
 export function CategoriesPage() {
   const qc = useQueryClient();
+  const sensors = useSensors(
+    useSensor(MouseSensor),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 250, tolerance: 5 },
+    })
+  );
   const groupsQuery = useQuery<CategoryGroup[]>({
     queryKey: ["category-groups"],
     queryFn: () => api<CategoryGroup[]>("/api/category-groups"),
@@ -202,7 +210,7 @@ export function CategoriesPage() {
   const groupIds = (groupsQuery.data || []).map((g) => `group-${g.id}`);
 
   return (
-    <DndContext onDragEnd={handleDragEnd} collisionDetection={closestCenter}>
+    <DndContext sensors={sensors} onDragEnd={handleDragEnd} collisionDetection={closestCenter}>
       <div className="max-w-3xl space-y-6">
         <h1 className="text-2xl font-semibold">Categories</h1>
 

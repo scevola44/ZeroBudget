@@ -1,17 +1,14 @@
-import { useSortable } from "@dnd-kit/sortable";
+import type { DraggableSyntheticListeners } from "@dnd-kit/core";
 
 interface DragHandleProps {
-  id: string | number;
+  listeners: DraggableSyntheticListeners;
 }
 
-export function DragHandle({ id }: DragHandleProps) {
-  const { attributes, listeners } = useSortable({ id });
-
+export function DragHandle({ listeners }: DragHandleProps) {
   return (
     <button
       className="text-stone-400 dark:text-stone-500 hover:text-stone-600 dark:hover:text-stone-300 cursor-grab active:cursor-grabbing transition-colors p-0 mr-2 inline-flex items-center justify-center"
       aria-label="Drag to reorder"
-      {...attributes}
       {...listeners}
       type="button"
     >
