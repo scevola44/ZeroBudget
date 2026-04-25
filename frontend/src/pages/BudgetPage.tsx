@@ -135,7 +135,7 @@ export function BudgetPage() {
               className="w-full flex items-center gap-2 px-5 py-3 bg-stone-50 dark:bg-stone-800 border-b border-stone-200 dark:border-stone-700 text-sm font-semibold text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-700/60 text-left"
             >
               <svg
-                className={`w-4 h-4 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                className={`w-4 h-4 shrink-0 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -148,7 +148,29 @@ export function BudgetPage() {
                   d="M19 9l-7 7-7-7"
                 />
               </svg>
-              <span>{group.name}</span>
+              <span className="flex-1 truncate">{group.name}</span>
+              <div className="flex gap-6 shrink-0">
+                <div className="text-right">
+                  <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+                    Assigned
+                  </div>
+                  <div className="tabular-nums">
+                    {formatCents(
+                      group.categories.reduce((s, c) => s + c.assigned_cents, 0),
+                    )}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+                    Available
+                  </div>
+                  <div className="tabular-nums">
+                    {formatCents(
+                      group.categories.reduce((s, c) => s + c.balance_cents, 0),
+                    )}
+                  </div>
+                </div>
+              </div>
             </button>
             {!isCollapsed && (
               group.categories.length === 0 ? (
@@ -158,16 +180,6 @@ export function BudgetPage() {
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead className="text-xs uppercase text-stone-500 dark:text-stone-400">
-                      <tr>
-                        <th className="text-left px-5 py-2">Category</th>
-                        <th className="text-right px-5 py-2 w-32 md:w-40">Assigned</th>
-                        <th className="hidden landscape:table-cell md:table-cell text-right px-5 py-2 w-36">
-                          Activity
-                        </th>
-                        <th className="text-right px-5 py-2 w-36">Available</th>
-                      </tr>
-                    </thead>
                     <tbody>
                       {group.categories.map((cat) => (
                         <CategoryRow
