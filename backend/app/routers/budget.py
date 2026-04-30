@@ -4,7 +4,8 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.deps import CurrentUser, DbSession
-from app.models import Category, CategoryGroup, MonthlyAssignment, Transaction
+from app.models import Account, Category, CategoryGroup, MonthlyAssignment, Transaction
+from app.models.scope import PERSONAL, SHARED
 from app.schemas.budget import (
     AssignRequest,
     BudgetCategoryRow,
@@ -85,6 +86,15 @@ async def get_budget_month(
         .scalars()
         .all()
     )
+    accounts = (
+        (
+            await db.execute(
+                select(Account).where(Account.user_id == current_user.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     txn_rows_db = (
         (
             await db.execute(
@@ -106,18 +116,31 @@ async def get_budget_month(
         .all()
     )
 
+    account_scope: dict[int, str] = {a.id: a.scope for a in accounts}
+    group_scope: dict[int, str] = {g.id: g.scope for g in groups}
+    category_scope: dict[int, str] = {c.id: group_scope[c.group_id] for c in categories}
+
     txns = [
-        TxnRow(category_id=t.category_id, date=t.date, amount_cents=t.amount_cents)
+        TxnRow(
+            category_id=t.category_id,
+            date=t.date,
+            amount_cents=t.amount_cents,
+            scope=account_scope.get(t.account_id, PERSONAL),
+        )
         for t in txn_rows_db
     ]
     assignments = [
         AssignmentRow(
-            category_id=a.category_id, month=a.month, amount_cents=a.amount_cents
+            category_id=a.category_id,
+            month=a.month,
+            amount_cents=a.amount_cents,
+            scope=category_scope.get(a.category_id, PERSONAL),
         )
         for a in assignment_rows_db
     ]
 
-    ready = compute_ready_to_assign(txns, assignments, target_month)
+    personal_ready = compute_ready_to_assign(txns, assignments, target_month, PERSONAL)
+    shared_ready = compute_ready_to_assign(txns, assignments, target_month, SHARED)
     cat_ids = [c.id for c in categories]
     balances = compute_category_balances(cat_ids, txns, assignments, target_month)
 
@@ -140,9 +163,15 @@ async def get_budget_month(
 
     return BudgetMonthResponse(
         month=format_month(target_month),
-        ready_to_assign_cents=ready,
+        personal_ready_to_assign_cents=personal_ready,
+        shared_ready_to_assign_cents=shared_ready,
         groups=[
-            BudgetGroupRow(id=g.id, name=g.name, categories=cats_by_group.get(g.id, []))
+            BudgetGroupRow(
+                id=g.id,
+                name=g.name,
+                scope=g.scope,
+                categories=cats_by_group.get(g.id, []),
+            )
             for g in groups
         ],
     )

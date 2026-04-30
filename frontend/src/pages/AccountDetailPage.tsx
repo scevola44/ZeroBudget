@@ -3,9 +3,22 @@ import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { Account, CategoryGroup, Transaction } from "../api/types";
+import type { Account, CategoryGroup, Scope, Transaction } from "../api/types";
+import { scopeLabel } from "../api/types";
 import { todayISO } from "../lib/dates";
 import { formatCents, parseAmountToCents } from "../lib/money";
+
+function ScopeChip({ scope }: { scope: Scope }) {
+  const cls =
+    scope === "shared"
+      ? "bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-200"
+      : "bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-200";
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>
+      {scopeLabel(scope)}
+    </span>
+  );
+}
 
 export function AccountDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -29,10 +42,15 @@ export function AccountDetailPage() {
     queryFn: () => api<CategoryGroup[]>("/api/category-groups"),
   });
 
+  // Categories visible in the dropdown are only those whose group scope
+  // matches the account's scope — otherwise the backend rejects with 422.
   const flatCategories =
     groupsQuery.data?.flatMap((g) =>
-      g.categories.map((c) => ({ ...c, groupName: g.name })),
+      g.categories.map((c) => ({ ...c, groupName: g.name, groupScope: g.scope })),
     ) ?? [];
+  const eligibleCategories = account
+    ? flatCategories.filter((c) => c.groupScope === account.scope)
+    : flatCategories;
 
   const [date, setDate] = useState(todayISO);
   const [payee, setPayee] = useState("");
@@ -107,9 +125,12 @@ export function AccountDetailPage() {
   return (
     <div className="max-w-4xl space-y-6">
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">
-          {account ? account.name : "Account"}
-        </h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold">
+            {account ? account.name : "Account"}
+          </h1>
+          {account && <ScopeChip scope={account.scope} />}
+        </div>
         <Link
           to="/accounts"
           className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
@@ -158,7 +179,7 @@ export function AccountDetailPage() {
             className="w-full border border-stone-300 dark:border-stone-600 rounded-lg px-3 py-2 bg-white dark:bg-stone-900"
           >
             <option value="">— Unassigned (inflow) —</option>
-            {flatCategories.map((c) => (
+            {eligibleCategories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.groupName} › {c.name}
               </option>
