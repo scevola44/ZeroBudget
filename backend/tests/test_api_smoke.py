@@ -69,7 +69,7 @@ async def test_full_zero_based_flow(client: AsyncClient):
     budget = await client.get("/api/budget/2026-04", headers=headers)
     assert budget.status_code == 200, budget.text
     body = budget.json()
-    assert body["ready_to_assign_cents"] == 100_000
+    assert body["personal_ready_to_assign_cents"] == 100_000
     assert body["groups"][0]["categories"][0]["name"] == "Rent"
 
     # Assign 600.00 to Rent.
@@ -97,7 +97,7 @@ async def test_full_zero_based_flow(client: AsyncClient):
 
     # Verify the budget view.
     budget = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert budget["ready_to_assign_cents"] == 40_000  # 1000 - 600
+    assert budget["personal_ready_to_assign_cents"] == 40_000  # 1000 - 600
     rent_row = budget["groups"][0]["categories"][0]
     assert rent_row["assigned_cents"] == 60_000
     assert rent_row["activity_cents"] == -15_000

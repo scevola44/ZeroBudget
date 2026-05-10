@@ -22,6 +22,7 @@ def _to_response(
         id=account.id,
         name=account.name,
         type=account.type,
+        scope=account.scope,
         balance_cents=balance_cents,
         plaid_item_id=account.plaid_item_id,
         plaid_mask=account.plaid_mask,
@@ -65,6 +66,7 @@ async def list_accounts(db: DbSession, current_user: CurrentUser) -> list[Accoun
                 id=a.id,
                 name=a.name,
                 type=a.type,
+                scope=a.scope,
                 balance_cents=totals.get(a.id, 0),
                 plaid_item_id=a.plaid_item_id,
                 plaid_mask=a.plaid_mask,
@@ -78,7 +80,12 @@ async def list_accounts(db: DbSession, current_user: CurrentUser) -> list[Accoun
 async def create_account(
     payload: AccountCreate, db: DbSession, current_user: CurrentUser
 ) -> AccountResponse:
-    account = Account(user_id=current_user.id, name=payload.name, type=payload.type)
+    account = Account(
+        user_id=current_user.id,
+        name=payload.name,
+        type=payload.type,
+        scope=payload.scope,
+    )
     db.add(account)
     await db.commit()
     await db.refresh(account)
@@ -104,6 +111,28 @@ async def update_account(
                 detail="Linked account type is managed by Plaid and cannot be changed.",
             )
         account.type = payload.type
+    if payload.scope is not None and payload.scope != account.scope:
+        # Categorized transactions on this account would land in the wrong
+        # scope pool after the change (a personal-group category attached to
+        # a now-shared account, or vice versa). Require the user to
+        # uncategorize them first. Uncategorized inflows shift cleanly.
+        categorized = await db.scalar(
+            select(Transaction.id)
+            .where(
+                Transaction.account_id == account.id,
+                Transaction.category_id.is_not(None),
+            )
+            .limit(1)
+        )
+        if categorized is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Cannot change scope on an account with categorized "
+                    "transactions. Uncategorize them first."
+                ),
+            )
+        account.scope = payload.scope
     await db.commit()
     await db.refresh(account)
 

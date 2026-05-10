@@ -2,6 +2,7 @@ from datetime import date
 
 from pydantic import BaseModel
 
+from app.models.scope import Scope
 from app.schemas.category import GoalKind
 
 
@@ -22,12 +23,14 @@ class BudgetCategoryRow(BaseModel):
 class BudgetGroupRow(BaseModel):
     id: int
     name: str
+    scope: Scope
     categories: list[BudgetCategoryRow]
 
 
 class BudgetMonthResponse(BaseModel):
     month: str  # "YYYY-MM"
-    ready_to_assign_cents: int
+    personal_ready_to_assign_cents: int
+    shared_ready_to_assign_cents: int
     groups: list[BudgetGroupRow]
 
 
