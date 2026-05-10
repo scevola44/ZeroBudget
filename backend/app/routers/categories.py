@@ -10,6 +10,8 @@ from app.schemas.category import (
     CategoryGroupUpdate,
     CategoryResponse,
     CategoryUpdate,
+    YnabImportRequest,
+    YnabImportResponse,
     _validate_goal_combo,
 )
 
@@ -193,3 +195,87 @@ async def delete_category(
     category = await _owned_category(db, current_user.id, category_id)
     await db.delete(category)
     await db.commit()
+
+
+@router.post("/categories/import-ynab", response_model=YnabImportResponse)
+async def import_from_ynab(
+    payload: YnabImportRequest, db: DbSession, current_user: CurrentUser
+) -> YnabImportResponse:
+    existing_groups = (
+        (
+            await db.execute(
+                select(CategoryGroup)
+                .where(CategoryGroup.user_id == current_user.id)
+                .order_by(CategoryGroup.sort_order, CategoryGroup.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    existing_cats = (
+        (
+            await db.execute(
+                select(Category).where(Category.user_id == current_user.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    groups_by_name: dict[str, CategoryGroup] = {g.name: g for g in existing_groups}
+    group_id_to_name: dict[int, str] = {g.id: g.name for g in existing_groups}
+    existing_cat_keys: set[tuple[int, str]] = {
+        (c.group_id, c.name) for c in existing_cats
+    }
+    # Track how many categories already exist per group name for sort_order.
+    cats_in_group: dict[str, int] = {}
+    for c in existing_cats:
+        name = group_id_to_name.get(c.group_id)
+        if name is not None:
+            cats_in_group[name] = cats_in_group.get(name, 0) + 1
+
+    next_group_order = max((g.sort_order for g in existing_groups), default=-1) + 1
+    unique_groups: list[str] = []
+    seen: set[str] = set()
+    for row in payload.rows:
+        if row.group not in seen:
+            unique_groups.append(row.group)
+            seen.add(row.group)
+
+    groups_created = 0
+    for i, group_name in enumerate(unique_groups):
+        if group_name not in groups_by_name:
+            new_group = CategoryGroup(
+                user_id=current_user.id,
+                name=group_name,
+                sort_order=next_group_order + i,
+            )
+            db.add(new_group)
+            groups_by_name[group_name] = new_group
+            groups_created += 1
+
+    await db.flush()
+
+    categories_created = 0
+    for row in payload.rows:
+        group = groups_by_name[row.group]
+        key = (group.id, row.category)
+        if key not in existing_cat_keys:
+            sort_order = cats_in_group.get(row.group, 0)
+            new_cat = Category(
+                user_id=current_user.id,
+                group_id=group.id,
+                name=row.category,
+                sort_order=sort_order,
+                goal_kind="monthly",
+                goal_amount_cents=0,
+            )
+            db.add(new_cat)
+            existing_cat_keys.add(key)
+            cats_in_group[row.group] = sort_order + 1
+            categories_created += 1
+
+    await db.commit()
+    return YnabImportResponse(
+        groups_created=groups_created, categories_created=categories_created
+    )

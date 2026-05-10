@@ -67,3 +67,6 @@ export type BudgetMonth = {
   ready_to_assign_cents: number;
   groups: BudgetGroupRow[];
 };
+
+export type YnabImportRow = { group: string; category: string };
+export type YnabImportResponse = { groups_created: number; categories_created: number };
