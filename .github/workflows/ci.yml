@@ -56,8 +56,8 @@ jobs:
     name: Build & push image to GHCR
     runs-on: ubuntu-latest
     needs: [backend, frontend]
-    # Only on merges (push) to develop — PR runs stay test-only.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    # Only on merges (push) to main or develop — PR runs stay test-only.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     permissions:
       contents: read
       packages: write
@@ -79,7 +79,8 @@ jobs:
         with:
           images: ghcr.io/scevola44/zerobudget
           tags: |
-            type=raw,value=develop
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=beta,enable=${{ github.ref == 'refs/heads/develop' }}
             type=sha,format=short
 
       - name: Build & push
