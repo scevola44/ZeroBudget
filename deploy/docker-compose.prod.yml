@@ -26,7 +26,7 @@ services:
       retries: 10
 
   app:
-    image: ghcr.io/scevola44/zerobudget:develop
+    image: ghcr.io/scevola44/zerobudget:beta
     restart: unless-stopped
     depends_on:
       db:

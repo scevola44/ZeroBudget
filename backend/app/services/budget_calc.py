@@ -3,13 +3,18 @@
 This module is the single source of truth for:
 
 - **Ready to Assign** — money the user has in their accounts that hasn't been
-  handed to a category yet.
+  handed to a category yet, computed *per scope* (``"personal"`` and
+  ``"shared"`` are independent pools).
 - **Category balance** — how much is still available to spend on a category,
   including rollover from prior months.
 
 All amounts are signed integer cents in a single currency (EUR). The functions
 here are pure over their inputs so they can be unit-tested without a database —
 see ``tests/test_budget_calc.py``.
+
+Each ``TxnRow`` carries the scope of its **account** and each
+``AssignmentRow`` carries the scope of its **category's group**. The router
+joins the relevant rows before passing them in.
 """
 
 from __future__ import annotations
@@ -47,6 +52,7 @@ class TxnRow:
     category_id: int | None
     date: date
     amount_cents: int  # signed
+    scope: str  # account scope: "personal" | "shared"
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,7 @@ class AssignmentRow:
     category_id: int
     month: date  # first of month
     amount_cents: int
+    scope: str  # category-group scope: "personal" | "shared"
 
 
 @dataclass(frozen=True)
@@ -68,12 +75,14 @@ def compute_ready_to_assign(
     transactions: list[TxnRow],
     assignments: list[AssignmentRow],
     through_month: date,
+    scope: str,
 ) -> int:
-    """Money on hand that has not yet been assigned to any category.
+    """Money on hand in ``scope`` that has not yet been assigned to any category.
 
     Inflows are scoped to ``through_month`` and earlier. Assignments from
     future months reduce the pool when they exceed future inflows — the
-    shortfall must be drawn from money already on hand.
+    shortfall must be drawn from money already on hand. Rows from other
+    scopes are ignored: each scope is its own self-contained pool.
     ``through_month`` must be a first-of-month date.
     """
     boundary = next_month_start(through_month)
@@ -81,16 +90,24 @@ def compute_ready_to_assign(
     inflow_through_month = sum(
         t.amount_cents
         for t in transactions
-        if t.category_id is None and t.date < boundary
+        if t.scope == scope and t.category_id is None and t.date < boundary
     )
-    assigned_through_month = sum(a.amount_cents for a in assignments if a.month < boundary)
+    assigned_through_month = sum(
+        a.amount_cents
+        for a in assignments
+        if a.scope == scope and a.month < boundary
+    )
 
     future_inflow = sum(
         t.amount_cents
         for t in transactions
-        if t.category_id is None and t.date >= boundary
+        if t.scope == scope and t.category_id is None and t.date >= boundary
     )
-    future_assigned = sum(a.amount_cents for a in assignments if a.month >= boundary)
+    future_assigned = sum(
+        a.amount_cents
+        for a in assignments
+        if a.scope == scope and a.month >= boundary
+    )
     future_overdraft = max(0, future_assigned - future_inflow)
 
     return inflow_through_month - assigned_through_month - future_overdraft
@@ -106,6 +123,8 @@ def compute_category_balances(
 
     ``balance`` rolls all prior months forward (positive *and* negative, like
     nYNAB's default). ``assigned`` and ``activity`` reflect ``month`` only.
+    Scope-agnostic: scope filtering happens in the caller via category
+    selection.
     """
     month = month_start(month)
     next_month = next_month_start(month)

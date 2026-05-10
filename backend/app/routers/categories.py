@@ -68,6 +68,7 @@ async def list_groups(
             id=g.id,
             name=g.name,
             sort_order=g.sort_order,
+            scope=g.scope,
             categories=cats_by_group.get(g.id, []),
         )
         for g in groups
@@ -83,13 +84,20 @@ async def create_group(
     payload: CategoryGroupCreate, db: DbSession, current_user: CurrentUser
 ) -> CategoryGroupResponse:
     group = CategoryGroup(
-        user_id=current_user.id, name=payload.name, sort_order=payload.sort_order
+        user_id=current_user.id,
+        name=payload.name,
+        sort_order=payload.sort_order,
+        scope=payload.scope,
     )
     db.add(group)
     await db.commit()
     await db.refresh(group)
     return CategoryGroupResponse(
-        id=group.id, name=group.name, sort_order=group.sort_order, categories=[]
+        id=group.id,
+        name=group.name,
+        sort_order=group.sort_order,
+        scope=group.scope,
+        categories=[],
     )
 
 
@@ -105,10 +113,27 @@ async def update_group(
         group.name = payload.name
     if payload.sort_order is not None:
         group.sort_order = payload.sort_order
+    if payload.scope is not None and payload.scope != group.scope:
+        # Changing scope on a group with categories would silently shift
+        # assignments and balances between Ready-to-Assign pools. Restrict to
+        # empty groups; the user can move categories elsewhere first.
+        existing_cat = await db.scalar(
+            select(Category.id).where(Category.group_id == group.id).limit(1)
+        )
+        if existing_cat is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot change scope on a group that contains categories.",
+            )
+        group.scope = payload.scope
     await db.commit()
     await db.refresh(group)
     return CategoryGroupResponse(
-        id=group.id, name=group.name, sort_order=group.sort_order, categories=[]
+        id=group.id,
+        name=group.name,
+        sort_order=group.sort_order,
+        scope=group.scope,
+        categories=[],
     )
 
 

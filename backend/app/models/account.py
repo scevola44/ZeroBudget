@@ -4,6 +4,7 @@ from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+from app.models.scope import PERSONAL
 
 
 class Account(Base):
@@ -16,6 +17,10 @@ class Account(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     # Free-form string for now: "checking" / "savings" / "cash".
     type: Mapped[str] = mapped_column(String(32), nullable=False, default="checking")
+    # "personal" or "shared" — see app.models.scope.SCOPES.
+    scope: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=PERSONAL
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

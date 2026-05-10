@@ -6,8 +6,21 @@ import { usePlaidLink } from "react-plaid-link";
 import { api, ApiError } from "../api/client";
 import { plaidApi } from "../api/plaid";
 import type { ExchangeResponse, SyncResponse } from "../api/plaid";
-import type { Account } from "../api/types";
+import type { Account, Scope } from "../api/types";
+import { scopeLabel } from "../api/types";
 import { formatCents } from "../lib/money";
+
+function ScopeChip({ scope }: { scope: Scope }) {
+  const cls =
+    scope === "shared"
+      ? "bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-200"
+      : "bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-200";
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>
+      {scopeLabel(scope)}
+    </span>
+  );
+}
 
 export function AccountsPage() {
   const qc = useQueryClient();
@@ -18,11 +31,12 @@ export function AccountsPage() {
 
   const [name, setName] = useState("");
   const [type, setType] = useState("checking");
+  const [scope, setScope] = useState<Scope>("personal");
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const createMutation = useMutation({
-    mutationFn: (body: { name: string; type: string }) =>
+    mutationFn: (body: { name: string; type: string; scope: Scope }) =>
       api<Account>("/api/accounts", { method: "POST", body }),
     onSuccess: () => {
       setName("");
@@ -56,7 +70,7 @@ export function AccountsPage() {
         className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 flex flex-col sm:flex-row gap-3 sm:items-end"
         onSubmit={(e) => {
           e.preventDefault();
-          if (name.trim()) createMutation.mutate({ name: name.trim(), type });
+          if (name.trim()) createMutation.mutate({ name: name.trim(), type, scope });
         }}
       >
         <div className="flex-1 space-y-1">
@@ -79,6 +93,17 @@ export function AccountsPage() {
             <option value="checking">Checking</option>
             <option value="savings">Savings</option>
             <option value="cash">Cash</option>
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Scope</label>
+          <select
+            value={scope}
+            onChange={(e) => setScope(e.target.value as Scope)}
+            className="border border-stone-300 dark:border-stone-600 rounded-lg px-3 py-2 bg-white dark:bg-stone-900"
+          >
+            <option value="personal">Personal</option>
+            <option value="shared">Family</option>
           </select>
         </div>
         <button
@@ -188,11 +213,14 @@ function AccountRow({
   return (
     <tr className="border-t border-stone-100 dark:border-stone-800">
       <td className="px-5 py-3">
-        <Link to={`/accounts/${account.id}`} className="text-indigo-600 dark:text-indigo-400 hover:underline">
-          {account.name}
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link to={`/accounts/${account.id}`} className="text-indigo-600 dark:text-indigo-400 hover:underline">
+            {account.name}
+          </Link>
+          <ScopeChip scope={account.scope} />
+        </div>
         {account.plaid_mask && (
-          <span className="ml-2 text-xs text-stone-400 dark:text-stone-500">••{account.plaid_mask}</span>
+          <span className="text-xs text-stone-400 dark:text-stone-500">••{account.plaid_mask}</span>
         )}
       </td>
       <td className="hidden sm:table-cell px-5 py-3 capitalize text-stone-600 dark:text-stone-400">{account.type}</td>

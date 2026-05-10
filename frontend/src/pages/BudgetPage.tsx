@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { BudgetCategoryRow, BudgetMonth } from "../api/types";
+import type { BudgetCategoryRow, BudgetGroupRow, BudgetMonth, Scope } from "../api/types";
+import { scopeLabel } from "../api/types";
 import { currentMonth, monthLabel, shiftMonth } from "../lib/dates";
 import { formatGoal } from "../lib/goal";
 import { formatCents, parseAmountToCents } from "../lib/money";
@@ -32,6 +33,13 @@ function availablePillClass(assignedCents: number, balanceCents: number): string
     return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200";
   }
   return "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200";
+}
+
+function readyPillClass(cents: number): string {
+  if (cents > 0)
+    return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100";
+  if (cents < 0) return "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100";
+  return "bg-stone-200 text-stone-900 dark:bg-stone-800 dark:text-stone-100";
 }
 
 export function BudgetPage() {
@@ -71,13 +79,12 @@ export function BudgetPage() {
     },
   });
 
-  const ready = budgetQuery.data?.ready_to_assign_cents ?? 0;
-  const readyColor =
-    ready > 0
-      ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100"
-      : ready < 0
-        ? "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100"
-        : "bg-stone-200 text-stone-900 dark:bg-stone-800 dark:text-stone-100";
+  const personalReady = budgetQuery.data?.personal_ready_to_assign_cents ?? 0;
+  const sharedReady = budgetQuery.data?.shared_ready_to_assign_cents ?? 0;
+  const personalGroups: BudgetGroupRow[] =
+    budgetQuery.data?.groups.filter((g) => g.scope === "personal") ?? [];
+  const sharedGroups: BudgetGroupRow[] =
+    budgetQuery.data?.groups.filter((g) => g.scope === "shared") ?? [];
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -100,9 +107,9 @@ export function BudgetPage() {
         </div>
       </header>
 
-      <div className={`rounded-2xl p-5 ${readyColor}`}>
-        <div className="text-xs uppercase tracking-wide opacity-70">Ready to Assign</div>
-        <div className="text-3xl font-semibold tabular-nums">{formatCents(ready)}</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <ReadyToAssignPill scope="personal" cents={personalReady} />
+        <ReadyToAssignPill scope="shared" cents={sharedReady} />
       </div>
 
       {budgetQuery.isLoading && (
@@ -122,84 +129,142 @@ export function BudgetPage() {
         </div>
       )}
 
-      {budgetQuery.data?.groups.map((group) => {
-        const isCollapsed = collapsedGroups.has(group.id);
-        return (
-          <section
-            key={group.id}
-            className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl overflow-hidden"
-          >
-            <button
-              type="button"
-              onClick={() => toggleGroup(group.id)}
-              aria-expanded={!isCollapsed}
-              className="w-full flex items-center gap-2 px-5 py-3 bg-stone-50 dark:bg-stone-800 border-b border-stone-200 dark:border-stone-700 text-sm font-semibold text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-700/60 text-left"
-            >
-              <svg
-                className={`w-4 h-4 shrink-0 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 9l-7 7-7-7"
-                />
-              </svg>
-              <span className="flex-1 truncate">{group.name}</span>
-              <div className="flex gap-6 shrink-0">
-                <div className="text-right">
-                  <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
-                    Assigned
-                  </div>
-                  <div className="tabular-nums">
-                    {formatCents(
-                      group.categories.reduce((s, c) => s + c.assigned_cents, 0),
-                    )}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
-                    Available
-                  </div>
-                  <div className="tabular-nums">
-                    {formatCents(
-                      group.categories.reduce((s, c) => s + c.balance_cents, 0),
-                    )}
-                  </div>
-                </div>
-              </div>
-            </button>
-            {!isCollapsed && (
-              group.categories.length === 0 ? (
-                <div className="px-5 py-4 text-sm text-stone-500 dark:text-stone-400">
-                  No categories in this group.
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <tbody>
-                      {group.categories.map((cat) => (
-                        <CategoryRow
-                          key={cat.id}
-                          cat={cat}
-                          onAssign={(cents) =>
-                            assignMutation.mutate({ categoryId: cat.id, cents })
-                          }
-                        />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )
-            )}
-          </section>
-        );
-      })}
+      <ScopeSection
+        scope="personal"
+        groups={personalGroups}
+        collapsedGroups={collapsedGroups}
+        toggleGroup={toggleGroup}
+        onAssign={(categoryId, cents) =>
+          assignMutation.mutate({ categoryId, cents })
+        }
+      />
+      <ScopeSection
+        scope="shared"
+        groups={sharedGroups}
+        collapsedGroups={collapsedGroups}
+        toggleGroup={toggleGroup}
+        onAssign={(categoryId, cents) =>
+          assignMutation.mutate({ categoryId, cents })
+        }
+      />
     </div>
+  );
+}
+
+function ReadyToAssignPill({ scope, cents }: { scope: Scope; cents: number }) {
+  return (
+    <div className={`rounded-2xl p-5 ${readyPillClass(cents)}`}>
+      <div className="text-xs uppercase tracking-wide opacity-70">
+        Ready to Assign — {scopeLabel(scope)}
+      </div>
+      <div className="text-3xl font-semibold tabular-nums">{formatCents(cents)}</div>
+    </div>
+  );
+}
+
+function ScopeSection({
+  scope,
+  groups,
+  collapsedGroups,
+  toggleGroup,
+  onAssign,
+}: {
+  scope: Scope;
+  groups: BudgetGroupRow[];
+  collapsedGroups: Set<number>;
+  toggleGroup: (groupId: number) => void;
+  onAssign: (categoryId: number, cents: number) => void;
+}) {
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
+        {scopeLabel(scope)}
+      </h2>
+      {groups.length === 0 ? (
+        <div className="bg-white dark:bg-stone-900 border border-dashed border-stone-300 dark:border-stone-700 rounded-2xl p-6 text-center text-sm text-stone-500 dark:text-stone-400">
+          No {scopeLabel(scope).toLowerCase()} category groups yet. Add one on the{" "}
+          <a className="text-indigo-600 dark:text-indigo-400 hover:underline" href="/categories">
+            Categories
+          </a>{" "}
+          page.
+        </div>
+      ) : (
+        groups.map((group) => {
+          const isCollapsed = collapsedGroups.has(group.id);
+          return (
+            <div
+              key={group.id}
+              className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl overflow-hidden"
+            >
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.id)}
+                aria-expanded={!isCollapsed}
+                className="w-full flex items-center gap-2 px-5 py-3 bg-stone-50 dark:bg-stone-800 border-b border-stone-200 dark:border-stone-700 text-sm font-semibold text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-700/60 text-left"
+              >
+                <svg
+                  className={`w-4 h-4 shrink-0 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 9l-7 7-7-7"
+                  />
+                </svg>
+                <span className="flex-1 truncate">{group.name}</span>
+                <div className="flex gap-6 shrink-0">
+                  <div className="text-right">
+                    <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+                      Assigned
+                    </div>
+                    <div className="tabular-nums">
+                      {formatCents(
+                        group.categories.reduce((s, c) => s + c.assigned_cents, 0),
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+                      Available
+                    </div>
+                    <div className="tabular-nums">
+                      {formatCents(
+                        group.categories.reduce((s, c) => s + c.balance_cents, 0),
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </button>
+              {!isCollapsed &&
+                (group.categories.length === 0 ? (
+                  <div className="px-5 py-4 text-sm text-stone-500 dark:text-stone-400">
+                    No categories in this group.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <tbody>
+                        {group.categories.map((cat) => (
+                          <CategoryRow
+                            key={cat.id}
+                            cat={cat}
+                            onAssign={(cents) => onAssign(cat.id, cents)}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+            </div>
+          );
+        })
+      )}
+    </section>
   );
 }
 

@@ -5,10 +5,19 @@ export type User = { id: number; email: string };
 
 export type AccountType = "checking" | "savings" | "cash" | string;
 
+export type Scope = "personal" | "shared";
+
+export const SCOPES: Scope[] = ["personal", "shared"];
+
+export function scopeLabel(scope: Scope): string {
+  return scope === "shared" ? "Family" : "Personal";
+}
+
 export type Account = {
   id: number;
   name: string;
   type: AccountType;
+  scope: Scope;
   balance_cents: number;
   plaid_item_id: number | null;
   plaid_mask: string | null;
@@ -31,6 +40,7 @@ export type CategoryGroup = {
   id: number;
   name: string;
   sort_order: number;
+  scope: Scope;
   categories: Category[];
 };
 
@@ -59,12 +69,14 @@ export type BudgetCategoryRow = {
 export type BudgetGroupRow = {
   id: number;
   name: string;
+  scope: Scope;
   categories: BudgetCategoryRow[];
 };
 
 export type BudgetMonth = {
   month: string;
-  ready_to_assign_cents: number;
+  personal_ready_to_assign_cents: number;
+  shared_ready_to_assign_cents: number;
   groups: BudgetGroupRow[];
 };
 

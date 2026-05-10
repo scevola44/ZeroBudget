@@ -73,16 +73,34 @@ async def register_user(
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
-async def create_account(client: AsyncClient, headers: dict[str, str], name: str = "Checking") -> int:
+async def create_account(
+    client: AsyncClient,
+    headers: dict[str, str],
+    name: str = "Checking",
+    *,
+    scope: str = "personal",
+) -> int:
     r = await client.post(
-        "/api/accounts", json={"name": name, "type": "checking"}, headers=headers
+        "/api/accounts",
+        json={"name": name, "type": "checking", "scope": scope},
+        headers=headers,
     )
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
 
-async def create_group(client: AsyncClient, headers: dict[str, str], name: str = "Bills") -> int:
-    r = await client.post("/api/category-groups", json={"name": name}, headers=headers)
+async def create_group(
+    client: AsyncClient,
+    headers: dict[str, str],
+    name: str = "Bills",
+    *,
+    scope: str = "personal",
+) -> int:
+    r = await client.post(
+        "/api/category-groups",
+        json={"name": name, "scope": scope},
+        headers=headers,
+    )
     assert r.status_code == 201, r.text
     return r.json()["id"]
 

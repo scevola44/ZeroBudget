@@ -17,11 +17,23 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import { api } from "../api/client";
-import type { Category, CategoryGroup, GoalKind, YnabImportRow, YnabImportResponse } from "../api/types";
+import type { Category, CategoryGroup, GoalKind, YnabImportRow, YnabImportResponse, Scope } from "../api/types";
 import { DragHandle } from "../components/DragHandle";
 import { YnabImportModal } from "./YnabImportModal";
 import { formatGoal } from "../lib/goal";
 import { parseAmountToCents } from "../lib/money";
+
+function ScopeChip({ scope }: { scope: Scope }) {
+  const cls =
+    scope === "shared"
+      ? "bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-200"
+      : "bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-200";
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>
+      {scopeLabel(scope)}
+    </span>
+  );
+}
 
 function SortableGroupHeader({ group }: { group: CategoryGroup }) {
   const { attributes, listeners, isDragging } = useSortable({ id: `group-${group.id}` });
@@ -34,7 +46,8 @@ function SortableGroupHeader({ group }: { group: CategoryGroup }) {
       }`}
     >
       <DragHandle listeners={listeners} />
-      {group.name}
+      <span className="flex-1">{group.name}</span>
+      <ScopeChip scope={group.scope} />
     </header>
   );
 }
@@ -188,6 +201,7 @@ export function CategoriesPage() {
   });
 
   const [newGroup, setNewGroup] = useState("");
+  const [newGroupScope, setNewGroupScope] = useState<Scope>("personal");
   const [draftByGroup, setDraftByGroup] = useState<Record<number, NewCategoryDraft>>({});
   const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
   const [editingDraft, setEditingDraft] = useState<NewCategoryDraft>(EMPTY_DRAFT);
@@ -204,10 +218,14 @@ export function CategoriesPage() {
   }
 
   const createGroup = useMutation({
-    mutationFn: (name: string) =>
-      api("/api/category-groups", { method: "POST", body: { name } }),
+    mutationFn: (vars: { name: string; scope: Scope }) =>
+      api("/api/category-groups", {
+        method: "POST",
+        body: { name: vars.name, scope: vars.scope },
+      }),
     onSuccess: () => {
       setNewGroup("");
+      setNewGroupScope("personal");
       void qc.invalidateQueries({ queryKey: ["category-groups"] });
       void qc.invalidateQueries({ queryKey: ["budget"] });
     },
@@ -371,7 +389,7 @@ export function CategoriesPage() {
           className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 flex flex-col sm:flex-row gap-3 sm:items-end"
           onSubmit={(e) => {
             e.preventDefault();
-            if (newGroup.trim()) createGroup.mutate(newGroup.trim());
+            if (newGroup.trim()) createGroup.mutate({ name: newGroup.trim(), scope: newGroupScope });
           }}
         >
           <div className="flex-1 space-y-1">
@@ -382,6 +400,17 @@ export function CategoriesPage() {
               placeholder="e.g. Bills"
               className="w-full border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2"
             />
+          </div>
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Scope</label>
+            <select
+              value={newGroupScope}
+              onChange={(e) => setNewGroupScope(e.target.value as Scope)}
+              className="border border-stone-300 dark:border-stone-600 rounded-lg px-3 py-2 bg-white dark:bg-stone-900"
+            >
+              <option value="personal">Personal</option>
+              <option value="shared">Family</option>
+            </select>
           </div>
           <button
             type="submit"
