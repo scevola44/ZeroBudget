@@ -17,7 +17,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import { api } from "../api/client";
-import type { Category, CategoryGroup, GoalKind, YnabImportRow, YnabImportResponse, Scope } from "../api/types";
+import { scopeLabel, type Category, type CategoryGroup, type GoalKind, type YnabImportRow, type YnabImportResponse, type Scope } from "../api/types";
 import { DragHandle } from "../components/DragHandle";
 import { YnabImportModal } from "./YnabImportModal";
 import { formatGoal } from "../lib/goal";
