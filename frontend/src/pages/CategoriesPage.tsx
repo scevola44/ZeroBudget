@@ -19,6 +19,8 @@ import { CSS } from "@dnd-kit/utilities";
 import { api } from "../api/client";
 import { scopeLabel, type Category, type CategoryGroup, type GoalKind, type YnabImportRow, type YnabImportResponse, type Scope } from "../api/types";
 import { DragHandle } from "../components/DragHandle";
+import { EditGroupModal } from "../components/EditGroupModal";
+import { DeleteGroupConfirmModal } from "../components/DeleteGroupConfirmModal";
 import { YnabImportModal } from "./YnabImportModal";
 import { formatGoal } from "../lib/goal";
 import { parseAmountToCents } from "../lib/money";
@@ -35,7 +37,15 @@ function ScopeChip({ scope }: { scope: Scope }) {
   );
 }
 
-function SortableGroupHeader({ group }: { group: CategoryGroup }) {
+function SortableGroupHeader({
+  group,
+  onEditClick,
+  onDeleteClick,
+}: {
+  group: CategoryGroup;
+  onEditClick: () => void;
+  onDeleteClick: () => void;
+}) {
   const { attributes, listeners, isDragging } = useSortable({ id: `group-${group.id}` });
 
   return (
@@ -48,6 +58,26 @@ function SortableGroupHeader({ group }: { group: CategoryGroup }) {
       <DragHandle listeners={listeners} />
       <span className="flex-1">{group.name}</span>
       <ScopeChip scope={group.scope} />
+      <button
+        type="button"
+        onClick={onEditClick}
+        className="text-stone-600 dark:text-stone-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+        title="Edit group"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        onClick={onDeleteClick}
+        className="text-stone-600 dark:text-stone-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+        title="Delete group"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        </svg>
+      </button>
     </header>
   );
 }
@@ -206,6 +236,9 @@ export function CategoriesPage() {
   const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
   const [editingDraft, setEditingDraft] = useState<NewCategoryDraft>(EMPTY_DRAFT);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
+  const [deletingGroupId, setDeletingGroupId] = useState<number | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
 
   function getDraft(groupId: number): NewCategoryDraft {
     return draftByGroup[groupId] ?? EMPTY_DRAFT;
@@ -288,6 +321,36 @@ export function CategoriesPage() {
         method: "PATCH",
         body: { sort_order: vars.sortOrder },
       }),
+  });
+
+  const updateGroup = useMutation({
+    mutationFn: (vars: { groupId: number; name: string; scope: Scope }) =>
+      api(`/api/category-groups/${vars.groupId}`, {
+        method: "PATCH",
+        body: { name: vars.name, scope: vars.scope },
+      }),
+    onSuccess: () => {
+      setEditingGroupId(null);
+      setEditError(null);
+      void qc.invalidateQueries({ queryKey: ["category-groups"] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : "Failed to update group";
+      setEditError(message);
+    },
+  });
+
+  const deleteGroup = useMutation({
+    mutationFn: (groupId: number) =>
+      api(`/api/category-groups/${groupId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      setDeletingGroupId(null);
+      void qc.invalidateQueries({ queryKey: ["category-groups"] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
   });
 
   const updateCategoryOrder = useMutation({
@@ -428,7 +491,14 @@ export function CategoriesPage() {
               key={group.id}
               className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl overflow-hidden"
             >
-              <SortableGroupHeader group={group} />
+              <SortableGroupHeader
+                group={group}
+                onEditClick={() => {
+                  setEditingGroupId(group.id);
+                  setEditError(null);
+                }}
+                onDeleteClick={() => setDeletingGroupId(group.id)}
+              />
               <SortableContext
                 items={group.categories.map((c) => `category-${c.id}`)}
                 strategy={verticalListSortingStrategy}
@@ -499,6 +569,32 @@ export function CategoriesPage() {
           onImport={(rows) => importYnab.mutate(rows)}
           isPending={importYnab.isPending}
           onClose={() => setImportModalOpen(false)}
+        />
+      )}
+
+      {editingGroupId !== null && groupsQuery.data && (
+        <EditGroupModal
+          group={groupsQuery.data.find((g) => g.id === editingGroupId)!}
+          isOpen={true}
+          onClose={() => {
+            setEditingGroupId(null);
+            setEditError(null);
+          }}
+          onSave={(name, scope) => {
+            updateGroup.mutate({ groupId: editingGroupId, name, scope });
+          }}
+          isPending={updateGroup.isPending}
+          error={editError}
+        />
+      )}
+
+      {deletingGroupId !== null && groupsQuery.data && (
+        <DeleteGroupConfirmModal
+          group={groupsQuery.data.find((g) => g.id === deletingGroupId)!}
+          isOpen={true}
+          onClose={() => setDeletingGroupId(null)}
+          onConfirm={() => deleteGroup.mutate(deletingGroupId)}
+          isPending={deleteGroup.isPending}
         />
       )}
     </DndContext>
