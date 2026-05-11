@@ -99,3 +99,17 @@ class CategoryGroupResponse(BaseModel):
     sort_order: int
     scope: Scope
     categories: list[CategoryResponse] = []
+
+
+class YnabImportRow(BaseModel):
+    group: str = Field(min_length=1, max_length=120)
+    category: str = Field(min_length=1, max_length=120)
+
+
+class YnabImportRequest(BaseModel):
+    rows: list[YnabImportRow] = Field(min_length=1)
+
+
+class YnabImportResponse(BaseModel):
+    groups_created: int
+    categories_created: int

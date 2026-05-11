@@ -17,9 +17,9 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import { api } from "../api/client";
-import type { Category, CategoryGroup, GoalKind, Scope } from "../api/types";
-import { scopeLabel } from "../api/types";
+import { scopeLabel, type Category, type CategoryGroup, type GoalKind, type YnabImportRow, type YnabImportResponse, type Scope } from "../api/types";
 import { DragHandle } from "../components/DragHandle";
+import { YnabImportModal } from "./YnabImportModal";
 import { formatGoal } from "../lib/goal";
 import { parseAmountToCents } from "../lib/money";
 
@@ -205,6 +205,7 @@ export function CategoriesPage() {
   const [draftByGroup, setDraftByGroup] = useState<Record<number, NewCategoryDraft>>({});
   const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
   const [editingDraft, setEditingDraft] = useState<NewCategoryDraft>(EMPTY_DRAFT);
+  const [importModalOpen, setImportModalOpen] = useState(false);
 
   function getDraft(groupId: number): NewCategoryDraft {
     return draftByGroup[groupId] ?? EMPTY_DRAFT;
@@ -297,6 +298,19 @@ export function CategoriesPage() {
       }),
   });
 
+  const importYnab = useMutation({
+    mutationFn: (rows: YnabImportRow[]) =>
+      api<YnabImportResponse>("/api/categories/import-ynab", {
+        method: "POST",
+        body: { rows },
+      }),
+    onSuccess: () => {
+      setImportModalOpen(false);
+      void qc.invalidateQueries({ queryKey: ["category-groups"] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+  });
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
 
@@ -360,7 +374,16 @@ export function CategoriesPage() {
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd} collisionDetection={closestCenter}>
       <div className="max-w-3xl space-y-6">
-        <h1 className="text-2xl font-semibold">Categories</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold">Categories</h1>
+          <button
+            type="button"
+            onClick={() => setImportModalOpen(true)}
+            className="text-sm border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-3 py-1.5"
+          >
+            Import from YNAB
+          </button>
+        </div>
 
         <form
           className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 flex flex-col sm:flex-row gap-3 sm:items-end"
@@ -469,6 +492,15 @@ export function CategoriesPage() {
           </div>
         )}
       </div>
+
+      {importModalOpen && (
+        <YnabImportModal
+          existingGroups={groupsQuery.data ?? []}
+          onImport={(rows) => importYnab.mutate(rows)}
+          isPending={importYnab.isPending}
+          onClose={() => setImportModalOpen(false)}
+        />
+      )}
     </DndContext>
   );
 }
