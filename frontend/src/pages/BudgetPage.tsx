@@ -317,7 +317,7 @@ function CategoryRow({
           <button
             className="hover:bg-stone-100 dark:hover:bg-stone-800 rounded px-2 py-0.5"
             onClick={() => {
-              setDraft((cat.assigned_cents / 100).toFixed(2));
+              setDraft("");
               setEditing(true);
             }}
           >
