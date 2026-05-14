@@ -142,12 +142,12 @@ function SortableCategoryItem({
             value={editingDraft.name}
             onChange={(e) => onDraftChange({ name: e.target.value })}
             placeholder="Category name"
-            className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
           <select
             value={editingDraft.kind}
             onChange={(e) => onDraftChange({ kind: e.target.value as GoalKind })}
-            className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-2 py-1.5"
+            className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-2 py-1.5"
           >
             <option value="monthly">Monthly</option>
             <option value="yearly">Yearly</option>
@@ -158,28 +158,28 @@ function SortableCategoryItem({
             onChange={(e) => onDraftChange({ amount: e.target.value })}
             inputMode="decimal"
             placeholder="Amount"
-            className="w-28 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 tabular-nums"
+            className="h-9 w-28 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 tabular-nums"
           />
           {needsMonth && (
             <input
               type="month"
               value={editingDraft.targetMonth}
               onChange={(e) => onDraftChange({ targetMonth: e.target.value })}
-              className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5"
+              className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5"
             />
           )}
           <div className="flex gap-1">
             <button
               type="submit"
               disabled={!canSave}
-              className="bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg px-3 py-1.5"
+              className="h-9 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg px-3 py-1.5"
             >
               Save
             </button>
             <button
               type="button"
               onClick={onEditCancel}
-              className="border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-3 py-1.5"
+              className="h-9 border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-3 py-1.5"
             >
               Cancel
             </button>
@@ -643,12 +643,12 @@ function NewCategoryForm({
         value={draft.name}
         onChange={(e) => onChange({ name: e.target.value })}
         placeholder="New category"
-        className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 text-sm"
+        className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 text-sm"
       />
       <select
         value={draft.kind}
         onChange={(e) => onChange({ kind: e.target.value as GoalKind })}
-        className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-2 py-1.5 text-sm"
+        className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-2 py-1.5 text-sm"
       >
         <option value="monthly">Monthly</option>
         <option value="yearly">Yearly</option>
@@ -659,20 +659,20 @@ function NewCategoryForm({
         onChange={(e) => onChange({ amount: e.target.value })}
         inputMode="decimal"
         placeholder="Amount"
-        className="w-28 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 text-sm tabular-nums"
+        className="h-9 w-28 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 text-sm tabular-nums"
       />
       {needsMonth && (
         <input
           type="month"
           value={draft.targetMonth}
           onChange={(e) => onChange({ targetMonth: e.target.value })}
-          className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 text-sm"
+          className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 text-sm"
         />
       )}
       <button
         type="submit"
         disabled={!canSubmit}
-        className="bg-stone-800 hover:bg-stone-900 dark:bg-stone-700 dark:hover:bg-stone-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg px-3 py-1.5"
+        className="h-9 bg-stone-800 hover:bg-stone-900 dark:bg-stone-700 dark:hover:bg-stone-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg px-3 py-1.5"
       >
         Add
       </button>

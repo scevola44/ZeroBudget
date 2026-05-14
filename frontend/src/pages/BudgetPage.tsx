@@ -5,7 +5,7 @@ import { api } from "../api/client";
 import type { BudgetCategoryRow, BudgetGroupRow, BudgetMonth, Scope } from "../api/types";
 import { scopeLabel } from "../api/types";
 import { currentMonth, monthLabel, shiftMonth } from "../lib/dates";
-import { formatGoal } from "../lib/goal";
+import { formatGoal, monthlyGoalCents } from "../lib/goal";
 import { formatCents, parseAmountToCents } from "../lib/money";
 
 const COLLAPSED_GROUPS_STORAGE_KEY = "budget:collapsed-groups";
@@ -191,6 +191,7 @@ function ScopeSection({
       ) : (
         groups.map((group) => {
           const isCollapsed = collapsedGroups.has(group.id);
+          const groupMonthlyGoalCents = group.categories.reduce((s, c) => s + monthlyGoalCents(c), 0);
           return (
             <div
               key={group.id}
@@ -216,8 +217,21 @@ function ScopeSection({
                     d="M19 9l-7 7-7-7"
                   />
                 </svg>
-                <span className="flex-1 truncate">{group.name}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block truncate">{group.name}</span>
+                  <span className="block md:hidden text-xs font-normal text-stone-400 dark:text-stone-500 tabular-nums">
+                    {formatCents(groupMonthlyGoalCents)}/mo
+                  </span>
+                </span>
                 <div className="flex gap-6 shrink-0">
+                  <div className="hidden md:block text-right">
+                    <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+                      Goals/mo
+                    </div>
+                    <div className="tabular-nums">
+                      {formatCents(groupMonthlyGoalCents)}
+                    </div>
+                  </div>
                   <div className="text-right">
                     <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
                       Assigned
@@ -311,6 +325,7 @@ function CategoryRow({
               if (e.key === "Enter") commit();
               if (e.key === "Escape") setEditing(false);
             }}
+            inputMode="decimal"
             className="w-28 text-right border border-indigo-300 dark:border-indigo-500 bg-transparent dark:bg-stone-900 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         ) : (

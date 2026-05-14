@@ -22,7 +22,7 @@ export function Layout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen flex">
+    <div className="min-h-screen flex bg-amber-50 dark:bg-stone-950">
       {/* Mobile backdrop */}
       {menuOpen && (
         <div
