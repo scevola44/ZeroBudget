@@ -8,6 +8,7 @@ import { AccountDetailPage } from "./pages/AccountDetailPage";
 import { AccountsPage } from "./pages/AccountsPage";
 import { BudgetPage } from "./pages/BudgetPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
+import { TransactionsPage } from "./pages/TransactionsPage";
 
 export default function App() {
   return (
@@ -60,6 +61,16 @@ export default function App() {
           <RequireAuth>
             <Layout>
               <CategoriesPage />
+            </Layout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/transactions"
+        element={
+          <RequireAuth>
+            <Layout>
+              <TransactionsPage />
             </Layout>
           </RequireAuth>
         }
