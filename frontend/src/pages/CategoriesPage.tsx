@@ -144,15 +144,22 @@ function SortableCategoryItem({
             placeholder="Category name"
             className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
-          <select
-            value={editingDraft.kind}
-            onChange={(e) => onDraftChange({ kind: e.target.value as GoalKind })}
-            className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-2 py-1.5"
-          >
-            <option value="monthly">Monthly</option>
-            <option value="yearly">Yearly</option>
-            <option value="target_date">By a specific month</option>
-          </select>
+          <div className="relative">
+            <select
+              value={editingDraft.kind}
+              onChange={(e) => onDraftChange({ kind: e.target.value as GoalKind })}
+              className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg pl-2 pr-6 text-sm"
+            >
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+              <option value="target_date">By a specific month</option>
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center text-stone-400 dark:text-stone-500">
+              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </div>
+          </div>
           <input
             value={editingDraft.amount}
             onChange={(e) => onDraftChange({ amount: e.target.value })}
@@ -466,14 +473,21 @@ export function CategoriesPage() {
           </div>
           <div className="space-y-1">
             <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Scope</label>
-            <select
-              value={newGroupScope}
-              onChange={(e) => setNewGroupScope(e.target.value as Scope)}
-              className="border border-stone-300 dark:border-stone-600 rounded-lg px-3 py-2 bg-white dark:bg-stone-900"
-            >
-              <option value="personal">Personal</option>
-              <option value="shared">Family</option>
-            </select>
+            <div className="relative">
+              <select
+                value={newGroupScope}
+                onChange={(e) => setNewGroupScope(e.target.value as Scope)}
+                className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
+              >
+                <option value="personal">Personal</option>
+                <option value="shared">Family</option>
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </div>
+            </div>
           </div>
           <button
             type="submit"
@@ -645,15 +659,22 @@ function NewCategoryForm({
         placeholder="New category"
         className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 text-sm"
       />
-      <select
-        value={draft.kind}
-        onChange={(e) => onChange({ kind: e.target.value as GoalKind })}
-        className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-2 py-1.5 text-sm"
-      >
-        <option value="monthly">Monthly</option>
-        <option value="yearly">Yearly</option>
-        <option value="target_date">By a specific month</option>
-      </select>
+      <div className="relative">
+        <select
+          value={draft.kind}
+          onChange={(e) => onChange({ kind: e.target.value as GoalKind })}
+          className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg pl-2 pr-6 text-sm"
+        >
+          <option value="monthly">Monthly</option>
+          <option value="yearly">Yearly</option>
+          <option value="target_date">By a specific month</option>
+        </select>
+        <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center text-stone-400 dark:text-stone-500">
+          <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 6l4 4 4-4" />
+          </svg>
+        </div>
+      </div>
       <input
         value={draft.amount}
         onChange={(e) => onChange({ amount: e.target.value })}

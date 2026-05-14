@@ -85,26 +85,40 @@ export function AccountsPage() {
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Type</label>
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value)}
-            className="border border-stone-300 dark:border-stone-600 rounded-lg px-3 py-2 bg-white dark:bg-stone-900"
-          >
-            <option value="checking">Checking</option>
-            <option value="savings">Savings</option>
-            <option value="cash">Cash</option>
-          </select>
+          <div className="relative">
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
+            >
+              <option value="checking">Checking</option>
+              <option value="savings">Savings</option>
+              <option value="cash">Cash</option>
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </div>
+          </div>
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Scope</label>
-          <select
-            value={scope}
-            onChange={(e) => setScope(e.target.value as Scope)}
-            className="border border-stone-300 dark:border-stone-600 rounded-lg px-3 py-2 bg-white dark:bg-stone-900"
-          >
-            <option value="personal">Personal</option>
-            <option value="shared">Family</option>
-          </select>
+          <div className="relative">
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value as Scope)}
+              className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
+            >
+              <option value="personal">Personal</option>
+              <option value="shared">Family</option>
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </div>
+          </div>
         </div>
         <button
           type="submit"
