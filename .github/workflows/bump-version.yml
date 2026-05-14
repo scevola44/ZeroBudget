@@ -1,0 +1,120 @@
+name: Bump Version
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [develop]
+
+jobs:
+  bump:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get bump label
+        id: label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels.map(l => l.name);
+            const bumpLabels = labels.filter(l => l.match(/^bump:(major|minor|patch)$/));
+            const bump = bumpLabels.length > 0
+              ? bumpLabels[0].split(':')[1]
+              : '';
+            core.setOutput('bump', bump);
+            console.log(`Bump type: ${bump || 'none (beta counter only)'}`);
+
+      - name: Compute new version
+        id: version
+        env:
+          BUMP_LABEL: ${{ steps.label.outputs.bump }}
+        run: |
+          set -e
+          CURRENT=$(cat VERSION)
+          echo "Current version: $CURRENT"
+
+          # Parse semver: MAJOR.MINOR.PATCH[-beta.N]
+          if [[ "$CURRENT" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-beta\.([0-9]+))?$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"
+            MINOR="${BASH_REMATCH[2]}"
+            PATCH="${BASH_REMATCH[3]}"
+            IS_BETA="${BASH_REMATCH[4]}"
+            BETA_N="${BASH_REMATCH[5]:-0}"
+
+            if [[ -n "$BUMP_LABEL" ]]; then
+              # Apply semantic version bump and start beta.1
+              case "$BUMP_LABEL" in
+                major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+                minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+                patch) PATCH=$((PATCH+1)) ;;
+              esac
+              NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}-beta.1"
+            elif [[ -n "$IS_BETA" ]]; then
+              # Increment beta counter
+              NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}-beta.$((BETA_N+1))"
+            else
+              # No label, currently stable → auto patch and start beta.1
+              NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH+1))-beta.1"
+            fi
+          else
+            echo "ERROR: Could not parse version '$CURRENT'"
+            exit 1
+          fi
+
+          echo "New version: $NEW_VERSION"
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create version bump branch
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git checkout -b "chore/bump-version-${NEW_VERSION}"
+
+      - name: Update version files
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Update VERSION file
+          echo "$NEW_VERSION" > VERSION
+
+          # Update frontend/package.json
+          cd frontend
+          npm version "$NEW_VERSION" --no-git-tag-version
+          cd ..
+
+          # Update backend/pyproject.toml
+          sed -i.bak "s/^version = .*/version = \"$NEW_VERSION\"/" backend/pyproject.toml
+          rm -f backend/pyproject.toml.bak
+
+      - name: Commit version changes
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION frontend/package.json frontend/package-lock.json backend/pyproject.toml
+          git commit -m "chore: bump version to $NEW_VERSION"
+
+      - name: Push branch
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git push origin "chore/bump-version-${NEW_VERSION}"
+
+      - name: Create pull request
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --base develop \
+            --head "chore/bump-version-${NEW_VERSION}" \
+            --title "chore: bump version to $NEW_VERSION" \
+            --body "Automated version bump to $NEW_VERSION"

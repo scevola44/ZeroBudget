@@ -1,5 +1,6 @@
 import os
 from contextlib import asynccontextmanager
+from importlib.metadata import version as pkg_version
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -25,7 +26,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ZeroBudget", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="ZeroBudget", version=pkg_version("zerobudget-backend"), lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
