@@ -31,3 +31,20 @@ class TransactionResponse(BaseModel):
     payee: str
     memo: str
     amount_cents: int
+
+
+class TransactionImportRow(BaseModel):
+    account_id: int
+    category_id: int | None = None
+    date: DateType
+    payee: str = Field(default="", max_length=255)
+    memo: str = Field(default="", max_length=500)
+    amount_cents: int
+
+
+class TransactionImportRequest(BaseModel):
+    rows: list[TransactionImportRow]
+
+
+class TransactionImportResponse(BaseModel):
+    imported: int
