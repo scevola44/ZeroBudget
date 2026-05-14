@@ -1,3 +1,4 @@
+from datetime import date
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
@@ -58,6 +59,8 @@ async def list_transactions(
     current_user: CurrentUser,
     account_id: int | None = Query(default=None),
     month: str | None = Query(default=None, description="YYYY-MM"),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
 ) -> list[TransactionResponse]:
     stmt = select(Transaction).where(Transaction.user_id == current_user.id)
     if account_id is not None:
@@ -66,6 +69,10 @@ async def list_transactions(
         start = month_start(parse_month(month))
         end = next_month_start(start)
         stmt = stmt.where(Transaction.date >= start, Transaction.date < end)
+    if start_date is not None:
+        stmt = stmt.where(Transaction.date >= start_date)
+    if end_date is not None:
+        stmt = stmt.where(Transaction.date <= end_date)
     stmt = stmt.order_by(Transaction.date.desc(), Transaction.id.desc())
     rows = (await db.execute(stmt)).scalars().all()
     return [TransactionResponse.model_validate(r) for r in rows]
