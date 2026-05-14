@@ -192,6 +192,7 @@ export function AccountDetailPage() {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             required
+            inputMode="decimal"
             placeholder="-12.34"
             className="w-full border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2 text-right tabular-nums"
           />
