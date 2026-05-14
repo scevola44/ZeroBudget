@@ -173,18 +173,25 @@ export function AccountDetailPage() {
         </div>
         <div className="space-y-1 md:col-span-2">
           <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Category</label>
-          <select
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
-            className="w-full border border-stone-300 dark:border-stone-600 rounded-lg px-3 py-2 bg-white dark:bg-stone-900"
-          >
-            <option value="">— Unassigned (inflow) —</option>
-            {eligibleCategories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.groupName} › {c.name}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+              className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
+            >
+              <option value="">— Unassigned (inflow) —</option>
+              {eligibleCategories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.groupName} › {c.name}
+                </option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </div>
+          </div>
         </div>
         <div className="space-y-1 md:col-span-1">
           <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Amount</label>
@@ -244,24 +251,31 @@ export function AccountDetailPage() {
                     <td className="px-5 py-2">{t.payee || <span className="text-stone-400 dark:text-stone-500">—</span>}</td>
                     <td className="px-5 py-2">
                       {editingCategoryTxnId === t.id ? (
-                        <select
-                          autoFocus
-                          defaultValue={t.category_id ?? ""}
-                          onChange={(e) => {
-                            const newId = e.target.value === "" ? null : Number(e.target.value);
-                            updateCategory.mutate({ txnId: t.id, categoryId: newId });
-                          }}
-                          onBlur={() => setEditingCategoryTxnId(null)}
-                          onKeyDown={(e) => { if (e.key === "Escape") setEditingCategoryTxnId(null); }}
-                          className="border border-indigo-300 dark:border-indigo-500 bg-white dark:bg-stone-900 rounded-md px-2 py-0.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        >
-                          <option value="">— Unassigned —</option>
-                          {flatCategories.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.groupName} › {c.name}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="relative">
+                          <select
+                            autoFocus
+                            defaultValue={t.category_id ?? ""}
+                            onChange={(e) => {
+                              const newId = e.target.value === "" ? null : Number(e.target.value);
+                              updateCategory.mutate({ txnId: t.id, categoryId: newId });
+                            }}
+                            onBlur={() => setEditingCategoryTxnId(null)}
+                            onKeyDown={(e) => { if (e.key === "Escape") setEditingCategoryTxnId(null); }}
+                            className="h-9 w-full appearance-none border border-indigo-300 dark:border-indigo-500 bg-white dark:bg-stone-900 rounded-md pl-2 pr-6 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option value="">— Unassigned —</option>
+                            {flatCategories.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.groupName} › {c.name}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center text-indigo-500">
+                            <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M4 6l4 4 4-4" />
+                            </svg>
+                          </div>
+                        </div>
                       ) : (
                         <button
                           className="text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded px-1 py-0.5 text-left w-full"
