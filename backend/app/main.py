@@ -1,6 +1,6 @@
 import os
 from contextlib import asynccontextmanager
-from importlib.metadata import version as pkg_version
+from importlib.metadata import version as pkg_version, PackageNotFoundError
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -16,6 +16,21 @@ from app.routers import accounts, auth, budget, categories, plaid, transactions
 settings = get_settings()
 
 
+def get_app_version() -> str:
+    try:
+        return pkg_version("zerobudget-backend")
+    except PackageNotFoundError:
+        # Fallback for development when package isn't installed in editable mode
+        # Read from pyproject.toml
+        pyproject_path = Path(__file__).parent.parent.parent / "backend" / "pyproject.toml"
+        if pyproject_path.exists():
+            with open(pyproject_path) as f:
+                for line in f:
+                    if line.startswith("version ="):
+                        return line.split('"')[1]
+        return "0.0.0"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # In dev / tests we create tables directly. Alembic owns the schema in prod,
@@ -26,7 +41,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="ZeroBudget", version=pkg_version("zerobudget-backend"), lifespan=lifespan)
+app = FastAPI(title="ZeroBudget", version=get_app_version(), lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
