@@ -81,7 +81,7 @@ export function TransactionsPage() {
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2 text-sm"
+                className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 text-sm"
               />
             </div>
             <div className="space-y-1">
@@ -90,7 +90,7 @@ export function TransactionsPage() {
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2 text-sm"
+                className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 text-sm"
               />
             </div>
           </div>
@@ -98,19 +98,26 @@ export function TransactionsPage() {
           {/* Category */}
           <div className="space-y-1">
             <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Category</label>
-            <select
-              value={selectedCategoryId}
-              onChange={(e) => setSelectedCategoryId(e.target.value)}
-              className="border border-stone-300 dark:border-stone-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-stone-900"
-            >
-              <option value="">All categories</option>
-              <option value="null">Unassigned</option>
-              {flatCategories.map((c) => (
-                <option key={c.id} value={String(c.id)}>
-                  {c.groupName} › {c.name}
-                </option>
-              ))}
-            </select>
+            <div className="relative">
+              <select
+                value={selectedCategoryId}
+                onChange={(e) => setSelectedCategoryId(e.target.value)}
+                className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 text-sm bg-white dark:bg-stone-900"
+              >
+                <option value="">All categories</option>
+                <option value="null">Unassigned</option>
+                {flatCategories.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.groupName} › {c.name}
+                  </option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </div>
+            </div>
           </div>
         </div>
 
