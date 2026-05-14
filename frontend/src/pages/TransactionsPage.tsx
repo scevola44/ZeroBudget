@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { Account, CategoryGroup, Transaction } from "../api/types";
 import { currentMonth } from "../lib/dates";
 import { formatCents } from "../lib/money";
+import { YnabTransactionImportModal, type ImportRow } from "./YnabTransactionImportModal";
 
 function monthStart(month: string): string {
   return `${month}-01`;
@@ -21,6 +22,18 @@ export function TransactionsPage() {
   const [endDate, setEndDate] = useState(() => monthEnd(currentMonth()));
   const [selectedAccountIds, setSelectedAccountIds] = useState(() => new Set<number>());
   const [selectedCategoryId, setSelectedCategoryId] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+  const qc = useQueryClient();
+
+  const importMutation = useMutation({
+    mutationFn: (rows: ImportRow[]) =>
+      api<{ imported: number }>("/api/transactions/import-ynab", { method: "POST", body: { rows } }),
+    onSuccess: () => {
+      setImportOpen(false);
+      void qc.invalidateQueries({ queryKey: ["transactions"] });
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
+  });
 
   const txnsQuery = useQuery<Transaction[]>({
     queryKey: ["transactions", startDate, endDate],
@@ -68,7 +81,16 @@ export function TransactionsPage() {
 
   return (
     <div className="max-w-5xl space-y-6">
-      <h1 className="text-2xl font-semibold">Transactions</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Transactions</h1>
+        <button
+          type="button"
+          onClick={() => setImportOpen(true)}
+          className="border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-4 py-2 text-sm"
+        >
+          Import YNAB
+        </button>
+      </div>
 
       {/* Filter panel */}
       <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 space-y-4">
@@ -206,6 +228,16 @@ export function TransactionsPage() {
           </div>
         )}
       </div>
+
+      {importOpen && (
+        <YnabTransactionImportModal
+          accounts={accounts}
+          categoryGroups={groupsQuery.data ?? []}
+          onImport={(rows) => importMutation.mutate(rows)}
+          isPending={importMutation.isPending}
+          onClose={() => setImportOpen(false)}
+        />
+      )}
     </div>
   );
 }

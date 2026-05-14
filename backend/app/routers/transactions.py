@@ -4,7 +4,13 @@ from sqlalchemy import select
 
 from app.deps import CurrentUser, DbSession
 from app.models import Account, Category, CategoryGroup, Transaction
-from app.schemas.transaction import TransactionCreate, TransactionResponse, TransactionUpdate
+from app.schemas.transaction import (
+    TransactionCreate,
+    TransactionImportRequest,
+    TransactionImportResponse,
+    TransactionResponse,
+    TransactionUpdate,
+)
 from app.services.budget_calc import month_start, next_month_start, parse_month
 
 router = APIRouter(prefix="/api/transactions", tags=["transactions"])
@@ -76,6 +82,53 @@ async def list_transactions(
     stmt = stmt.order_by(Transaction.date.desc(), Transaction.id.desc())
     rows = (await db.execute(stmt)).scalars().all()
     return [TransactionResponse.model_validate(r) for r in rows]
+
+
+@router.post("/import-ynab", response_model=TransactionImportResponse)
+async def import_transactions_from_ynab(
+    payload: TransactionImportRequest, db: DbSession, current_user: CurrentUser
+) -> TransactionImportResponse:
+    accounts_result = await db.execute(
+        select(Account).where(Account.user_id == current_user.id)
+    )
+    accounts_by_id: dict[int, Account] = {a.id: a for a in accounts_result.scalars().all()}
+
+    cats_result = await db.execute(
+        select(Category, CategoryGroup)
+        .join(CategoryGroup, Category.group_id == CategoryGroup.id)
+        .where(Category.user_id == current_user.id)
+    )
+    cats_by_id: dict[int, tuple[Category, CategoryGroup]] = {
+        cat.id: (cat, grp) for cat, grp in cats_result.all()
+    }
+
+    transactions: list[Transaction] = []
+    for row in payload.rows:
+        account = accounts_by_id.get(row.account_id)
+        if account is None:
+            continue
+
+        category_id = row.category_id
+        if category_id is not None:
+            cat_entry = cats_by_id.get(category_id)
+            if cat_entry is None or cat_entry[1].scope != account.scope:
+                category_id = None
+
+        transactions.append(
+            Transaction(
+                user_id=current_user.id,
+                account_id=row.account_id,
+                category_id=category_id,
+                date=row.date,
+                payee=row.payee,
+                memo=row.memo,
+                amount_cents=row.amount_cents,
+            )
+        )
+
+    db.add_all(transactions)
+    await db.commit()
+    return TransactionImportResponse(imported=len(transactions))
 
 
 @router.post("", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
