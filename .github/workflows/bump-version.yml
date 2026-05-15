@@ -106,15 +106,20 @@ jobs:
         env:
           NEW_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          git push origin "chore/bump-version-${NEW_VERSION}"
+          git push --force origin "chore/bump-version-${NEW_VERSION}"
 
       - name: Create pull request
         env:
           NEW_VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr create \
-            --base develop \
-            --head "chore/bump-version-${NEW_VERSION}" \
-            --title "chore: bump version to $NEW_VERSION" \
-            --body "Automated version bump to $NEW_VERSION"
+          EXISTING=$(gh pr list --head "chore/bump-version-${NEW_VERSION}" --json number --jq '.[0].number')
+          if [[ -n "$EXISTING" ]]; then
+            echo "PR #$EXISTING already exists for this version — skipping creation."
+          else
+            gh pr create \
+              --base develop \
+              --head "chore/bump-version-${NEW_VERSION}" \
+              --title "chore: bump version to $NEW_VERSION" \
+              --body "Automated version bump to $NEW_VERSION"
+          fi
