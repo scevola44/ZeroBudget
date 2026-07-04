@@ -6,17 +6,20 @@ which is what Alembic's autogenerate and ``Base.metadata.create_all`` rely on.
 
 from app.models.account import Account
 from app.models.assignment import MonthlyAssignment
+from app.models.bank_connection import BankAuthRequest, BankConnection
 from app.models.category import Category, CategoryGroup
-from app.models.plaid_item import PlaidItem
+from app.models.sync_run import SyncRun
 from app.models.transaction import Transaction
 from app.models.user import User
 
 __all__ = [
     "Account",
+    "BankAuthRequest",
+    "BankConnection",
     "Category",
     "CategoryGroup",
     "MonthlyAssignment",
-    "PlaidItem",
+    "SyncRun",
     "Transaction",
     "User",
 ]

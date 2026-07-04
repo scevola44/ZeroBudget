@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import os
 from contextlib import asynccontextmanager
 from importlib.metadata import version as pkg_version, PackageNotFoundError
@@ -9,9 +11,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
-from app.db import Base, engine
+from app.db import Base, SessionLocal, engine
 from app.models import *  # noqa: F401,F403 — register models on Base.metadata
-from app.routers import accounts, auth, budget, categories, plaid, transactions
+from app.routers import accounts, auth, banking, budget, categories, transactions
+from app.services.banking_client import get_banking_client
+from app.services.sync_scheduler import scheduler_loop
 
 settings = get_settings()
 
@@ -38,7 +42,19 @@ async def lifespan(app: FastAPI):
     # unconditionally is safe and keeps first-run UX painless.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Automatic bank sync: a single in-process task (this app deploys as one
+    # container — no external scheduler). Manual mode skips it entirely.
+    scheduler_task: asyncio.Task | None = None
+    if settings.sync_mode == "auto":
+        scheduler_task = asyncio.create_task(
+            scheduler_loop(SessionLocal, get_banking_client)
+        )
     yield
+    if scheduler_task is not None:
+        scheduler_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await scheduler_task
 
 
 app = FastAPI(title="ZeroBudget", version=get_app_version(), lifespan=lifespan)
@@ -56,7 +72,7 @@ app.include_router(accounts.router)
 app.include_router(categories.router)
 app.include_router(transactions.router)
 app.include_router(budget.router)
-app.include_router(plaid.router)
+app.include_router(banking.router)
 
 
 @app.get("/api/health", tags=["health"])

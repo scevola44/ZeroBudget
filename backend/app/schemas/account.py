@@ -23,7 +23,7 @@ class AccountResponse(BaseModel):
     type: str
     scope: Scope
     balance_cents: int = 0
-    # Plaid metadata (all None for manual accounts).
-    plaid_item_id: int | None = None
-    plaid_mask: str | None = None
+    # Bank-link metadata (all None for manual accounts).
+    bank_connection_id: int | None = None
+    bank_account_mask: str | None = None
     institution_name: str | None = None

@@ -19,8 +19,8 @@ export type Account = {
   type: AccountType;
   scope: Scope;
   balance_cents: number;
-  plaid_item_id: number | null;
-  plaid_mask: string | null;
+  bank_connection_id: number | null;
+  bank_account_mask: string | null;
   institution_name: string | null;
 };
 

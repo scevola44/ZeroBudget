@@ -6,6 +6,7 @@ import { RequireAuth } from "./auth/RequireAuth";
 import { Layout } from "./components/Layout";
 import { AccountDetailPage } from "./pages/AccountDetailPage";
 import { AccountsPage } from "./pages/AccountsPage";
+import { BankingCallbackPage } from "./pages/BankingCallbackPage";
 import { BudgetPage } from "./pages/BudgetPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
@@ -41,6 +42,16 @@ export default function App() {
           <RequireAuth>
             <Layout>
               <AccountsPage />
+            </Layout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/banking/callback"
+        element={
+          <RequireAuth>
+            <Layout>
+              <BankingCallbackPage />
             </Layout>
           </RequireAuth>
         }

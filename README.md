@@ -21,8 +21,9 @@ and the app tells you how much is still waiting to be assigned.
 - **Goals on every category** (they're mandatory, not optional): monthly,
   yearly, or target-date, each showing a "Need X this month" hint computed
   from the goal and current balance.
-- **Accounts** — manual (checking / savings / cash) or linked via **Plaid
-  (Sandbox, EUR-only)**; balances are always derived from transactions.
+- **Accounts** — manual (checking / savings / cash) or connected via
+  **Enable Banking (PSD2, EUR-only)**; balances are always derived from
+  transactions.
 - **Transactions** — entry and inline category edits on the account page; a
   Transactions page with date/category/account filters across all accounts.
 - **YNAB CSV import** — bring over your category tree and transaction history
@@ -113,19 +114,20 @@ after 30 days; Fly.io's free allowance is more durable for a personal app.
 ## Data model
 
 - `User` — email + hashed password (JWT auth)
-- `Account` — checking / savings / cash (plus credit/loan when Plaid maps
-  them); has a `scope` (`personal` / `shared`); balance is derived from
-  transactions, never stored
+- `Account` — checking / savings / cash; has a `scope` (`personal` /
+  `shared`); balance is derived from transactions, never stored
 - `CategoryGroup` + `Category` — two-level budget tree; groups carry the
   `scope`; every category has a mandatory goal (`monthly`, `yearly`, or
   `target_date` + amount)
 - `Transaction` — signed integer cents; `category_id` may be NULL for
-  unassigned inflow (the source of "Ready to Assign"); carries the Plaid
-  transaction id when synced
+  unassigned inflow (the source of "Ready to Assign"); carries an external
+  dedup id when synced from a bank
 - `MonthlyAssignment` — money assigned to a category for a given month
   (unique per user/category/month)
-- `PlaidItem` — a linked bank connection: Fernet-encrypted access token,
-  sync cursor, last-sync status
+- `BankConnection` — an authorized bank (Enable Banking session):
+  Fernet-encrypted session id, consent expiry, last-sync status
+- `SyncRun` — one global sync run; the ledger behind the daily sync quota
+  and the auto-sync scheduler
 
 All amounts are stored as signed integer **cents** in EUR. Multi-currency is
 deliberately deferred.
@@ -137,22 +139,31 @@ transfers, payees, split transactions, auto-assign, scheduled transactions,
 reports, import/bank-sync robustness, and more, ordered by priority and
 written to be picked up by a coding agent one phase at a time.
 
-## Plaid bank linking
+## Enable Banking bank sync (PSD2)
 
-Plaid Link is wired up in the Accounts page. It runs against **Plaid Sandbox**
-and only imports EUR-denominated accounts/transactions — non-EUR data is
-rejected at the boundary (ZeroBudget is EUR-only).
+Bank connections are wired up in the Accounts page via **Enable Banking**.
+The flow is redirect-based PSD2 consent: pick your bank, authorize at the
+bank's own site, land back on `/banking/callback`. Only EUR-denominated
+accounts/transactions are imported — non-EUR data is rejected at the
+boundary (ZeroBudget is EUR-only).
 
 Set these environment variables to enable it:
 
 | Variable | Notes |
 |---|---|
-| `PLAID_CLIENT_ID` | from dashboard.plaid.com |
-| `PLAID_SECRET` | Sandbox secret |
-| `PLAID_ENV` | `sandbox` (default) or `production` |
-| `PLAID_PRODUCTS` | default `transactions` |
-| `PLAID_COUNTRY_CODES` | default `IE,FR,DE,ES,NL,IT,BE,AT,PT` (EUR zone) |
-| `PLAID_ENCRYPTION_KEY` | Fernet key — generate via `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `ENABLE_BANKING_APP_ID` | application id from the [Enable Banking control panel](https://enablebanking.com/cp) |
+| `ENABLE_BANKING_PRIVATE_KEY_PATH` | path to the app's RS256 private key PEM (wins over the inline var) |
+| `ENABLE_BANKING_PRIVATE_KEY` | or the PEM content inline |
+| `ENABLE_BANKING_REDIRECT_URL` | must match a redirect URL registered in the control panel, e.g. `http://localhost:5173/banking/callback` |
+| `BANKING_COUNTRIES` | default `IE,FR,DE,ES,NL,IT,BE,AT,PT,FI` (EUR zone + FI for the sandbox Mock ASPSP) |
+| `BANK_ENCRYPTION_KEY` | Fernet key — generate via `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+| `SYNC_MODE` | `manual` (default): user-triggered syncs · `auto`: in-process scheduler syncs every `24h / SYNC_MAX_PER_DAY` |
+| `SYNC_MAX_PER_DAY` | default `4` — global daily cap on sync runs (Enable Banking's free tier meters API calls); one run syncs all connected banks |
 
-Without these set, the `Link bank account` button returns a 503. The rest of
+Without credentials set, the `Connect bank` button returns a 503. The rest of
 the app works unchanged.
+
+The daily quota is tracked in the database (`sync_runs`), so it survives
+restarts; manual syncs beyond the cap get a 429 until midnight UTC. PSD2
+consents expire after up to 180 days — the Accounts page shows a Reconnect
+banner when a connection needs re-authorization.

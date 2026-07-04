@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -23,31 +24,52 @@ class Settings(BaseSettings):
     # CORS origins for local dev (Vite runs on 5173).
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
-    # Plaid integration. Sandbox-only in MVP; set real credentials in .env.
-    # Empty defaults let the app boot and tests run; the PlaidClient raises
+    # Enable Banking (PSD2) integration. Register an application in the
+    # Enable Banking control panel to obtain the app id and RS256 key pair.
+    # Empty defaults let the app boot and tests run; the BankingClient raises
     # on first use if credentials or encryption key are missing.
-    plaid_client_id: str = ""
-    plaid_secret: str = ""
-    plaid_env: str = "sandbox"
-    plaid_products: str = "transactions"
-    # EUR-zone defaults. GB is intentionally excluded (uses GBP, and
-    # ZeroBudget is EUR-only for now).
-    plaid_country_codes: str = "IE,FR,DE,ES,NL,IT,BE,AT,PT"
-    # Fernet key (base64). Generate with:
+    enable_banking_app_id: str = ""
+    # Private key: either a path to the PEM file (docker-secret friendly,
+    # takes precedence) or the PEM content inline.
+    enable_banking_private_key_path: str = ""
+    enable_banking_private_key: str = ""
+    enable_banking_api_base: str = "https://api.enablebanking.com"
+    # Must match a redirect URL registered for the app in the EB control
+    # panel, e.g. http://localhost:5173/banking/callback
+    enable_banking_redirect_url: str = ""
+    # ASPSP-list filter. EUR-zone defaults; FI included so the sandbox
+    # "Mock ASPSP" shows up. GB intentionally excluded (GBP; EUR-only app).
+    banking_countries: str = "IE,FR,DE,ES,NL,IT,BE,AT,PT,FI"
+    # Fernet key (base64) for encrypting Enable Banking session ids at rest.
+    # Generate with:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-    plaid_encryption_key: str = ""
+    bank_encryption_key: str = ""
+
+    # Transaction sync. Enable Banking's free tier caps API usage, so sync
+    # runs are globally quota'd: at most SYNC_MAX_PER_DAY runs per UTC day.
+    # "auto" spaces runs evenly (every 24h / SYNC_MAX_PER_DAY) via the
+    # in-process scheduler; "manual" leaves runs to the user, same daily cap.
+    sync_mode: str = "manual"
+    sync_max_per_day: int = 4
+    # Transaction re-fetch windows in days (EB has no delta API; we re-fetch
+    # a window and dedup).
+    sync_fetch_days: int = 14
+    sync_first_fetch_days: int = 90
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
-    def plaid_products_list(self) -> list[str]:
-        return [p.strip() for p in self.plaid_products.split(",") if p.strip()]
+    def banking_countries_list(self) -> list[str]:
+        return [c.strip().upper() for c in self.banking_countries.split(",") if c.strip()]
 
     @property
-    def plaid_country_codes_list(self) -> list[str]:
-        return [c.strip() for c in self.plaid_country_codes.split(",") if c.strip()]
+    def enable_banking_private_key_pem(self) -> str:
+        """PEM content, from path (preferred) or inline value. Empty if unset."""
+        if self.enable_banking_private_key_path:
+            return Path(self.enable_banking_private_key_path).read_text()
+        return self.enable_banking_private_key
 
 
 @lru_cache
