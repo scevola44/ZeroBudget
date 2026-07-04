@@ -102,13 +102,10 @@ deliberately deferred.
 
 ## What's next
 
-This is a starting point. Natural next steps:
-- Transfers between accounts
-- Category goals / targets
-- Scheduled (recurring) transactions
-- CSV / OFX import
-- Reports (spending by category, net worth over time)
-- React Native / Expo client reusing the same REST API
+See [ROADMAP.md](ROADMAP.md) — a phased, YNAB-referenced plan covering
+transfers, payees, split transactions, auto-assign, scheduled transactions,
+reports, import/bank-sync robustness, and more, ordered by priority and
+written to be picked up by a coding agent one phase at a time.
 
 ## Plaid bank linking
 
