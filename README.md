@@ -4,11 +4,33 @@ A small, self-hostable **zero-based budgeting** web app inspired by YNAB.
 Every euro gets a job: you assign incoming money to categories for each month,
 and the app tells you how much is still waiting to be assigned.
 
-> **Status:** skeleton. Accounts, categories, transactions, monthly assignments,
-> the "Ready to Assign" zero-based view, and **Plaid bank linking (Sandbox,
-> EUR-only)** are in place. Reports, goals, transfers, multi-currency, and the
-> mobile client are intentionally out of scope for this first pass — they'll be
-> added iteratively.
+> **Status:** beta. The zero-based core is in place and usable day-to-day.
+> Transfers, payees, split transactions, scheduled transactions, and reports
+> are not built yet — see [ROADMAP.md](ROADMAP.md) for the phased plan.
+
+## Features
+
+- **Two independent budget pools per user** — every account and category
+  group has a *scope*, **Personal** or **Family** (shared), each with its own
+  Ready to Assign total. This replaces YNAB's multi-budget concept and is the
+  reason this app exists: budgeting a joint account alongside your own money
+  in one view.
+- **Zero-based budget page** — per-scope Ready to Assign pills, month
+  navigation, collapsible category groups with Assigned/Available summaries
+  and per-scope totals, inline assignment editing.
+- **Goals on every category** (they're mandatory, not optional): monthly,
+  yearly, or target-date, each showing a "Need X this month" hint computed
+  from the goal and current balance.
+- **Accounts** — manual (checking / savings / cash) or linked via **Plaid
+  (Sandbox, EUR-only)**; balances are always derived from transactions.
+- **Transactions** — entry and inline category edits on the account page; a
+  Transactions page with date/category/account filters across all accounts.
+- **YNAB CSV import** — bring over your category tree and transaction history
+  from a YNAB export.
+- **Category management** — drag-and-drop reordering (touch included), inline
+  rename, group edit/delete.
+- **Responsive UI with dark mode** — usable from a phone browser; follows the
+  OS theme.
 
 ## Stack
 
@@ -88,27 +110,32 @@ Render and Railway work too — both just need `DATABASE_URL` and `JWT_SECRET`
 set and the Dockerfile pointed at. Note that Render's free Postgres expires
 after 30 days; Fly.io's free allowance is more durable for a personal app.
 
-## Data model (skeleton)
+## Data model
 
-- `User` — email + hashed password
-- `Account` — checking / savings / cash; balance is derived from transactions
-- `CategoryGroup` + `Category` — two-level budget tree
+- `User` — email + hashed password (JWT auth)
+- `Account` — checking / savings / cash (plus credit/loan when Plaid maps
+  them); has a `scope` (`personal` / `shared`); balance is derived from
+  transactions, never stored
+- `CategoryGroup` + `Category` — two-level budget tree; groups carry the
+  `scope`; every category has a mandatory goal (`monthly`, `yearly`, or
+  `target_date` + amount)
 - `Transaction` — signed integer cents; `category_id` may be NULL for
-  unassigned inflow (the source of "Ready to Assign")
+  unassigned inflow (the source of "Ready to Assign"); carries the Plaid
+  transaction id when synced
 - `MonthlyAssignment` — money assigned to a category for a given month
+  (unique per user/category/month)
+- `PlaidItem` — a linked bank connection: Fernet-encrypted access token,
+  sync cursor, last-sync status
 
 All amounts are stored as signed integer **cents** in EUR. Multi-currency is
 deliberately deferred.
 
 ## What's next
 
-This is a starting point. Natural next steps:
-- Transfers between accounts
-- Category goals / targets
-- Scheduled (recurring) transactions
-- CSV / OFX import
-- Reports (spending by category, net worth over time)
-- React Native / Expo client reusing the same REST API
+See [ROADMAP.md](ROADMAP.md) — a phased, YNAB-referenced plan covering
+transfers, payees, split transactions, auto-assign, scheduled transactions,
+reports, import/bank-sync robustness, and more, ordered by priority and
+written to be picked up by a coding agent one phase at a time.
 
 ## Plaid bank linking
 
