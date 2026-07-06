@@ -50,16 +50,16 @@ class SyncSummary:
 def external_transaction_id(account_id: int, txn: dict[str, Any]) -> str:
     """Stable dedup key for an imported transaction.
 
-    ``entry_reference`` is only unique per account, so the local account id
+    ``entryReference`` is only unique per account, so the local account id
     is always prefixed. Some banks omit it; then we hash the fields that
     don't change across re-fetches. Known limitation: two byte-identical
     same-day transactions collapse into one under the hash fallback.
     """
-    entry_reference = txn.get("entry_reference")
+    entry_reference = txn.get("entryReference")
     if entry_reference:
         return f"{account_id}:{entry_reference}"
-    amount = (txn.get("transaction_amount") or {}).get("amount", "")
-    remittance = "|".join(txn.get("remittance_information") or [])
+    amount = (txn.get("transactionAmount") or {}).get("amount", "")
+    remittance = "|".join(txn.get("remittanceInformation") or [])
     counterparty = (
         (txn.get("creditor") or {}).get("name")
         or (txn.get("debtor") or {}).get("name")
@@ -67,9 +67,9 @@ def external_transaction_id(account_id: int, txn: dict[str, Any]) -> str:
     )
     fingerprint = "|".join(
         [
-            str(txn.get("booking_date", "")),
+            str(txn.get("bookingDate", "")),
             str(amount),
-            str(txn.get("credit_debit_indicator", "")),
+            str(txn.get("creditDebitIndicator", "")),
             counterparty,
             remittance,
         ]
@@ -79,13 +79,13 @@ def external_transaction_id(account_id: int, txn: dict[str, Any]) -> str:
 
 
 def _payee(txn: dict[str, Any]) -> str:
-    if txn.get("credit_debit_indicator") == "CRDT":
+    if txn.get("creditDebitIndicator") == "CRDT":
         counterparty = (txn.get("debtor") or {}).get("name")
     else:
         counterparty = (txn.get("creditor") or {}).get("name")
     if counterparty:
         return counterparty
-    remittance = txn.get("remittance_information") or []
+    remittance = txn.get("remittanceInformation") or []
     return remittance[0] if remittance else ""
 
 
@@ -166,15 +166,15 @@ async def sync_connection(
             if txn.get("status") == PENDING_STATUS:
                 summary.skipped_pending += 1
                 continue
-            txn_date = _parse_date(txn.get("booking_date") or txn.get("value_date"))
+            txn_date = _parse_date(txn.get("bookingDate") or txn.get("valueDate"))
             if txn_date is None:
                 continue
-            amount_info = txn.get("transaction_amount") or {}
+            amount_info = txn.get("transactionAmount") or {}
             try:
                 amount_cents = bank_amount_to_cents(
                     amount_info.get("amount", ""),
                     amount_info.get("currency"),
-                    txn.get("credit_debit_indicator", ""),
+                    txn.get("creditDebitIndicator", ""),
                 )
             except NonEurCurrencyError:
                 summary.skipped_non_eur += 1

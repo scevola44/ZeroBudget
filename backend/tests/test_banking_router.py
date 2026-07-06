@@ -27,14 +27,14 @@ USD_ACCOUNT = {
 }
 
 BOOKED_TXN = {
-    "entry_reference": "ref-1",
-    "transaction_amount": {"amount": "42.50", "currency": "EUR"},
-    "credit_debit_indicator": "DBIT",
+    "entryReference": "ref-1",
+    "transactionAmount": {"amount": "42.50", "currency": "EUR"},
+    "creditDebitIndicator": "DBIT",
     "status": "BOOK",
-    "booking_date": "2026-07-01",
+    "bookingDate": "2026-07-01",
     "creditor": {"name": "Coffee Shop"},
     "debtor": None,
-    "remittance_information": [],
+    "remittanceInformation": [],
 }
 
 
