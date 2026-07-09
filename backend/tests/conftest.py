@@ -12,7 +12,10 @@ import os
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["JWT_SECRET"] = "test-secret-long-enough-for-hs256-key-32bytes"
 # Stable Fernet key so tests can round-trip encrypted values across sessions.
-os.environ["PLAID_ENCRYPTION_KEY"] = "UTxtCGAy-teDR0N8K2tUap0l6aguAg1OtH_rDulrel0="
+os.environ["BANK_ENCRYPTION_KEY"] = "UTxtCGAy-teDR0N8K2tUap0l6aguAg1OtH_rDulrel0="
+# Banking router tests exercise the connect flow with a fake client; the
+# redirect URL just has to be present.
+os.environ["ENABLE_BANKING_REDIRECT_URL"] = "http://test/banking/callback"
 
 from collections.abc import AsyncIterator  # noqa: E402
 

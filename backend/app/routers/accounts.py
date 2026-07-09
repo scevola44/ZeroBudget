@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select
 
 from app.deps import CurrentUser, DbSession
-from app.models import Account, PlaidItem, Transaction
+from app.models import Account, BankConnection, Transaction
 from app.schemas.account import AccountCreate, AccountResponse, AccountUpdate
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
@@ -24,8 +24,8 @@ def _to_response(
         type=account.type,
         scope=account.scope,
         balance_cents=balance_cents,
-        plaid_item_id=account.plaid_item_id,
-        plaid_mask=account.plaid_mask,
+        bank_connection_id=account.bank_connection_id,
+        bank_account_mask=account.bank_account_mask,
         institution_name=institution_name,
     )
 
@@ -44,23 +44,25 @@ async def list_accounts(db: DbSession, current_user: CurrentUser) -> list[Accoun
     )
     accounts = (await db.execute(accounts_stmt)).scalars().all()
 
-    item_ids = {a.plaid_item_id for a in accounts if a.plaid_item_id is not None}
-    items_by_id: dict[int, PlaidItem] = {}
-    if item_ids:
-        items_by_id = {
-            i.id: i
-            for i in (
-                await db.execute(select(PlaidItem).where(PlaidItem.id.in_(item_ids)))
+    connection_ids = {a.bank_connection_id for a in accounts if a.bank_connection_id is not None}
+    connections_by_id: dict[int, BankConnection] = {}
+    if connection_ids:
+        connections_by_id = {
+            c.id: c
+            for c in (
+                await db.execute(
+                    select(BankConnection).where(BankConnection.id.in_(connection_ids))
+                )
             ).scalars().all()
         }
 
     responses: list[AccountResponse] = []
     for a in accounts:
         institution_name = None
-        if a.plaid_item_id is not None:
-            item = items_by_id.get(a.plaid_item_id)
-            if item is not None:
-                institution_name = item.institution_name
+        if a.bank_connection_id is not None:
+            connection = connections_by_id.get(a.bank_connection_id)
+            if connection is not None:
+                institution_name = connection.aspsp_name
         responses.append(
             AccountResponse(
                 id=a.id,
@@ -68,8 +70,8 @@ async def list_accounts(db: DbSession, current_user: CurrentUser) -> list[Accoun
                 type=a.type,
                 scope=a.scope,
                 balance_cents=totals.get(a.id, 0),
-                plaid_item_id=a.plaid_item_id,
-                plaid_mask=a.plaid_mask,
+                bank_connection_id=a.bank_connection_id,
+                bank_account_mask=a.bank_account_mask,
                 institution_name=institution_name,
             )
         )
@@ -104,11 +106,11 @@ async def update_account(
         account.name = payload.name
     if payload.type is not None:
         # Manual users can change type freely; linked accounts shouldn't
-        # have their Plaid-derived type overwritten.
-        if account.plaid_item_id is not None:
+        # have their bank-derived type overwritten.
+        if account.bank_connection_id is not None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Linked account type is managed by Plaid and cannot be changed.",
+                detail="Linked account type is managed by the bank and cannot be changed.",
             )
         account.type = payload.type
     if payload.scope is not None and payload.scope != account.scope:
@@ -142,20 +144,20 @@ async def update_account(
         )
     )
     institution_name: str | None = None
-    if account.plaid_item_id is not None:
-        item = await db.get(PlaidItem, account.plaid_item_id)
-        if item is not None:
-            institution_name = item.institution_name
+    if account.bank_connection_id is not None:
+        connection = await db.get(BankConnection, account.bank_connection_id)
+        if connection is not None:
+            institution_name = connection.aspsp_name
     return _to_response(account, int(total or 0), institution_name)
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_account(account_id: int, db: DbSession, current_user: CurrentUser) -> None:
     account = await _get_owned(db, current_user.id, account_id)
-    if account.plaid_item_id is not None:
+    if account.bank_connection_id is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Linked accounts must be unlinked via /api/plaid/items/{id}.",
+            detail="Linked accounts must be unlinked via /api/banking/connections/{id}.",
         )
     await db.delete(account)
     await db.commit()

@@ -58,7 +58,7 @@ them. Do not "fix" them to match YNAB.
    `budget_calc.py`; `frontend/src/lib/dates.ts`).
 8. **Conventions to follow** (see CLAUDE.md for the full list):
    - One Alembic migration per schema change (`backend/alembic/versions/`,
-     linear chain, currently `0001`–`0004`).
+     linear chain, currently `0001`–`0005`).
    - Frontend patterns: TanStack Query with array keys + broad prefix
      invalidation, inline-edit (click → input, Enter/blur commits, Escape
      cancels), Tailwind utility classes with `dark:` variants, money via
@@ -73,8 +73,9 @@ Implemented:
 
 - **Auth**: JWT (HS256, 7-day expiry), register/login/me
   (`backend/app/routers/auth.py`). No refresh, no password reset.
-- **Accounts**: manual (checking/savings/cash) + Plaid-linked; scope chip;
-  derived balances (`routers/accounts.py`, `frontend/src/pages/AccountsPage.tsx`).
+- **Accounts**: manual (checking/savings/cash) + Enable Banking-connected;
+  scope chip; derived balances (`routers/accounts.py`,
+  `frontend/src/pages/AccountsPage.tsx`).
 - **Categories**: two-level tree with drag-and-drop reordering, inline rename,
   mandatory goals, YNAB CSV import (`routers/categories.py`,
   `frontend/src/pages/CategoriesPage.tsx`).
@@ -87,17 +88,20 @@ Implemented:
   inline assignment editing, "Need X" pills from `needed_this_month_cents`
   (`routers/budget.py`, `services/budget_calc.py`,
   `frontend/src/pages/BudgetPage.tsx`).
-- **Plaid** (Sandbox, EUR-only): link/exchange/manual sync (30s rate limit)/
-  unlink; Fernet-encrypted access tokens; cursor-based `/transactions/sync`;
-  pending and non-EUR transactions skipped; user edits preserved on modified
-  transactions (`routers/plaid.py`, `services/plaid_client.py`,
-  `services/plaid_sync.py`). No webhooks, no background sync.
+- **Enable Banking** (PSD2, EUR-only): redirect-based consent flow, manual
+  or automatic sync behind a global daily quota (`SYNC_MODE`,
+  `SYNC_MAX_PER_DAY`; DB-backed `sync_runs` ledger, in-process scheduler in
+  auto mode); Fernet-encrypted session ids; windowed re-fetch with dedup by
+  `external_transaction_id`; pending and non-EUR transactions skipped; user
+  edits preserved on updated transactions (`routers/banking.py`,
+  `services/banking_client.py`, `services/bank_sync.py`,
+  `services/sync_scheduler.py`). No deletion detection (no delta API).
 - Responsive layout with dark mode (`darkMode: "media"`), mobile off-canvas nav.
 
 Not implemented (the gap this roadmap closes): transfers, full transaction
 editing in the UI, account/category management gaps, payees, splits,
 search/bulk edit, move-money/auto-assign, scheduled transactions, reports,
-generic CSV import, import matching, Plaid webhooks, settings/auth hardening,
+generic CSV import, import matching, settings/auth hardening,
 cleared/reconciliation, credit-card budgeting.
 
 ---
@@ -118,7 +122,7 @@ a typo) is the most painful daily friction.
 
 1. **Transfer model (backend)**
    - Linked transaction pair: add nullable self-referential
-     `transfer_peer_id` FK on `transactions` (Alembic migration `0005`).
+     `transfer_peer_id` FK on `transactions` (Alembic migration `0006`).
      Each leg lives in its own account; amounts are equal and opposite; both
      legs have `category_id = NULL` and are excluded from RTA inflow math.
    - New `budget_calc.py` rule: transactions that are transfer legs never
@@ -147,8 +151,8 @@ a typo) is the most painful daily friction.
 4. **Account management UI**: expose the existing
    `PATCH /api/accounts/{id}` (rename, type, scope — scope change already
    guarded server-side) and `DELETE` on `AccountsPage.tsx`. Add the missing
-   `credit`/`loan` options to the manual account type picker (Plaid already
-   creates these types; `frontend/src/api/types.ts` `AccountType`).
+   `credit`/`loan` options to the manual account type picker
+   (`frontend/src/api/types.ts` `AccountType`).
    **[owner decision]** whether deleting an account with transactions should
    be blocked, cascade, or offer a "closed/archived" state (YNAB closes
    rather than deletes; recommend a `closed` boolean + hidden-by-default).
@@ -191,7 +195,7 @@ daily use of a budgeting app.
      (YNAB behavior). Respect scope: only suggest categories whose group
      scope matches the account scope.
    - *Stretch (Actual Budget-inspired)*: simple auto-categorization rules
-     (payee-contains → category), applied to Plaid-synced and imported
+     (payee-contains → category), applied to bank-synced and imported
      transactions only, never overwriting a user-set category.
 2. **Split transactions**: sub-line model — `transaction_splits` table
    (`transaction_id` FK, `category_id`, `amount_cents`, `memo`) where split
@@ -344,18 +348,15 @@ Reflect tab, scope-aware.
    (`none`/`pending_approval`/`matched`) or a lightweight staging table —
    prefer whichever keeps `budget_calc.py` inputs unchanged (unapproved rows
    excluded before math).
-3. **Plaid webhooks**: `POST /api/plaid/webhook` handling
-   `SYNC_UPDATES_AVAILABLE` → trigger `services/plaid_sync.sync_item` for the
-   item (verify webhook signature; respect the existing 30s rate-limit
-   window). Keep manual sync as fallback.
-4. **EU bank-sync provider evaluation** *(documentation task, then optional
-   implementation)*: Plaid production access for EU consumers is
-   costly/limited; **GoCardless Bank Account Data** (ex-Nordigen, free tier,
-   PSD2) is the realistic self-hosted EU option (it's what Actual Budget
-   uses). Evaluate and, if adopted, introduce a thin provider interface
-   around the existing sync pipeline (`plaid_sync.py` deltas are
-   provider-agnostic already: add/modify/remove + dedup key). **Plaid support
-   stays** — additive only. **[owner decision]** before implementing.
+3. ~~Plaid webhooks~~ **Done differently**: Plaid was replaced by Enable
+   Banking (PSD2, redirect consent), which has no webhook/delta API. Instead
+   of webhooks, automatic sync is an in-process scheduler (`SYNC_MODE=auto`)
+   spacing runs evenly under the daily quota (`SYNC_MAX_PER_DAY`).
+4. ~~EU bank-sync provider evaluation~~ **Resolved [owner decision]**:
+   **Enable Banking** was adopted as the PSD2 provider, replacing Plaid
+   entirely (it was sandbox-only, so nothing was lost). The sync pipeline
+   kept the provider-agnostic semantics (dedup key + user-field
+   preservation) in `services/bank_sync.py`.
 
 ### Acceptance criteria
 
@@ -389,10 +390,10 @@ self-hosted app needs.
    done in Phase 2 — extend to the rest); consistent 422 error shapes.
 4. **Frontend robustness**: toast system + error boundary (replace silent
    mutation failures and native `confirm()` dialogs — e.g. transaction
-   delete, Plaid unlink — with the existing modal pattern
+   delete, bank disconnect — with the existing modal pattern
    (`DeleteGroupConfirmModal.tsx`)).
 5. **Cleanup**: delete or adopt dead code (`frontend/src/components/Select.tsx`
-   unused; `plaidApi.listItems` unconsumed); make `Account.type` a real enum
+   unused); make `Account.type` a real enum
    at the API boundary (`backend/app/models/account.py` free-form string
    today); remove the stray `frontend/IMG_5730.png` if unused.
 
@@ -412,8 +413,8 @@ self-hosted app needs.
 ### Work items
 
 1. `cleared` enum (`uncleared`/`cleared`/`reconciled`) on transactions +
-   migration; Plaid-synced transactions arrive `cleared` (they're posted,
-   pending are skipped in `services/plaid_sync.py`).
+   migration; bank-synced transactions arrive `cleared` (they're posted,
+   pending are skipped in `services/bank_sync.py`).
 2. Cleared vs working balance on `AccountDetailPage.tsx`; per-row cleared
    toggle (YNAB's ⓒ column).
 3. Reconcile flow: enter real-world balance → app computes difference →
@@ -433,9 +434,9 @@ self-hosted app needs.
 
 ## Phase 9 — Credit card budgeting *(owner-deprioritized)*
 
-> Same caveat: barely used by the owner. Credit accounts already arrive via
-> Plaid mapping; today they behave like checking accounts, which is fine for
-> pay-in-full usage. Implement only on demand.
+> Same caveat: barely used by the owner. Connected accounts currently import
+> as checking accounts, which is fine for pay-in-full usage. Implement only
+> on demand.
 
 ### Work items
 
@@ -469,7 +470,7 @@ self-hosted app needs.
 Listed so nobody drifts into them. Revisit only on explicit owner request.
 
 - **Multi-currency** — ZeroBudget is EUR-only by design (hard gates at the
-  Plaid boundary; no currency columns).
+  bank-sync boundary; no currency columns).
 - **Native mobile client** (React Native/Expo) — the responsive web app is
   the mobile story for now.
 - **Multi-user households / sharing** — the `shared` scope models the joint

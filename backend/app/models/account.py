@@ -25,13 +25,15 @@ class Account(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    # Plaid linkage. All NULL for manual accounts; all populated for linked
-    # accounts (with one row in plaid_items per item_id).
-    plaid_item_id: Mapped[int | None] = mapped_column(
-        ForeignKey("plaid_items.id", ondelete="CASCADE"), index=True, nullable=True
+    # Bank linkage. All NULL for manual accounts; populated for accounts
+    # imported from an Enable Banking session.
+    bank_connection_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_connections.id", ondelete="CASCADE"), index=True, nullable=True
     )
-    plaid_account_id: Mapped[str | None] = mapped_column(
-        String(64), unique=True, nullable=True
+    # Enable Banking account uid — stable per authorized account.
+    bank_account_uid: Mapped[str | None] = mapped_column(
+        String(128), unique=True, nullable=True
     )
-    plaid_mask: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    plaid_official_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Last 4 characters of the IBAN, for display.
+    bank_account_mask: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    bank_product_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
