@@ -203,6 +203,18 @@ async def complete_connection(
         raise _map_banking_error(exc) from exc
 
     raw_accounts: list[dict[str, Any]] = session.get("accounts") or []
+    # Temporary diagnostic: logged unconditionally (not just on rejection) so an
+    # empty `accounts` list from Enable Banking — a distinct failure mode from a
+    # bad currency value — is visible instead of producing silent logs.
+    logger.warning(
+        "Enable Banking session accounts: aspsp=%r count=%d accounts=%r",
+        auth_request.aspsp_name,
+        len(raw_accounts),
+        [
+            {"uid": a.get("uid"), "currency": a.get("currency"), "product": a.get("product")}
+            for a in raw_accounts
+        ],
+    )
     eur_accounts: list[dict[str, Any]] = []
     skipped: list[SkippedAccount] = []
     for raw in raw_accounts:
@@ -210,16 +222,6 @@ async def complete_connection(
         try:
             ensure_eur(currency)
         except NonEurCurrencyError:
-            # Temporary diagnostic: Enable Banking account currency fields
-            # aren't consistent across ASPSPs (e.g. EMIs), so log what we
-            # actually received to debug false-positive rejections.
-            logger.warning(
-                "Enable Banking account rejected as non-EUR: aspsp=%r uid=%r currency=%r product=%r",
-                auth_request.aspsp_name,
-                raw.get("uid"),
-                currency,
-                raw.get("product"),
-            )
             skipped.append(
                 SkippedAccount(
                     name=_account_display_name(raw, auth_request.aspsp_name),
