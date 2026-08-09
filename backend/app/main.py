@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import logging
 import os
 from contextlib import asynccontextmanager
 from importlib.metadata import version as pkg_version, PackageNotFoundError
@@ -18,6 +19,24 @@ from app.services.banking_client import get_banking_client
 from app.services.sync_scheduler import scheduler_loop
 
 settings = get_settings()
+
+
+class _HealthCheckAccessFilter(logging.Filter):
+    """Drops successful /api/health access logs; failures still log.
+
+    Health-check probes (Docker healthcheck, uptime monitors, load balancers)
+    poll this endpoint constantly and drown out real request logs. A failing
+    probe is still worth seeing, so only 2xx/3xx hits are silenced.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not record.args or len(record.args) < 5:
+            return True
+        path, status_code = record.args[2], record.args[4]
+        return not (path == "/api/health" and status_code < 400)
+
+
+logging.getLogger("uvicorn.access").addFilter(_HealthCheckAccessFilter())
 
 
 def get_app_version() -> str:
