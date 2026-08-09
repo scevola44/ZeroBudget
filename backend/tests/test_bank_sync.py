@@ -386,6 +386,27 @@ async def test_opening_balance_prefers_closing_booked(db_session):
 
 
 @pytest.mark.asyncio
+async def test_opening_balance_falls_back_to_closing_available(db_session):
+    # CLAV ("closing available") per Enable Banking's own reference example —
+    # not our top preference, but should still be picked over an unranked type.
+    _, connection, _ = await _seed(db_session)
+    client = FakeBankingClient(
+        balances_by_uid={
+            "uid_1": [_balance("1.23", balance_type="CLAV")],
+        },
+    )
+
+    await sync_connection(db_session, connection, client)
+
+    row = (
+        await db_session.execute(
+            select(Transaction).where(Transaction.payee == "Opening Balance")
+        )
+    ).scalar_one()
+    assert row.amount_cents == 123
+
+
+@pytest.mark.asyncio
 async def test_global_run_is_partial_when_one_connection_fails(db_session):
     user, connection, _ = await _seed(db_session)
     broken = BankConnection(
