@@ -72,6 +72,17 @@ export function RegisterPage() {
             Sign in
           </Link>
         </p>
+        <p className="text-xs text-stone-500 dark:text-stone-500 text-center">
+          By continuing you agree to the{" "}
+          <Link to="/terms" className="text-indigo-600 dark:text-indigo-400 hover:underline">
+            Terms of Service
+          </Link>{" "}
+          and{" "}
+          <Link to="/privacy" className="text-indigo-600 dark:text-indigo-400 hover:underline">
+            Privacy Policy
+          </Link>
+          .
+        </p>
       </form>
     </div>
   );
