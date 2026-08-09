@@ -13,6 +13,7 @@ Endpoints under ``/api/banking``:
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
@@ -42,6 +43,8 @@ from app.services.banking_client import BankingClient, BankingError, get_banking
 from app.services.encryption import decrypt, encrypt
 from app.services.sync_quota import latest_run, quota_remaining, runs_today
 from app.services.sync_scheduler import auto_sync_interval
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/banking", tags=["banking"])
 
@@ -207,6 +210,16 @@ async def complete_connection(
         try:
             ensure_eur(currency)
         except NonEurCurrencyError:
+            # Temporary diagnostic: Enable Banking account currency fields
+            # aren't consistent across ASPSPs (e.g. EMIs), so log what we
+            # actually received to debug false-positive rejections.
+            logger.warning(
+                "Enable Banking account rejected as non-EUR: aspsp=%r uid=%r currency=%r product=%r",
+                auth_request.aspsp_name,
+                raw.get("uid"),
+                currency,
+                raw.get("product"),
+            )
             skipped.append(
                 SkippedAccount(
                     name=_account_display_name(raw, auth_request.aspsp_name),

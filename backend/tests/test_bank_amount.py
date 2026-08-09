@@ -37,6 +37,12 @@ def test_eur_accepted():
     ensure_eur("EUR")
 
 
+def test_eur_accepted_case_and_whitespace_insensitive():
+    ensure_eur("eur")
+    ensure_eur("Eur")
+    ensure_eur(" EUR ")
+
+
 def test_unknown_indicator_rejected():
     with pytest.raises(ValueError):
         bank_amount_to_cents("10.00", "EUR", "WHAT")
