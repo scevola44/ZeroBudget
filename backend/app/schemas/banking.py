@@ -48,6 +48,7 @@ class ConnectionSyncResult(BaseModel):
     skipped_pending: int
     skipped_non_eur: int
     skipped_unknown_account: int
+    skipped_unparseable_date: int
     error_code: str | None = None
     touched_account_ids: list[int]
 

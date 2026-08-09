@@ -15,6 +15,7 @@ Consequences, by design:
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -27,6 +28,8 @@ from app.models import Account, BankConnection, SyncRun, Transaction
 from app.services.bank_amount import NonEurCurrencyError, bank_amount_to_cents
 from app.services.banking_client import BankingClient, BankingError
 from app.services.encryption import decrypt
+
+logger = logging.getLogger(__name__)
 
 PENDING_STATUS = "PDNG"
 
@@ -41,6 +44,7 @@ class SyncSummary:
     skipped_pending: int = 0
     skipped_non_eur: int = 0
     skipped_unknown_account: int = 0
+    skipped_unparseable_date: int = 0
     error_code: str | None = None
     # Account IDs that have fresh data — the router can use this to hint
     # cache invalidation on the frontend.
@@ -50,16 +54,16 @@ class SyncSummary:
 def external_transaction_id(account_id: int, txn: dict[str, Any]) -> str:
     """Stable dedup key for an imported transaction.
 
-    ``entryReference`` is only unique per account, so the local account id
+    ``entry_reference`` is only unique per account, so the local account id
     is always prefixed. Some banks omit it; then we hash the fields that
     don't change across re-fetches. Known limitation: two byte-identical
     same-day transactions collapse into one under the hash fallback.
     """
-    entry_reference = txn.get("entryReference")
+    entry_reference = txn.get("entry_reference")
     if entry_reference:
         return f"{account_id}:{entry_reference}"
-    amount = (txn.get("transactionAmount") or {}).get("amount", "")
-    remittance = "|".join(txn.get("remittanceInformation") or [])
+    amount = (txn.get("transaction_amount") or {}).get("amount", "")
+    remittance = "|".join(txn.get("remittance_information") or [])
     counterparty = (
         (txn.get("creditor") or {}).get("name")
         or (txn.get("debtor") or {}).get("name")
@@ -67,9 +71,9 @@ def external_transaction_id(account_id: int, txn: dict[str, Any]) -> str:
     )
     fingerprint = "|".join(
         [
-            str(txn.get("bookingDate", "")),
+            str(txn.get("booking_date", "")),
             str(amount),
-            str(txn.get("creditDebitIndicator", "")),
+            str(txn.get("credit_debit_indicator", "")),
             counterparty,
             remittance,
         ]
@@ -79,13 +83,13 @@ def external_transaction_id(account_id: int, txn: dict[str, Any]) -> str:
 
 
 def _payee(txn: dict[str, Any]) -> str:
-    if txn.get("creditDebitIndicator") == "CRDT":
+    if txn.get("credit_debit_indicator") == "CRDT":
         counterparty = (txn.get("debtor") or {}).get("name")
     else:
         counterparty = (txn.get("creditor") or {}).get("name")
     if counterparty:
         return counterparty
-    remittance = txn.get("remittanceInformation") or []
+    remittance = txn.get("remittance_information") or []
     return remittance[0] if remittance else ""
 
 
@@ -153,6 +157,7 @@ async def sync_connection(
 
     for account in account_rows:
         if not account.bank_account_uid:
+            summary.skipped_unknown_account += 1
             continue
         try:
             transactions = await client.get_transactions(account.bank_account_uid, date_from)
@@ -166,15 +171,20 @@ async def sync_connection(
             if txn.get("status") == PENDING_STATUS:
                 summary.skipped_pending += 1
                 continue
-            txn_date = _parse_date(txn.get("bookingDate") or txn.get("valueDate"))
+            txn_date = _parse_date(txn.get("booking_date") or txn.get("value_date"))
             if txn_date is None:
+                logger.warning(
+                    "banking: transaction missing booking_date/value_date, skipping: %r",
+                    txn,
+                )
+                summary.skipped_unparseable_date += 1
                 continue
-            amount_info = txn.get("transactionAmount") or {}
+            amount_info = txn.get("transaction_amount") or {}
             try:
                 amount_cents = bank_amount_to_cents(
                     amount_info.get("amount", ""),
                     amount_info.get("currency"),
-                    txn.get("creditDebitIndicator", ""),
+                    txn.get("credit_debit_indicator", ""),
                 )
             except NonEurCurrencyError:
                 summary.skipped_non_eur += 1

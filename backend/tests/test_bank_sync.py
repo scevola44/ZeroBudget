@@ -97,14 +97,14 @@ def _txn(
     remittance: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
-        "entryReference": entry_reference,
-        "transactionAmount": {"amount": amount, "currency": currency},
-        "creditDebitIndicator": indicator,
+        "entry_reference": entry_reference,
+        "transaction_amount": {"amount": amount, "currency": currency},
+        "credit_debit_indicator": indicator,
         "status": status,
-        "bookingDate": booking_date,
+        "booking_date": booking_date,
         "creditor": {"name": creditor} if creditor else None,
         "debtor": {"name": debtor} if debtor else None,
-        "remittanceInformation": remittance or [],
+        "remittance_information": remittance or [],
     }
 
 

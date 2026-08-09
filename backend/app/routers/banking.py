@@ -76,6 +76,7 @@ def _summary_to_result(summary: SyncSummary, connection: BankConnection) -> Conn
         skipped_pending=summary.skipped_pending,
         skipped_non_eur=summary.skipped_non_eur,
         skipped_unknown_account=summary.skipped_unknown_account,
+        skipped_unparseable_date=summary.skipped_unparseable_date,
         error_code=summary.error_code,
         touched_account_ids=summary.touched_account_ids,
     )
