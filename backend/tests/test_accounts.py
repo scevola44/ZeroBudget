@@ -109,3 +109,67 @@ async def test_balance_reflects_transactions(client: AsyncClient):
 
     accounts = (await client.get("/api/accounts", headers=headers)).json()
     assert accounts[0]["balance_cents"] == 80_000
+
+
+@pytest.mark.asyncio
+async def test_set_balance_creates_adjustment_transaction(client: AsyncClient):
+    headers = await register_user(client)
+    account_id = await create_account(client, headers)
+
+    r = await client.post(
+        f"/api/accounts/{account_id}/balance",
+        json={"balance_cents": 50_000},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["balance_cents"] == 50_000
+
+    txns = (
+        await client.get(f"/api/transactions?account_id={account_id}", headers=headers)
+    ).json()
+    assert len(txns) == 1
+    assert txns[0]["payee"] == "Balance Adjustment"
+    assert txns[0]["amount_cents"] == 50_000
+    assert txns[0]["category_id"] is None
+
+    accounts = (await client.get("/api/accounts", headers=headers)).json()
+    assert accounts[0]["balance_cents"] == 50_000
+
+
+@pytest.mark.asyncio
+async def test_set_balance_is_noop_when_already_matching(client: AsyncClient):
+    headers = await register_user(client)
+    account_id = await create_account(client, headers)
+
+    r = await client.post(
+        f"/api/accounts/{account_id}/balance",
+        json={"balance_cents": 0},
+        headers=headers,
+    )
+    assert r.status_code == 200
+
+    txns = (
+        await client.get(f"/api/transactions?account_id={account_id}", headers=headers)
+    ).json()
+    assert txns == []
+
+
+@pytest.mark.asyncio
+async def test_set_balance_unknown_account_is_404(client: AsyncClient):
+    headers = await register_user(client)
+    r = await client.post(
+        "/api/accounts/9999/balance", json={"balance_cents": 100}, headers=headers
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cannot_set_balance_on_other_users_account(client: AsyncClient):
+    alice = await register_user(client, "alice@example.com")
+    bob = await register_user(client, "bob@example.com")
+    account_id = await create_account(client, alice, "Alice account")
+
+    r = await client.post(
+        f"/api/accounts/{account_id}/balance", json={"balance_cents": 100}, headers=bob
+    )
+    assert r.status_code == 404

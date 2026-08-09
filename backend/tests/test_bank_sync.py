@@ -31,7 +31,9 @@ from tests.conftest import _enable_sqlite_fks
 @dataclass
 class FakeBankingClient:
     transactions_by_uid: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    balances_by_uid: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     error: BankingError | None = None
+    balances_error: BankingError | None = None
     calls: list[tuple[str, date]] = field(default_factory=list)
 
     async def get_transactions(self, account_uid: str, date_from: date) -> list[dict[str, Any]]:
@@ -39,6 +41,18 @@ class FakeBankingClient:
         if self.error is not None:
             raise self.error
         return self.transactions_by_uid.get(account_uid, [])
+
+    async def get_balances(self, account_uid: str) -> list[dict[str, Any]]:
+        if self.balances_error is not None:
+            raise self.balances_error
+        return self.balances_by_uid.get(account_uid, [])
+
+
+def _balance(amount: str, balance_type: str = "CLBD", currency: str = "EUR") -> dict[str, Any]:
+    return {
+        "balance_type": balance_type,
+        "balance_amount": {"amount": amount, "currency": currency},
+    }
 
 
 @pytest_asyncio.fixture
@@ -269,6 +283,127 @@ async def test_first_sync_uses_wider_window(db_session):
 
     # First sync reaches further back than subsequent ones (90 vs 14 days).
     assert first_window_start < second_window_start
+
+
+@pytest.mark.asyncio
+async def test_opening_balance_imported_on_first_sync(db_session):
+    _, connection, account = await _seed(db_session)
+    client = FakeBankingClient(
+        transactions_by_uid={"uid_1": [_txn("42.50", "DBIT")]},
+        balances_by_uid={"uid_1": [_balance("1000.00")]},
+    )
+
+    await sync_connection(db_session, connection, client)
+    await db_session.commit()
+
+    rows = (
+        (
+            await db_session.execute(
+                select(Transaction).where(Transaction.payee == "Opening Balance")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    # Bank balance (100000) minus the one imported transaction (-4250).
+    assert rows[0].amount_cents == 104_250
+    assert rows[0].account_id == account.id
+    assert rows[0].category_id is None
+    assert rows[0].external_transaction_id == f"{account.id}:opening_balance"
+
+
+@pytest.mark.asyncio
+async def test_opening_balance_skipped_when_already_matching(db_session):
+    _, connection, _ = await _seed(db_session)
+    client = FakeBankingClient(
+        transactions_by_uid={"uid_1": [_txn("42.50", "CRDT")]},
+        balances_by_uid={"uid_1": [_balance("42.50")]},
+    )
+
+    await sync_connection(db_session, connection, client)
+
+    rows = (await db_session.execute(Transaction.__table__.select())).fetchall()
+    assert len(rows) == 1  # only the imported transaction, no adjustment
+
+
+@pytest.mark.asyncio
+async def test_opening_balance_not_reimported_on_later_sync(db_session):
+    _, connection, _ = await _seed(db_session)
+    client = FakeBankingClient(
+        transactions_by_uid={"uid_1": [_txn("42.50", "DBIT")]},
+        balances_by_uid={"uid_1": [_balance("1000.00")]},
+    )
+
+    await sync_connection(db_session, connection, client)
+    await sync_connection(db_session, connection, client)
+
+    rows = (
+        (
+            await db_session.execute(
+                select(Transaction).where(Transaction.payee == "Opening Balance")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_opening_balance_fetch_failure_does_not_fail_sync(db_session):
+    _, connection, _ = await _seed(db_session)
+    client = FakeBankingClient(
+        transactions_by_uid={"uid_1": [_txn("42.50", "DBIT")]},
+        balances_error=BankingError("BANKING_API_ERROR", "balances unsupported"),
+    )
+
+    summary = await sync_connection(db_session, connection, client)
+
+    assert summary.added == 1
+    assert connection.last_error_code is None  # transaction sync still succeeded
+    rows = (await db_session.execute(Transaction.__table__.select())).fetchall()
+    assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_opening_balance_prefers_closing_booked(db_session):
+    _, connection, _ = await _seed(db_session)
+    client = FakeBankingClient(
+        balances_by_uid={
+            "uid_1": [_balance("500.00", balance_type="XPCD"), _balance("1000.00", balance_type="CLBD")]
+        },
+    )
+
+    await sync_connection(db_session, connection, client)
+
+    row = (
+        await db_session.execute(
+            select(Transaction).where(Transaction.payee == "Opening Balance")
+        )
+    ).scalar_one()
+    assert row.amount_cents == 100_000
+
+
+@pytest.mark.asyncio
+async def test_opening_balance_falls_back_to_closing_available(db_session):
+    # CLAV ("closing available") per Enable Banking's own reference example —
+    # not our top preference, but should still be picked over an unranked type.
+    _, connection, _ = await _seed(db_session)
+    client = FakeBankingClient(
+        balances_by_uid={
+            "uid_1": [_balance("1.23", balance_type="CLAV")],
+        },
+    )
+
+    await sync_connection(db_session, connection, client)
+
+    row = (
+        await db_session.execute(
+            select(Transaction).where(Transaction.payee == "Opening Balance")
+        )
+    ).scalar_one()
+    assert row.amount_cents == 123
 
 
 @pytest.mark.asyncio

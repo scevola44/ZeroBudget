@@ -1,9 +1,13 @@
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select
 
 from app.deps import CurrentUser, DbSession
 from app.models import Account, BankConnection, Transaction
-from app.schemas.account import AccountCreate, AccountResponse, AccountUpdate
+from app.schemas.account import AccountBalanceUpdate, AccountCreate, AccountResponse, AccountUpdate
+
+BALANCE_ADJUSTMENT_PAYEE = "Balance Adjustment"
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
@@ -13,6 +17,22 @@ async def _get_owned(db, user_id: int, account_id: int) -> Account:
     if account is None or account.user_id != user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
     return account
+
+
+async def _account_total(db, account_id: int) -> int:
+    total = await db.scalar(
+        select(func.coalesce(func.sum(Transaction.amount_cents), 0)).where(
+            Transaction.account_id == account_id
+        )
+    )
+    return int(total or 0)
+
+
+async def _institution_name(db, account: Account) -> str | None:
+    if account.bank_connection_id is None:
+        return None
+    connection = await db.get(BankConnection, account.bank_connection_id)
+    return connection.aspsp_name if connection is not None else None
 
 
 def _to_response(
@@ -138,17 +158,43 @@ async def update_account(
     await db.commit()
     await db.refresh(account)
 
-    total = await db.scalar(
-        select(func.coalesce(func.sum(Transaction.amount_cents), 0)).where(
-            Transaction.account_id == account.id
+    total = await _account_total(db, account.id)
+    institution_name = await _institution_name(db, account)
+    return _to_response(account, total, institution_name)
+
+
+@router.post("/{account_id}/balance", response_model=AccountResponse)
+async def set_account_balance(
+    account_id: int,
+    payload: AccountBalanceUpdate,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> AccountResponse:
+    """Reconcile the derived balance to a user-supplied figure.
+
+    Balances are never stored directly — this inserts a single uncategorized
+    transaction for the delta, the same mechanism a manual account's balance
+    is normally set by. Works for linked accounts too: an account can drift
+    from the bank between syncs and may need a manual nudge.
+    """
+    account = await _get_owned(db, current_user.id, account_id)
+    current_total = await _account_total(db, account.id)
+    delta = payload.balance_cents - current_total
+    if delta != 0:
+        db.add(
+            Transaction(
+                user_id=current_user.id,
+                account_id=account.id,
+                date=date.today(),
+                payee=BALANCE_ADJUSTMENT_PAYEE,
+                memo="Manual balance correction",
+                amount_cents=delta,
+            )
         )
-    )
-    institution_name: str | None = None
-    if account.bank_connection_id is not None:
-        connection = await db.get(BankConnection, account.bank_connection_id)
-        if connection is not None:
-            institution_name = connection.aspsp_name
-    return _to_response(account, int(total or 0), institution_name)
+        await db.commit()
+
+    institution_name = await _institution_name(db, account)
+    return _to_response(account, payload.balance_cents, institution_name)
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)

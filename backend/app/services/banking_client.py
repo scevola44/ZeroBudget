@@ -199,6 +199,11 @@ class BankingClient:
                 break
         return transactions
 
+    async def get_balances(self, account_uid: str) -> list[dict[str, Any]]:
+        """Raw balance entries for an account (Berlin Group ``balance_type``s)."""
+        body = await self._request("GET", f"/accounts/{account_uid}/balances")
+        return body.get("balances", [])
+
     async def aclose(self) -> None:
         await self._http.aclose()
 

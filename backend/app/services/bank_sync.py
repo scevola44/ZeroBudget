@@ -20,18 +20,37 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.models import Account, BankConnection, SyncRun, Transaction
-from app.services.bank_amount import NonEurCurrencyError, bank_amount_to_cents
+from app.services.bank_amount import (
+    NonEurCurrencyError,
+    bank_amount_to_cents,
+    bank_balance_amount_to_cents,
+)
 from app.services.banking_client import BankingClient, BankingError
 from app.services.encryption import decrypt
 
 logger = logging.getLogger(__name__)
 
 PENDING_STATUS = "PDNG"
+# Preference order for picking a single balance out of an account's balance
+# list (Enable Banking's full BalanceStatus enum: CLAV, CLBD, FWAV, INFO,
+# ITAV, ITBD, OPAV, OPBD, OTHR, PRCD, VALU, XPCD). We only ever import
+# BOOK-status transactions (PDNG ones are skipped), so a "booked" balance is
+# the more consistent match for reconciliation than an "available" one,
+# which nets out holds/pending debits we don't have matching transactions
+# for. Order: closing booked > interim booked > closing available >
+# interim available > expected (last resort — may include non-booked
+# forecasted movements). Deliberately excludes OPBD/OPAV (start-of-period,
+# not current), PRCD (previous period's close), and FWAV (a future date) —
+# those are stale/forward-looking, not "the balance right now". A bank that
+# only returns one of those, or an unlisted type, falls through to the
+# first balance in the list (see ``_select_balance``).
+_BALANCE_TYPE_PREFERENCE = ("CLBD", "ITBD", "CLAV", "ITAV", "XPCD")
+OPENING_BALANCE_PAYEE = "Opening Balance"
 
 
 @dataclass
@@ -107,6 +126,91 @@ def _as_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
+def _select_balance(balances: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Pick one balance entry per ``_BALANCE_TYPE_PREFERENCE``, else the first available."""
+    by_type = {b.get("balance_type"): b for b in balances}
+    for balance_type in _BALANCE_TYPE_PREFERENCE:
+        if balance_type in by_type:
+            return by_type[balance_type]
+    return balances[0] if balances else None
+
+
+async def _import_opening_balance(
+    db: AsyncSession,
+    connection: BankConnection,
+    client: BankingClient,
+    account: Account,
+    date_from: date,
+) -> None:
+    """Insert a one-time reconciling transaction so the derived balance matches the bank.
+
+    Only the imported transaction window is ever fetched (see module docstring),
+    so a freshly linked account's derived balance is short by whatever predates
+    that window. This bridges the gap with a single uncategorized transaction —
+    the same mechanism a user relies on today to set a manual account's balance —
+    rather than storing a balance separately from the transaction ledger.
+
+    Best-effort: any failure to fetch or parse the bank's balance is logged and
+    skipped, leaving the account exactly as under the old behavior.
+    """
+    external_id = f"{account.id}:opening_balance"
+    existing = (
+        await db.execute(
+            select(Transaction).where(Transaction.external_transaction_id == external_id)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return
+
+    try:
+        balances = await client.get_balances(account.bank_account_uid)
+    except BankingError:
+        logger.warning(
+            "banking: could not fetch balance for account %s, opening balance not imported",
+            account.id,
+        )
+        return
+    balance = _select_balance(balances)
+    if balance is None:
+        return
+    amount_info = balance.get("balance_amount") or {}
+    try:
+        bank_balance_cents = bank_balance_amount_to_cents(
+            amount_info.get("amount", ""), amount_info.get("currency")
+        )
+    except (NonEurCurrencyError, ValueError):
+        logger.warning(
+            "banking: unparseable balance for account %s, opening balance not imported",
+            account.id,
+        )
+        return
+
+    imported_total = await db.scalar(
+        select(func.coalesce(func.sum(Transaction.amount_cents), 0)).where(
+            Transaction.account_id == account.id
+        )
+    )
+    delta = bank_balance_cents - int(imported_total or 0)
+    if delta == 0:
+        return
+
+    db.add(
+        Transaction(
+            user_id=connection.user_id,
+            account_id=account.id,
+            # Sorts before every transaction imported by this sync's window.
+            date=date_from - timedelta(days=1),
+            payee=OPENING_BALANCE_PAYEE,
+            memo=(
+                "Balance imported from the bank on connection; covers transactions "
+                "older than the sync window."
+            ),
+            amount_cents=delta,
+            external_transaction_id=external_id,
+        )
+    )
+
+
 async def sync_connection(
     db: AsyncSession,
     connection: BankConnection,
@@ -137,11 +241,8 @@ async def sync_connection(
             f"Consent for {connection.aspsp_name} expired; the bank must be re-authorized.",
         )
 
-    window_days = (
-        settings.sync_first_fetch_days
-        if connection.last_synced_at is None
-        else settings.sync_fetch_days
-    )
+    is_first_sync = connection.last_synced_at is None
+    window_days = settings.sync_first_fetch_days if is_first_sync else settings.sync_fetch_days
     date_from = date.today() - timedelta(days=window_days)
 
     account_rows = (
@@ -220,6 +321,10 @@ async def sync_connection(
                 existing.amount_cents = amount_cents
                 summary.modified += 1
                 touched.add(existing.account_id)
+
+        if is_first_sync:
+            await db.flush()
+            await _import_opening_balance(db, connection, client, account, date_from)
 
     connection.last_synced_at = datetime.now(timezone.utc)
     connection.last_error_code = None

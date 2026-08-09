@@ -5,6 +5,7 @@ import pytest
 from app.services.bank_amount import (
     NonEurCurrencyError,
     bank_amount_to_cents,
+    bank_balance_amount_to_cents,
     ensure_eur,
 )
 
@@ -44,3 +45,18 @@ def test_unknown_indicator_rejected():
 def test_malformed_amount_rejected():
     with pytest.raises(ValueError):
         bank_amount_to_cents("ten euros", "EUR", "DBIT")
+
+
+def test_balance_amount_is_already_signed():
+    assert bank_balance_amount_to_cents("1250.00", "EUR") == 125000
+    assert bank_balance_amount_to_cents("-42.50", "EUR") == -4250
+
+
+def test_balance_amount_rejects_non_eur():
+    with pytest.raises(NonEurCurrencyError):
+        bank_balance_amount_to_cents("10.00", "USD")
+
+
+def test_balance_amount_rejects_malformed():
+    with pytest.raises(ValueError):
+        bank_balance_amount_to_cents("ten euros", "EUR")

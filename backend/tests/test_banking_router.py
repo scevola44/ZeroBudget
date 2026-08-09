@@ -43,6 +43,7 @@ class FakeBankingClient:
     aspsps: list[dict[str, Any]] = field(default_factory=lambda: [MOCK_ASPSP])
     session: dict[str, Any] = field(default_factory=dict)
     transactions: list[dict[str, Any]] = field(default_factory=lambda: [BOOKED_TXN])
+    balances: list[dict[str, Any]] = field(default_factory=list)
     create_session_error: BankingError | None = None
     deleted_sessions: list[str] = field(default_factory=list)
 
@@ -64,6 +65,9 @@ class FakeBankingClient:
 
     async def get_transactions(self, account_uid: str, date_from: date) -> list[dict[str, Any]]:
         return self.transactions
+
+    async def get_balances(self, account_uid: str) -> list[dict[str, Any]]:
+        return self.balances
 
 
 def _session_body(accounts: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -125,6 +129,24 @@ async def test_connect_and_callback_creates_connection_accounts_and_syncs(client
     assert accounts[0]["institution_name"] == "Mock ASPSP"
     assert accounts[0]["bank_account_mask"] == "0785"
     assert accounts[0]["balance_cents"] == -4250
+
+
+async def test_callback_imports_opening_balance(client):
+    fake = FakeBankingClient(
+        session=_session_body(),
+        balances=[
+            {"balance_type": "CLBD", "balance_amount": {"amount": "1000.00", "currency": "EUR"}}
+        ],
+    )
+    _install_fake(fake)
+    headers = await register_user(client)
+
+    await _connect(client, headers, fake)
+
+    r = await client.get("/api/accounts", headers=headers)
+    accounts = r.json()
+    # Bank balance (100000) reconciled against the one imported transaction (-4250).
+    assert accounts[0]["balance_cents"] == 100_000
 
 
 async def test_callback_rejects_unknown_state(client):
