@@ -2,6 +2,7 @@
 // pages can import from one place.
 
 import { api } from "./client";
+import type { Scope } from "./types";
 
 export type Aspsp = {
   name: string;
@@ -65,10 +66,10 @@ export type CallbackResponse = {
 
 export const bankingApi = {
   listAspsps: () => api<Aspsp[]>("/api/banking/aspsps"),
-  connect: (aspsp_name: string, aspsp_country: string) =>
+  connect: (aspsp_name: string, aspsp_country: string, scope: Scope = "personal") =>
     api<ConnectResponse>("/api/banking/connections", {
       method: "POST",
-      body: { aspsp_name, aspsp_country },
+      body: { aspsp_name, aspsp_country, scope },
     }),
   completeCallback: (code: string, state: string) =>
     api<CallbackResponse>("/api/banking/connections/callback", {

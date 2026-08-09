@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.scope import PERSONAL, Scope
+
 
 class AspspResponse(BaseModel):
     name: str
@@ -12,6 +14,7 @@ class AspspResponse(BaseModel):
 class ConnectRequest(BaseModel):
     aspsp_name: str = Field(min_length=1, max_length=255)
     aspsp_country: str = Field(min_length=2, max_length=2)
+    scope: Scope = PERSONAL
 
 
 class ConnectResponse(BaseModel):

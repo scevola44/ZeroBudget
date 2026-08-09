@@ -148,6 +148,7 @@ async def start_connection(
             state=state,
             aspsp_name=payload.aspsp_name,
             aspsp_country=payload.aspsp_country.upper(),
+            scope=payload.scope,
         )
     )
     await db.commit()
@@ -264,6 +265,7 @@ async def complete_connection(
             user_id=current_user.id,
             name=_account_display_name(raw, auth_request.aspsp_name),
             type="checking",
+            scope=auth_request.scope,
             bank_connection_id=connection.id,
             bank_account_uid=raw.get("uid"),
             bank_account_mask=iban[-4:] if iban else None,

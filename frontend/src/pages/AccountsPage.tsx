@@ -7,6 +7,7 @@ import { bankingApi } from "../api/banking";
 import type { Aspsp, BankConnection, SyncStatus } from "../api/banking";
 import type { Account, Scope } from "../api/types";
 import { scopeLabel } from "../api/types";
+import { EditAccountModal } from "../components/EditAccountModal";
 import { formatCents } from "../lib/money";
 
 const CONSENT_EXPIRY_WARNING_DAYS = 7;
@@ -46,6 +47,8 @@ export function AccountsPage() {
   const [scope, setScope] = useState<Scope>("personal");
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const createMutation = useMutation({
     mutationFn: (body: { name: string; type: string; scope: Scope }) =>
@@ -54,6 +57,21 @@ export function AccountsPage() {
       setName("");
       void qc.invalidateQueries({ queryKey: ["accounts"] });
     },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (vars: { accountId: number; name: string; scope: Scope }) =>
+      api<Account>(`/api/accounts/${vars.accountId}`, {
+        method: "PATCH",
+        body: { name: vars.name, scope: vars.scope },
+      }),
+    onSuccess: () => {
+      setEditingAccountId(null);
+      setEditError(null);
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+    onError: (err) => setEditError(err instanceof Error ? err.message : "Update failed"),
   });
 
   const connectionsNeedingReauth = (connectionsQuery.data ?? []).filter(connectionNeedsReauth);
@@ -74,7 +92,15 @@ export function AccountsPage() {
       />
 
       {connectionsNeedingReauth.map((connection) => (
-        <ReauthBanner key={connection.id} connection={connection} onError={setError} />
+        <ReauthBanner
+          key={connection.id}
+          connection={connection}
+          scope={
+            (accountsQuery.data ?? []).find((a) => a.bank_connection_id === connection.id)
+              ?.scope ?? "personal"
+          }
+          onError={setError}
+        />
       ))}
 
       <form
@@ -173,6 +199,10 @@ export function AccountsPage() {
                 <AccountRow
                   key={a.id}
                   account={a}
+                  onEdit={() => {
+                    setEditError(null);
+                    setEditingAccountId(a.id);
+                  }}
                   onUnlinked={() => {
                     setFeedback("Bank disconnected.");
                     setError(null);
@@ -188,16 +218,34 @@ export function AccountsPage() {
           </div>
         )}
       </div>
+
+      {editingAccountId !== null && accountsQuery.data && (
+        <EditAccountModal
+          account={accountsQuery.data.find((a) => a.id === editingAccountId)!}
+          isOpen={true}
+          onClose={() => {
+            setEditingAccountId(null);
+            setEditError(null);
+          }}
+          onSave={(name, scope) => {
+            updateMutation.mutate({ accountId: editingAccountId, name, scope });
+          }}
+          isPending={updateMutation.isPending}
+          error={editError}
+        />
+      )}
     </div>
   );
 }
 
 function AccountRow({
   account,
+  onEdit,
   onUnlinked,
   onError,
 }: {
   account: Account;
+  onEdit: () => void;
   onUnlinked: () => void;
   onError: (message: string) => void;
 }) {
@@ -234,6 +282,12 @@ function AccountRow({
       </td>
       <td className="px-5 py-3 text-right tabular-nums">{formatCents(account.balance_cents)}</td>
       <td className="px-5 py-3 text-right space-x-2">
+        <button
+          onClick={onEdit}
+          className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline px-2 py-1"
+        >
+          Edit
+        </button>
         {account.bank_connection_id !== null && (
           <button
             onClick={() => {
@@ -254,9 +308,11 @@ function AccountRow({
 
 function ReauthBanner({
   connection,
+  scope,
   onError,
 }: {
   connection: BankConnection;
+  scope: Scope;
   onError: (message: string) => void;
 }) {
   const [isRedirecting, setIsRedirecting] = useState(false);
@@ -266,7 +322,8 @@ function ReauthBanner({
     try {
       const { authorization_url } = await bankingApi.connect(
         connection.aspsp_name,
-        connection.aspsp_country
+        connection.aspsp_country,
+        scope
       );
       window.location.href = authorization_url;
     } catch (err) {
@@ -307,6 +364,7 @@ function BankLinkCard({
   const [isPicking, setIsPicking] = useState(false);
   const [country, setCountry] = useState("");
   const [aspspName, setAspspName] = useState("");
+  const [linkScope, setLinkScope] = useState<Scope>("personal");
   const [isRedirecting, setIsRedirecting] = useState(false);
 
   const statusQuery = useQuery<SyncStatus>({
@@ -361,7 +419,7 @@ function BankLinkCard({
     if (!aspspName || !country) return;
     setIsRedirecting(true);
     try {
-      const { authorization_url } = await bankingApi.connect(aspspName, country);
+      const { authorization_url } = await bankingApi.connect(aspspName, country, linkScope);
       window.location.href = authorization_url;
     } catch (err) {
       setIsRedirecting(false);
@@ -473,6 +531,24 @@ function BankLinkCard({
                     {banks.map((b) => (
                       <option key={b.name} value={b.name}>{b.name}</option>
                     ))}
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+                    <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 6l4 4 4-4" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Scope</label>
+                <div className="relative">
+                  <select
+                    value={linkScope}
+                    onChange={(e) => setLinkScope(e.target.value as Scope)}
+                    className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
+                  >
+                    <option value="personal">Personal</option>
+                    <option value="shared">Family</option>
                   </select>
                   <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
                     <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
