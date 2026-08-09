@@ -15,6 +15,10 @@ class AccountUpdate(BaseModel):
     scope: Scope | None = None
 
 
+class AccountBalanceUpdate(BaseModel):
+    balance_cents: int
+
+
 class AccountResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

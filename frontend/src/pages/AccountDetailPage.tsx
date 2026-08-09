@@ -59,6 +59,9 @@ export function AccountDetailPage() {
   const [categoryId, setCategoryId] = useState<string>("");
   const [formError, setFormError] = useState<string | null>(null);
   const [editingCategoryTxnId, setEditingCategoryTxnId] = useState<number | null>(null);
+  const [editingBalance, setEditingBalance] = useState(false);
+  const [balanceInput, setBalanceInput] = useState("");
+  const [balanceError, setBalanceError] = useState<string | null>(null);
 
   const createTxn = useMutation({
     mutationFn: (body: {
@@ -90,6 +93,20 @@ export function AccountDetailPage() {
     },
   });
 
+  const setBalance = useMutation({
+    mutationFn: (balance_cents: number) =>
+      api<Account>(`/api/accounts/${accountId}/balance`, {
+        method: "POST",
+        body: { balance_cents },
+      }),
+    onSuccess: () => {
+      setEditingBalance(false);
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["transactions", accountId] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+  });
+
   const updateCategory = useMutation({
     mutationFn: ({ txnId, categoryId: catId }: { txnId: number; categoryId: number | null }) =>
       api<Transaction>(`/api/transactions/${txnId}`, {
@@ -103,6 +120,17 @@ export function AccountDetailPage() {
       setEditingCategoryTxnId(null);
     },
   });
+
+  function onBalanceSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setBalanceError(null);
+    const cents = parseAmountToCents(balanceInput);
+    if (cents === null) {
+      setBalanceError("Enter a valid amount.");
+      return;
+    }
+    setBalance.mutate(cents);
+  }
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -141,10 +169,55 @@ export function AccountDetailPage() {
 
       {account && (
         <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl px-5 py-4">
-          <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">Balance</div>
-          <div className="text-2xl font-semibold tabular-nums">
-            {formatCents(account.balance_cents)}
+          <div className="flex items-center justify-between">
+            <div className="text-xs uppercase tracking-wide text-stone-500 dark:text-stone-400">Balance</div>
+            {!editingBalance && (
+              <button
+                onClick={() => {
+                  setBalanceInput((account.balance_cents / 100).toFixed(2));
+                  setBalanceError(null);
+                  setEditingBalance(true);
+                }}
+                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+              >
+                Edit balance
+              </button>
+            )}
           </div>
+          {editingBalance ? (
+            <form onSubmit={onBalanceSubmit} className="flex items-end gap-2 mt-1">
+              <div className="space-y-1">
+                <input
+                  autoFocus
+                  value={balanceInput}
+                  onChange={(e) => setBalanceInput(e.target.value)}
+                  inputMode="decimal"
+                  className="w-40 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2 text-right tabular-nums text-lg"
+                />
+                {balanceError && (
+                  <p className="text-sm text-red-600 dark:text-red-400">{balanceError}</p>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={setBalance.isPending}
+                className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-medium rounded-lg px-4 py-2"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingBalance(false)}
+                className="text-stone-600 dark:text-stone-400 hover:underline px-2 py-2"
+              >
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <div className="text-2xl font-semibold tabular-nums">
+              {formatCents(account.balance_cents)}
+            </div>
+          )}
         </div>
       )}
 

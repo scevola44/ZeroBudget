@@ -53,3 +53,20 @@ def bank_amount_to_cents(
     if credit_debit_indicator == DEBIT:
         return -cents
     raise ValueError(f"Unknown credit_debit_indicator {credit_debit_indicator!r}")
+
+
+def bank_balance_amount_to_cents(amount: str, currency: str | None) -> int:
+    """Convert an Enable Banking balance amount to signed integer cents.
+
+    Unlike transaction amounts, balance amounts (Berlin Group NextGenPSD2
+    ``balance_amount``) are already signed and carry no separate
+    ``credit_debit_indicator``.
+
+    Raises ``NonEurCurrencyError`` for non-EUR inputs and ``ValueError`` for
+    malformed amounts.
+    """
+    ensure_eur(currency)
+    try:
+        return int((Decimal(amount) * 100).quantize(Decimal("1")))
+    except InvalidOperation as exc:
+        raise ValueError(f"Malformed balance amount {amount!r}") from exc
