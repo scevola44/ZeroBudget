@@ -131,6 +131,31 @@ async def test_connect_and_callback_creates_connection_accounts_and_syncs(client
     assert accounts[0]["balance_cents"] == -4250
 
 
+async def test_connect_with_shared_scope_creates_shared_accounts(client):
+    fake = FakeBankingClient(session=_session_body())
+    _install_fake(fake)
+    headers = await register_user(client)
+
+    r = await client.post(
+        "/api/banking/connections",
+        json={"aspsp_name": "Mock ASPSP", "aspsp_country": "FI", "scope": "shared"},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    state = r.json()["state"]
+    r = await client.post(
+        "/api/banking/connections/callback",
+        json={"code": "auth-code-1", "state": state},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+
+    r = await client.get("/api/accounts", headers=headers)
+    accounts = r.json()
+    assert len(accounts) == 1
+    assert accounts[0]["scope"] == "shared"
+
+
 async def test_callback_imports_opening_balance(client):
     fake = FakeBankingClient(
         session=_session_body(),

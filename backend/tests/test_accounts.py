@@ -42,6 +42,65 @@ async def test_update_renames_account(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_update_changes_scope(client: AsyncClient):
+    headers = await register_user(client)
+    account_id = await create_account(client, headers, scope="personal")
+
+    r = await client.patch(
+        f"/api/accounts/{account_id}",
+        json={"scope": "shared"},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["scope"] == "shared"
+
+
+@pytest.mark.asyncio
+async def test_update_scope_blocked_with_categorized_transactions(client: AsyncClient):
+    headers = await register_user(client)
+    account_id = await create_account(client, headers, scope="personal")
+    group_id = (
+        await client.post(
+            "/api/category-groups",
+            json={"name": "Bills", "scope": "personal"},
+            headers=headers,
+        )
+    ).json()["id"]
+    category_id = (
+        await client.post(
+            "/api/categories",
+            json={
+                "group_id": group_id,
+                "name": "Rent",
+                "goal_kind": "monthly",
+                "goal_amount_cents": 10_000,
+            },
+            headers=headers,
+        )
+    ).json()["id"]
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": account_id,
+            "category_id": category_id,
+            "date": "2026-04-01",
+            "payee": "Landlord",
+            "memo": "",
+            "amount_cents": -10_000,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201
+
+    r = await client.patch(
+        f"/api/accounts/{account_id}",
+        json={"scope": "shared"},
+        headers=headers,
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_update_unknown_account_is_404(client: AsyncClient):
     headers = await register_user(client)
     r = await client.patch(

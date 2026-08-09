@@ -4,6 +4,7 @@ from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+from app.models.scope import PERSONAL
 
 
 class BankConnection(Base):
@@ -56,6 +57,9 @@ class BankAuthRequest(Base):
     state: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     aspsp_name: Mapped[str] = mapped_column(String(255), nullable=False)
     aspsp_country: Mapped[str] = mapped_column(String(2), nullable=False)
+    # Scope chosen when the user started the link, carried across the redirect
+    # so the accounts created on callback land in the right RTA pool.
+    scope: Mapped[str] = mapped_column(String(16), nullable=False, default=PERSONAL)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
