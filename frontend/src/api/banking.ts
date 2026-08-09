@@ -36,6 +36,7 @@ export type ConnectionSyncResult = {
   skipped_pending: number;
   skipped_non_eur: number;
   skipped_unknown_account: number;
+  skipped_unparseable_date: number;
   error_code: string | null;
   touched_account_ids: number[];
 };
