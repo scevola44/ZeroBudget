@@ -28,8 +28,12 @@ class NonEurCurrencyError(ValueError):
 
 
 def ensure_eur(currency: str | None) -> None:
-    """Raise ``NonEurCurrencyError`` if the given currency isn't EUR."""
-    if currency != ZEROBUDGET_CURRENCY:
+    """Raise ``NonEurCurrencyError`` if the given currency isn't EUR.
+
+    Compares case/whitespace-insensitively — ASPSPs (e.g. EMIs surfaced
+    through Enable Banking) aren't consistent about casing on ISO 4217 codes.
+    """
+    if currency is None or currency.strip().upper() != ZEROBUDGET_CURRENCY:
         raise NonEurCurrencyError(currency)
 
 
