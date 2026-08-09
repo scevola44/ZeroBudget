@@ -37,13 +37,18 @@ logger = logging.getLogger(__name__)
 
 PENDING_STATUS = "PDNG"
 # Preference order for picking a single balance out of an account's balance
-# list (Berlin Group NextGenPSD2 BalanceType codes). We only ever import
+# list (Enable Banking's full BalanceStatus enum: CLAV, CLBD, FWAV, INFO,
+# ITAV, ITBD, OPAV, OPBD, OTHR, PRCD, VALU, XPCD). We only ever import
 # BOOK-status transactions (PDNG ones are skipped), so a "booked" balance is
 # the more consistent match for reconciliation than an "available" one,
 # which nets out holds/pending debits we don't have matching transactions
 # for. Order: closing booked > interim booked > closing available >
 # interim available > expected (last resort — may include non-booked
-# forecasted movements).
+# forecasted movements). Deliberately excludes OPBD/OPAV (start-of-period,
+# not current), PRCD (previous period's close), and FWAV (a future date) —
+# those are stale/forward-looking, not "the balance right now". A bank that
+# only returns one of those, or an unlisted type, falls through to the
+# first balance in the list (see ``_select_balance``).
 _BALANCE_TYPE_PREFERENCE = ("CLBD", "ITBD", "CLAV", "ITAV", "XPCD")
 OPENING_BALANCE_PAYEE = "Opening Balance"
 
