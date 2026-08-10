@@ -423,13 +423,14 @@ function CategoryRow({
   }
 
   const needed = cat.needed_this_month_cents;
+  const fallbackAssign = monthlyGoalCents(cat);
   return (
     <tr className="border-t border-stone-100 dark:border-stone-800">
       <td className="px-5 py-2">
         <div>{cat.name}</div>
         <div className="text-xs text-stone-500 dark:text-stone-400 flex items-center gap-2 flex-wrap">
           <span>{formatGoal(cat)}</span>
-          {needed !== null && needed > 0 && (
+          {needed !== null && needed > 0 ? (
             <button
               type="button"
               onClick={() => onAssign(cat.assigned_cents + needed)}
@@ -438,6 +439,17 @@ function CategoryRow({
             >
               Need {formatCents(needed)}
             </button>
+          ) : (
+            fallbackAssign > 0 && (
+              <button
+                type="button"
+                onClick={() => onAssign(cat.assigned_cents + fallbackAssign)}
+                className="inline-block px-1.5 py-0.5 rounded bg-stone-200 text-stone-700 dark:bg-stone-800 dark:text-stone-300 text-[10px] font-semibold tabular-nums hover:bg-stone-300 dark:hover:bg-stone-700 cursor-pointer"
+                aria-label={`Assign this month's budget of ${formatCents(fallbackAssign)}`}
+              >
+                Assign {formatCents(fallbackAssign)}
+              </button>
+            )
           )}
         </div>
       </td>
