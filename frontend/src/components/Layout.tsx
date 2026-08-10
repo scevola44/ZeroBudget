@@ -33,7 +33,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-56 bg-white dark:bg-stone-900 border-r border-stone-200 dark:border-stone-700 flex flex-col transition-transform duration-200 md:relative md:translate-x-0 md:flex ${
+        className={`fixed inset-y-0 left-0 z-40 w-56 bg-white dark:bg-stone-900 border-r border-stone-200 dark:border-stone-700 flex flex-col transition-transform duration-200 md:sticky md:top-0 md:h-screen md:translate-x-0 md:flex md:overflow-y-auto ${
           menuOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
@@ -54,7 +54,7 @@ export function Layout({ children }: { children: ReactNode }) {
             </svg>
           </button>
         </div>
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="flex-1 overflow-y-auto p-3 space-y-1">
           <NavLink to="/budget" className={navClass} onClick={closeMenu}>
             Budget
           </NavLink>
