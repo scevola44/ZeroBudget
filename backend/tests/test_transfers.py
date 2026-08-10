@@ -146,7 +146,10 @@ async def test_editing_amount_mirrors_to_the_peer_leg(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_editing_date_mirrors_to_the_peer_leg(client: AsyncClient):
+async def test_editing_date_leaves_the_peer_leg_alone(client: AsyncClient):
+    # Each leg keeps its own date. A pair linked from two bank imports carries
+    # each bank's own booking date — money leaves on the 31st and lands on the
+    # 2nd — so mirroring would overwrite a real record with the other's date.
     headers = await register_user(client)
     checking = await create_account(client, headers, "Checking")
     savings = await create_account(client, headers, "Savings")
@@ -161,7 +164,7 @@ async def test_editing_date_mirrors_to_the_peer_leg(client: AsyncClient):
     rows = (await client.get("/api/transactions", headers=headers)).json()
     by_id = {t["id"]: t for t in rows}
     assert by_id[inflow_id]["date"] == "2026-04-15"
-    assert by_id[outflow_id]["date"] == "2026-04-15"
+    assert by_id[outflow_id]["date"] == "2026-04-02"
 
 
 @pytest.mark.asyncio

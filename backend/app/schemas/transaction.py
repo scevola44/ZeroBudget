@@ -52,6 +52,23 @@ class TransferResponse(BaseModel):
     to_transaction: TransactionResponse
 
 
+class TransferLinkRequest(BaseModel):
+    peer_transaction_id: int
+
+
+class TransferCandidate(BaseModel):
+    transaction: TransactionResponse
+    # Signed, relative to the transaction being linked: -2 means the candidate
+    # is dated two days earlier. Lets the picker say "2 days before" without
+    # re-deriving it from two dates.
+    date_offset_days: int
+
+
+class TransferSuggestion(BaseModel):
+    outflow: TransactionResponse
+    inflow: TransactionResponse
+
+
 class TransactionImportRow(BaseModel):
     account_id: int
     category_id: int | None = None

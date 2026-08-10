@@ -136,7 +136,7 @@ a typo) is the most painful daily friction.
 
 1. **Transfer model (backend)**
    - Linked transaction pair: add nullable self-referential
-     `transfer_peer_id` FK on `transactions` (Alembic migration `0006`).
+     `transfer_peer_id` FK on `transactions` (Alembic migration `0007`).
      Each leg lives in its own account; amounts are equal and opposite; both
      legs have `category_id = NULL` and are excluded from RTA inflow math.
    - New `budget_calc.py` rule: transactions that are transfer legs never
@@ -415,13 +415,26 @@ bucket is labelled "Uncategorized (incl. cross-scope transfers)".
    European number formats via `parseAmountToCents`). Reuse
    `POST /api/transactions/import-ynab` semantics via a generalized
    `POST /api/transactions/import`.
-2. **Import matching / approval**: when importing or syncing into an account,
-   match candidates against existing manual transactions (same amount, date
-   within ±N days, similar payee) and either auto-link or queue for user
-   approval (YNAB's match/approve flow). Add `import_status`
-   (`none`/`pending_approval`/`matched`) or a lightweight staging table —
-   prefer whichever keeps `budget_calc.py` inputs unchanged (unapproved rows
-   excluded before math).
+2. **Import matching / approval** — **transfer half done**: a sync fetches each
+   account separately, so a real transfer arrived as two unlinked uncategorized
+   rows that read as income *and* spending on Insights, and skewed Ready to
+   Assign whenever the legs straddled a month boundary. Two existing rows can
+   now be linked into a transfer pair
+   (`POST /api/transactions/{id}/transfer-link`, `DELETE` to unlink without
+   deleting either row), with candidates and suggested pairs offered by
+   `services/transfer_match.py` (exact opposite amounts, different accounts,
+   dates within `TRANSFER_MATCH_WINDOW_DAYS`). Suggestions are always confirmed
+   by the user — a refund and an unrelated purchase of the same size look
+   identical to a matcher.
+
+   **[decision]** No `import_status` column and no staging table: a suggestion
+   is derivable from the transactions table alone, so persisting it would create
+   a second source of truth for `budget_calc.py` inputs to drift from. Nothing
+   is written until the user confirms, which keeps unapproved rows out of the
+   math by construction. No migration was needed.
+
+   Still open: matching synced rows against *manual* entries the user typed
+   ahead of the sync (the double-counting half of this item).
 3. ~~Plaid webhooks~~ **Done differently**: Plaid was replaced by Enable
    Banking (PSD2, redirect consent), which has no webhook/delta API. Instead
    of webhooks, automatic sync is an in-process scheduler (`SYNC_MODE=auto`)
@@ -438,6 +451,10 @@ bucket is labelled "Uncategorized (incl. cross-scope transfers)".
   parsing; re-importing the same file creates no duplicates.
 - Synced/imported rows that match a manual entry don't double-count; the
   approval queue is visible and clearable.
+- Two imported rows that are really one transfer can be linked, drop out of
+  income and spending, and leave Ready to Assign untouched in *both* months when
+  their dates straddle a month boundary (pinned in `test_transfer_linking.py`
+  and `test_insights_api.py`).
 - With webhooks configured, a Sandbox transaction lands without pressing
   Sync; without webhook config, everything behaves as today.
 

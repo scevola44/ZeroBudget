@@ -20,6 +20,7 @@ export function EditTransactionModal({
   isOpen,
   onClose,
   onSave,
+  onUnlinkTransfer,
   isPending,
   error,
 }: {
@@ -31,6 +32,8 @@ export function EditTransactionModal({
   isOpen: boolean;
   onClose: () => void;
   onSave: (edit: TransactionEdit) => void;
+  /** Break the pair, keeping both transactions. Only shown for transfer legs. */
+  onUnlinkTransfer?: () => void;
   isPending: boolean;
   error: string | null;
 }) {
@@ -108,7 +111,7 @@ export function EditTransactionModal({
             />
             {isTransfer && (
               <p className="text-xs text-stone-500 dark:text-stone-400">
-                The date and amount apply to both legs of the transfer.
+                Each leg keeps its own date; the amount applies to both.
               </p>
             )}
           </div>
@@ -128,8 +131,19 @@ export function EditTransactionModal({
               Category
             </label>
             {isTransfer ? (
-              <div className="w-full border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 rounded-lg px-3 py-2 text-sm text-stone-600 dark:text-stone-400">
-                Transfer : {peerAccount?.name ?? "another account"}
+              <div className="w-full border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 rounded-lg px-3 py-2 text-sm text-stone-600 dark:text-stone-400 flex items-center justify-between gap-3">
+                <span>Transfer : {peerAccount?.name ?? "another account"}</span>
+                {onUnlinkTransfer && (
+                  <button
+                    type="button"
+                    onClick={onUnlinkTransfer}
+                    disabled={isPending}
+                    title="Keeps both transactions, just not as a transfer"
+                    className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50 whitespace-nowrap"
+                  >
+                    Unlink
+                  </button>
+                )}
               </div>
             ) : (
               <div className="relative">

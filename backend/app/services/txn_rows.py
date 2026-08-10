@@ -11,35 +11,64 @@ them and quietly breaking those tests.
 
 from collections.abc import Sequence
 
+from sqlalchemy import select
+
 from app.models import Transaction
 from app.models.scope import PERSONAL
 from app.services.budget_calc import TxnRow
 
 
+async def load_peer_account_ids(
+    db, transactions: Sequence[Transaction]
+) -> dict[int, int]:
+    """Map peer transaction id -> the account holding it, for every transfer leg.
+
+    Loaded explicitly rather than read off ``transactions`` because the two legs
+    of a transfer do not necessarily share a date: a pair linked from two bank
+    imports keeps each bank's own booking date, so a date-windowed query can
+    return one leg without the other.
+    """
+    peer_ids = {t.transfer_peer_id for t in transactions if t.transfer_peer_id is not None}
+    if not peer_ids:
+        return {}
+    result = await db.execute(
+        select(Transaction.id, Transaction.account_id).where(Transaction.id.in_(peer_ids))
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
 def build_txn_rows(
-    transactions: Sequence[Transaction], account_scope: dict[int, str]
+    transactions: Sequence[Transaction],
+    account_scope: dict[int, str],
+    peer_account_id: dict[int, int],
 ) -> list[TxnRow]:
-    """Join each transaction to its account's scope and its transfer peer's."""
-    scope_by_txn_id: dict[int, str] = {
+    """Join each transaction to its account's scope and its transfer peer's.
+
+    ``peer_account_id`` covers every ``transfer_peer_id`` in ``transactions`` —
+    build it with ``load_peer_account_ids``.
+    """
+    own_scope: dict[int, str] = {
         t.id: account_scope.get(t.account_id, PERSONAL) for t in transactions
     }
 
     def peer_scope(txn: Transaction) -> str | None:
         if txn.transfer_peer_id is None:
             return None
-        # Both legs always share a date, so a date-windowed query loads both.
-        # Should the peer be missing anyway, falling back to this row's own
-        # scope marks the leg same-scope and excludes it from Ready to Assign —
-        # the conservative reading of a transfer whose other half isn't visible.
-        own_scope = scope_by_txn_id[txn.id]
-        return scope_by_txn_id.get(txn.transfer_peer_id, own_scope)
+        account_id = peer_account_id.get(txn.transfer_peer_id)
+        if account_id is None:
+            # Should the peer be missing anyway, falling back to this row's own
+            # scope marks the leg same-scope and excludes it from Ready to
+            # Assign — the conservative reading of a transfer whose other half
+            # isn't visible.
+            return own_scope[txn.id]
+        return account_scope.get(account_id, PERSONAL)
 
     return [
         TxnRow(
             category_id=t.category_id,
             date=t.date,
             amount_cents=t.amount_cents,
-            scope=scope_by_txn_id[t.id],
+            scope=own_scope[t.id],
             transfer_peer_scope=peer_scope(t),
         )
         for t in transactions

@@ -32,6 +32,7 @@ from app.services.bank_amount import (
 )
 from app.services.banking_client import BankingClient, BankingError
 from app.services.encryption import decrypt
+from app.services.synthetic_payees import OPENING_BALANCE_PAYEE
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,6 @@ PENDING_STATUS = "PDNG"
 # only returns one of those, or an unlisted type, falls through to the
 # first balance in the list (see ``_select_balance``).
 _BALANCE_TYPE_PREFERENCE = ("CLBD", "ITBD", "CLAV", "ITAV", "XPCD")
-OPENING_BALANCE_PAYEE = "Opening Balance"
 
 
 @dataclass

@@ -68,10 +68,14 @@ def feeds_ready_to_assign(txn: TxnRow) -> bool:
     between pools: a same-scope transfer is one pool's money changing accounts,
     so both its legs are excluded and the pool is untouched.
 
-    Excluding same-scope legs is arithmetically the same as letting them cancel
-    each other out — the two legs are equal and opposite and share a date. It is
-    written as an exclusion so the intent is pinned rather than incidental, and
-    so ``insights_calc`` can apply the identical rule.
+    The two legs are always equal and opposite, so excluding them is the same
+    arithmetic as letting them cancel out — except when they fall in different
+    months, which a pair linked from two bank imports routinely does
+    (money leaves on the 31st and lands on the 2nd). There the exclusion is the
+    *more* correct reading: money in transit between the user's own accounts
+    never stopped being theirs, so neither month's pool should move. Writing it
+    as an exclusion rather than relying on cancellation is what pins that, and
+    what lets ``insights_calc`` apply the identical rule.
     """
     if txn.category_id is not None:
         return False

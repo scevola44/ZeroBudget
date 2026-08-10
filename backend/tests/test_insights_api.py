@@ -452,3 +452,79 @@ async def test_a_cross_scope_transfer_stays_visible_in_both_pools(client: AsyncC
 
     assert insights["breakdown"]["personal"]["uncategorized_spent_cents"] == 60_000
     assert insights["income_vs_spending"]["shared"]["income_cents"] == 60_000
+
+
+async def _link_transfer(
+    client: AsyncClient, headers: dict, txn_id: int, peer_id: int
+) -> None:
+    r = await client.post(
+        f"/api/transactions/{txn_id}/transfer-link",
+        json={"peer_transaction_id": peer_id},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+
+
+async def _post_and_get_id(
+    client: AsyncClient, headers: dict, account_id: int, amount_cents: int, date: str
+) -> int:
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": account_id,
+            "category_id": None,
+            "date": date,
+            "payee": "",
+            "memo": "",
+            "amount_cents": amount_cents,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_a_linked_pair_split_across_months_is_excluded_from_both(
+    client: AsyncClient,
+):
+    """Legs linked from two bank imports keep each bank's own booking date, so
+    they no longer cancel each other out inside one month. Both must still drop
+    out of income and spending."""
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking", scope="personal")
+    savings = await create_account(client, headers, "Savings", scope="personal")
+
+    await _post_transaction(client, headers, checking, 250_000, "2026-03-01")
+    outflow = await _post_and_get_id(client, headers, checking, -60_000, "2026-03-31")
+    inflow = await _post_and_get_id(client, headers, savings, 60_000, "2026-04-02")
+    await _link_transfer(client, headers, outflow, inflow)
+
+    march = (await _get_insights(client, headers, "2026-03", "2026-03")).json()
+    april = (await _get_insights(client, headers, APRIL, APRIL)).json()
+
+    assert march["breakdown"]["personal"]["uncategorized_spent_cents"] == 0
+    assert march["income_vs_spending"]["personal"]["income_cents"] == 250_000
+    assert april["income_vs_spending"]["personal"]["income_cents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_cross_scope_pair_straddling_the_horizon_keeps_its_visible_leg(
+    client: AsyncClient,
+):
+    """The Insights query is date-windowed, so a pair whose legs sit either side
+    of the horizon loads only one of them. Resolving the peer's scope must not
+    depend on the peer being in that window, or this leg is read as a same-scope
+    transfer and silently dropped."""
+    headers = await register_user(client)
+    personal = await create_account(client, headers, "Personal", scope="personal")
+    joint = await create_account(client, headers, "Joint", scope="shared")
+
+    await _post_transaction(client, headers, personal, 250_000, "2026-03-01")
+    outflow = await _post_and_get_id(client, headers, personal, -60_000, "2026-03-31")
+    inflow = await _post_and_get_id(client, headers, joint, 60_000, "2026-04-02")
+    await _link_transfer(client, headers, outflow, inflow)
+
+    march = (await _get_insights(client, headers, "2026-03", "2026-03")).json()
+
+    assert march["breakdown"]["personal"]["uncategorized_spent_cents"] == 60_000
