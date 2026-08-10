@@ -80,5 +80,113 @@ export type BudgetMonth = {
   groups: BudgetGroupRow[];
 };
 
+export type InsightsPeriod = {
+  start_month: string;
+  end_month: string;
+  month_count: number;
+  baseline_start_month: string;
+  baseline_end_month: string;
+};
+
+export type CategorySpendingRow = {
+  category_id: number;
+  name: string;
+  group_id: number;
+  group_name: string;
+  spent_cents: number;
+  refund_cents: number;
+  activity_cents: number;
+};
+
+export type GroupSpendingRow = {
+  group_id: number;
+  name: string;
+  spent_cents: number;
+  sort_index: number;
+};
+
+export type ScopeBreakdown = {
+  scope: Scope;
+  total_spent_cents: number;
+  uncategorized_spent_cents: number;
+  groups: GroupSpendingRow[];
+  categories: CategorySpendingRow[];
+};
+
+export type ScopeSplit = {
+  personal_spent_cents: number;
+  shared_spent_cents: number;
+  total_spent_cents: number;
+};
+
+export type SpendingBreakdown = {
+  scope_split: ScopeSplit;
+  personal: ScopeBreakdown;
+  shared: ScopeBreakdown;
+};
+
+export type MonthFlowRow = {
+  month: string;
+  income_cents: number;
+  spent_cents: number;
+  refund_cents: number;
+  net_cents: number;
+};
+
+export type ScopeFlow = {
+  scope: Scope;
+  income_cents: number;
+  spent_cents: number;
+  refund_cents: number;
+  net_cents: number;
+  months: MonthFlowRow[];
+};
+
+export type OverspendFlag =
+  | "spent_above_usual"
+  | "assigned_above_usual"
+  | "new_spending"
+  | "available_negative";
+
+export type CategoryTrendRow = {
+  category_id: number;
+  name: string;
+  group_name: string;
+  assigned_cents: number;
+  expected_assigned_cents: number | null;
+  assigned_delta_cents: number | null;
+  assigned_delta_pct: number | null;
+  spent_cents: number;
+  expected_spent_cents: number | null;
+  spent_delta_cents: number | null;
+  spent_delta_pct: number | null;
+  baseline_month_count: number;
+  has_baseline: boolean;
+  worst_balance_cents: number;
+  worst_balance_month: string | null;
+  flags: OverspendFlag[];
+};
+
+export type ScopeOverspending = {
+  scope: Scope;
+  categories: CategoryTrendRow[];
+  on_track_count: number;
+};
+
+export type Insights = {
+  period: InsightsPeriod;
+  breakdown: SpendingBreakdown;
+  income_vs_spending: { personal: ScopeFlow; shared: ScopeFlow };
+  overspending: Overspending;
+};
+
+export type Overspending = {
+  threshold_pct: number;
+  min_notable_cents: number;
+  min_baseline_months: number;
+  personal: ScopeOverspending;
+  shared: ScopeOverspending;
+};
+
 export type YnabImportRow = { group: string; category: string };
 export type YnabImportResponse = { groups_created: number; categories_created: number };

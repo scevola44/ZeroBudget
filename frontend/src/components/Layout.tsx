@@ -67,6 +67,9 @@ export function Layout({ children }: { children: ReactNode }) {
           <NavLink to="/transactions" className={navClass} onClick={closeMenu}>
             Transactions
           </NavLink>
+          <NavLink to="/insights" className={navClass} onClick={closeMenu}>
+            Insights
+          </NavLink>
         </nav>
         <div className="p-3 border-t border-stone-200 dark:border-stone-700 text-sm">
           <div className="text-stone-500 dark:text-stone-400 truncate mb-2">{user?.email}</div>
