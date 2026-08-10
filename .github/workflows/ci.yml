@@ -67,11 +67,22 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # ghcr.io logins intermittently time out on GitHub-hosted runners; retry a few times.
+          max_attempts=5
+          retry_wait_seconds=10
+          attempt=1
+          until echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "GHCR login failed after $max_attempts attempts" >&2
+              exit 1
+            fi
+            echo "GHCR login attempt $attempt failed, retrying in ${retry_wait_seconds}s..." >&2
+            sleep "$retry_wait_seconds"
+            attempt=$((attempt + 1))
+          done
 
       - name: Derive image tags
         id: meta
@@ -84,12 +95,37 @@ jobs:
             type=sha,format=short
 
       - name: Build & push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          tag_args=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && tag_args+=(--tag "$tag")
+          done <<< "$TAGS"
+
+          label_args=()
+          while IFS= read -r label; do
+            [ -n "$label" ] && label_args+=(--label "$label")
+          done <<< "$LABELS"
+
+          # Same class of transient ghcr.io timeout as the login step; retry the push.
+          max_attempts=3
+          retry_wait_seconds=15
+          attempt=1
+          until docker buildx build \
+              --file ./Dockerfile \
+              --push \
+              "${tag_args[@]}" \
+              "${label_args[@]}" \
+              --cache-from type=gha \
+              --cache-to type=gha,mode=max \
+              .; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Build & push failed after $max_attempts attempts" >&2
+              exit 1
+            fi
+            echo "Build & push attempt $attempt failed, retrying in ${retry_wait_seconds}s..." >&2
+            sleep "$retry_wait_seconds"
+            attempt=$((attempt + 1))
+          done
