@@ -20,11 +20,12 @@ walk reproduces ``budget_calc``'s rollover semantics, and
 ``test_insights_calc.py`` pins the two against each other month by month — those
 reconciliation tests are load-bearing, not extra coverage.
 
-TODO(phase-1): transfers are currently two untagged uncategorized transactions
-(see ``test_budget_api.py::test_transfer_pair_moves_money_between_pools``), so
-the receiving leg is indistinguishable from income and the sending leg from
-uncategorized spending. Once transfer legs are marked, exclude them here — it
-becomes a single filter on the incoming rows.
+Transfers between two accounts in the **same** scope are the pool's own money
+changing hands: both legs are skipped, so neither reads as income nor as
+uncategorized spending. Cross-scope legs genuinely move money between pools and
+stay visible. That is the same split ``budget_calc.feeds_ready_to_assign``
+applies to Ready to Assign, and the two must not drift — see
+``_is_internal_transfer``.
 """
 
 from __future__ import annotations
@@ -105,6 +106,16 @@ def _is_income(txn: TxnRow) -> bool:
     return txn.category_id is None and txn.amount_cents > 0
 
 
+def _is_internal_transfer(txn: TxnRow) -> bool:
+    """A transfer whose two legs sit in the same scope — money moving between
+    the user's own accounts inside one pool. It is neither income nor spending,
+    so both legs are excluded from every figure on this page. Cross-scope legs
+    are real movements between pools and are left in, matching
+    ``budget_calc.feeds_ready_to_assign``.
+    """
+    return txn.transfer_peer_scope == txn.scope
+
+
 def _scope_of(txn: TxnRow, category_scope: dict[int, str]) -> str | None:
     """Which pool a transaction belongs to.
 
@@ -163,7 +174,7 @@ def compute_spending_breakdown(
     uncategorized: dict[str, int] = {scope: 0 for scope in scopes}
 
     for txn in transactions:
-        if not period.contains(txn.date):
+        if not period.contains(txn.date) or _is_internal_transfer(txn):
             continue
         scope = _scope_of(txn, category_scope)
         if scope not in uncategorized:
@@ -232,7 +243,7 @@ def flow_by_month(
     refunded: dict[date, int] = {month: 0 for month in months}
 
     for txn in transactions:
-        if _scope_of(txn, category_scope) != scope:
+        if _scope_of(txn, category_scope) != scope or _is_internal_transfer(txn):
             continue
         bucket = month_start(txn.date)
         if bucket not in income:

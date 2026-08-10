@@ -33,6 +33,16 @@ class Transaction(Base):
     external_transaction_id: Mapped[str | None] = mapped_column(
         String(128), unique=True, nullable=True, index=True
     )
+    # Set on both legs of a transfer, each pointing at the other. UNIQUE so a
+    # leg can only ever belong to one pair. SET NULL rather than CASCADE: the
+    # API deletes both legs itself, and a cascade on a mutually-referencing
+    # pair has no well-defined order.
+    transfer_peer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transactions.id", ondelete="SET NULL"),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

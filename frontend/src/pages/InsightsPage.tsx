@@ -293,7 +293,9 @@ function ScopeSpendingCard({ breakdown }: { breakdown: ScopeBreakdown }) {
             ))}
             {breakdown.uncategorized_spent_cents > 0 && (
               <CategoryBar
-                name="Uncategorized (incl. transfers)"
+                // Transfers within a scope are excluded from these figures;
+                // one crossing into the other pool still lands here.
+                name="Uncategorized (incl. cross-scope transfers)"
                 spentCents={breakdown.uncategorized_spent_cents}
                 refundCents={0}
                 totalCents={total}

@@ -28,9 +28,14 @@ def _txn(
     date: date,
     amount_cents: int,
     scope: str = "personal",
+    transfer_peer_scope: str | None = None,
 ) -> TxnRow:
     return TxnRow(
-        category_id=category_id, date=date, amount_cents=amount_cents, scope=scope
+        category_id=category_id,
+        date=date,
+        amount_cents=amount_cents,
+        scope=scope,
+        transfer_peer_scope=transfer_peer_scope,
     )
 
 
@@ -212,14 +217,65 @@ def test_future_overdraft_isolated_per_scope():
     assert compute_ready_to_assign(txns, assigns, APRIL, "shared") == -20_000
 
 
-def test_transfer_pair_yields_expected_per_scope_rta():
-    # A transfer is two unassigned-category transactions on opposite scopes.
+def test_cross_scope_transfer_moves_ready_to_assign_between_pools():
+    # A cross-scope transfer really does move money out of one pool and into
+    # the other, so both legs count.
     # Personal: 1000 salary, then -600 transfer out → 400.
     # Shared: 600 transfer in → 600.
     txns = [
         _txn(category_id=None, date=date(2026, 4, 1), amount_cents=100_000, scope="personal"),
-        _txn(category_id=None, date=date(2026, 4, 2), amount_cents=-60_000, scope="personal"),
-        _txn(category_id=None, date=date(2026, 4, 2), amount_cents=60_000, scope="shared"),
+        _txn(
+            category_id=None,
+            date=date(2026, 4, 2),
+            amount_cents=-60_000,
+            scope="personal",
+            transfer_peer_scope="shared",
+        ),
+        _txn(
+            category_id=None,
+            date=date(2026, 4, 2),
+            amount_cents=60_000,
+            scope="shared",
+            transfer_peer_scope="personal",
+        ),
     ]
     assert compute_ready_to_assign(txns, [], APRIL, "personal") == 40_000
     assert compute_ready_to_assign(txns, [], APRIL, "shared") == 60_000
+
+
+def test_same_scope_transfer_leaves_ready_to_assign_untouched():
+    # Moving money between two personal accounts is the same pool's money
+    # changing hands: neither leg touches Ready to Assign.
+    txns = [
+        _txn(category_id=None, date=date(2026, 4, 1), amount_cents=100_000, scope="personal"),
+        _txn(
+            category_id=None,
+            date=date(2026, 4, 2),
+            amount_cents=-60_000,
+            scope="personal",
+            transfer_peer_scope="personal",
+        ),
+        _txn(
+            category_id=None,
+            date=date(2026, 4, 2),
+            amount_cents=60_000,
+            scope="personal",
+            transfer_peer_scope="personal",
+        ),
+    ]
+    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 100_000
+
+
+def test_incoming_same_scope_transfer_leg_is_not_treated_as_income():
+    # The failure this guards against: a positive uncategorized leg looking
+    # like fresh income and inflating the pool it landed in.
+    txns = [
+        _txn(
+            category_id=None,
+            date=APRIL,
+            amount_cents=60_000,
+            scope="personal",
+            transfer_peer_scope="personal",
+        ),
+    ]
+    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 0

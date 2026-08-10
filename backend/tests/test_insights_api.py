@@ -392,3 +392,63 @@ async def test_insights_reconciles_with_the_budget_page_for_the_same_month(
 
     assert insights["breakdown"]["personal"]["total_spent_cents"] == 52_500
     assert insights["breakdown"]["shared"]["total_spent_cents"] == 90_000
+
+
+@pytest.mark.asyncio
+async def test_a_same_scope_transfer_is_neither_income_nor_spending(client: AsyncClient):
+    """Before transfers were first-class, the receiving leg read as income and
+    the sending leg as uncategorized spending. Both legs must now vanish."""
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking", scope="personal")
+    savings = await create_account(client, headers, "Savings", scope="personal")
+
+    await _post_transaction(client, headers, checking, 250_000, "2026-04-01")
+    r = await client.post(
+        "/api/transactions/transfer",
+        json={
+            "from_account_id": checking,
+            "to_account_id": savings,
+            "date": "2026-04-10",
+            "payee": "",
+            "memo": "",
+            "amount_cents": 60_000,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+
+    insights = (await _get_insights(client, headers)).json()
+    flow = insights["income_vs_spending"]["personal"]
+
+    assert flow["income_cents"] == 250_000
+    assert flow["spent_cents"] == 0
+    assert insights["breakdown"]["personal"]["uncategorized_spent_cents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_cross_scope_transfer_stays_visible_in_both_pools(client: AsyncClient):
+    """Unlike a same-scope move, this one really does leave one pool and enter
+    the other, so each side should still see its half."""
+    headers = await register_user(client)
+    personal = await create_account(client, headers, "Personal", scope="personal")
+    joint = await create_account(client, headers, "Joint", scope="shared")
+
+    await _post_transaction(client, headers, personal, 250_000, "2026-04-01")
+    r = await client.post(
+        "/api/transactions/transfer",
+        json={
+            "from_account_id": personal,
+            "to_account_id": joint,
+            "date": "2026-04-10",
+            "payee": "",
+            "memo": "",
+            "amount_cents": 60_000,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+
+    insights = (await _get_insights(client, headers)).json()
+
+    assert insights["breakdown"]["personal"]["uncategorized_spent_cents"] == 60_000
+    assert insights["income_vs_spending"]["shared"]["income_cents"] == 60_000

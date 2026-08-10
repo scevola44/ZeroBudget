@@ -14,13 +14,13 @@ from app.schemas.budget import (
 )
 from app.services.budget_calc import (
     AssignmentRow,
-    TxnRow,
     compute_category_balances,
     compute_ready_to_assign,
     format_month,
     month_start,
     parse_month,
 )
+from app.services.txn_rows import build_txn_rows
 
 
 def _needed_this_month(category: Category, balance_cents: int, month_first: date) -> int | None:
@@ -120,15 +120,7 @@ async def get_budget_month(
     group_scope: dict[int, str] = {g.id: g.scope for g in groups}
     category_scope: dict[int, str] = {c.id: group_scope[c.group_id] for c in categories}
 
-    txns = [
-        TxnRow(
-            category_id=t.category_id,
-            date=t.date,
-            amount_cents=t.amount_cents,
-            scope=account_scope.get(t.account_id, PERSONAL),
-        )
-        for t in txn_rows_db
-    ]
+    txns = build_txn_rows(txn_rows_db, account_scope)
     assignments = [
         AssignmentRow(
             category_id=a.category_id,
