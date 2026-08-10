@@ -35,11 +35,20 @@ function availablePillClass(assignedCents: number, balanceCents: number): string
   return "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200";
 }
 
-function readyPillClass(cents: number): string {
-  if (cents > 0)
+function readyToAssignBoxClass(readyCents: number, neededCents: number): string {
+  if (readyCents < 0) return "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100";
+  if (neededCents > 0 && readyCents < neededCents)
+    return "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100";
+  if (readyCents > 0)
     return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100";
-  if (cents < 0) return "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100";
   return "bg-stone-200 text-stone-900 dark:bg-stone-800 dark:text-stone-100";
+}
+
+function scopeHeaderClass(assignedCents: number, goalCents: number): string {
+  if (goalCents <= 0) return "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300";
+  if (assignedCents >= goalCents)
+    return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100";
+  return "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100";
 }
 
 export function BudgetPage() {
@@ -85,6 +94,12 @@ export function BudgetPage() {
     budgetQuery.data?.groups.filter((g) => g.scope === "personal") ?? [];
   const sharedGroups: BudgetGroupRow[] =
     budgetQuery.data?.groups.filter((g) => g.scope === "shared") ?? [];
+  const personalNeededCents = personalGroups
+    .flatMap((g) => g.categories)
+    .reduce((s, c) => s + (c.needed_this_month_cents ?? 0), 0);
+  const sharedNeededCents = sharedGroups
+    .flatMap((g) => g.categories)
+    .reduce((s, c) => s + (c.needed_this_month_cents ?? 0), 0);
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -108,8 +123,8 @@ export function BudgetPage() {
       </header>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <ReadyToAssignPill scope="personal" cents={personalReady} />
-        <ReadyToAssignPill scope="shared" cents={sharedReady} />
+        <ReadyToAssignPill scope="personal" cents={personalReady} neededCents={personalNeededCents} />
+        <ReadyToAssignPill scope="shared" cents={sharedReady} neededCents={sharedNeededCents} />
       </div>
 
       {budgetQuery.isLoading && (
@@ -151,13 +166,22 @@ export function BudgetPage() {
   );
 }
 
-function ReadyToAssignPill({ scope, cents }: { scope: Scope; cents: number }) {
+function ReadyToAssignPill({
+  scope,
+  cents,
+  neededCents,
+}: {
+  scope: Scope;
+  cents: number;
+  neededCents: number;
+}) {
   return (
-    <div className={`rounded-2xl p-5 ${readyPillClass(cents)}`}>
+    <div className={`rounded-2xl p-5 ${readyToAssignBoxClass(cents, neededCents)}`}>
       <div className="text-xs uppercase tracking-wide opacity-70">
         Ready to Assign — {scopeLabel(scope)}
       </div>
       <div className="text-3xl font-semibold tabular-nums">{formatCents(cents)}</div>
+      <div className="text-xs mt-1 opacity-80 tabular-nums">Needed: {formatCents(neededCents)}</div>
     </div>
   );
 }
@@ -175,11 +199,21 @@ function ScopeSection({
   toggleGroup: (groupId: number) => void;
   onAssign: (categoryId: number, cents: number) => void;
 }) {
+  const allCategories = groups.flatMap((g) => g.categories);
+  const totalGoalCents = allCategories.reduce((s, c) => s + monthlyGoalCents(c), 0);
+  const totalAssignedCents = allCategories.reduce((s, c) => s + c.assigned_cents, 0);
+  const totalAvailableCents = allCategories.reduce((s, c) => s + c.balance_cents, 0);
+
   return (
     <section className="space-y-3">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500 dark:text-stone-400">
-        {scopeLabel(scope)}
-      </h2>
+      <div
+        className={`flex items-center justify-between rounded-xl px-4 py-2 ${scopeHeaderClass(totalAssignedCents, totalGoalCents)}`}
+      >
+        <h2 className="text-sm font-semibold uppercase tracking-wide">{scopeLabel(scope)}</h2>
+        <span className="text-xs font-medium tabular-nums">
+          Needed {formatCents(totalGoalCents)}/mo
+        </span>
+      </div>
       {groups.length === 0 ? (
         <div className="bg-white dark:bg-stone-900 border border-dashed border-stone-300 dark:border-stone-700 rounded-2xl p-6 text-center text-sm text-stone-500 dark:text-stone-400">
           No {scopeLabel(scope).toLowerCase()} category groups yet. Add one on the{" "}
@@ -278,19 +312,26 @@ function ScopeSection({
               </div>
             );
           })}
-          <SectionTotalsRow groups={groups} />
+          <SectionTotalsRow
+            totalGoalCents={totalGoalCents}
+            totalAssignedCents={totalAssignedCents}
+            totalAvailableCents={totalAvailableCents}
+          />
         </>
       )}
     </section>
   );
 }
 
-function SectionTotalsRow({ groups }: { groups: BudgetGroupRow[] }) {
-  const allCategories = groups.flatMap((g) => g.categories);
-  const totalGoalCents = allCategories.reduce((s, c) => s + monthlyGoalCents(c), 0);
-  const totalAssignedCents = allCategories.reduce((s, c) => s + c.assigned_cents, 0);
-  const totalAvailableCents = allCategories.reduce((s, c) => s + c.balance_cents, 0);
-
+function SectionTotalsRow({
+  totalGoalCents,
+  totalAssignedCents,
+  totalAvailableCents,
+}: {
+  totalGoalCents: number;
+  totalAssignedCents: number;
+  totalAvailableCents: number;
+}) {
   return (
     <div className="flex items-center gap-2 px-5 py-3 border-t-2 border-stone-300 dark:border-stone-600 text-sm font-semibold text-stone-700 dark:text-stone-200">
       <span className="flex-1 min-w-0">Total</span>
