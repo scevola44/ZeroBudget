@@ -3,6 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { Account, CategoryGroup, Transaction } from "../api/types";
+import {
+  EditTransactionModal,
+  type TransactionEdit,
+} from "../components/EditTransactionModal";
 import { currentMonth } from "../lib/dates";
 import { formatCents } from "../lib/money";
 import { YnabTransactionImportModal, type ImportRow } from "./YnabTransactionImportModal";
@@ -23,6 +27,8 @@ export function TransactionsPage() {
   const [selectedAccountIds, setSelectedAccountIds] = useState(() => new Set<number>());
   const [selectedCategoryId, setSelectedCategoryId] = useState("");
   const [importOpen, setImportOpen] = useState(false);
+  const [editingTxnId, setEditingTxnId] = useState<number | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
   const qc = useQueryClient();
 
   const importMutation = useMutation({
@@ -54,8 +60,21 @@ export function TransactionsPage() {
   const accounts = accountsQuery.data ?? [];
   const flatCategories =
     groupsQuery.data?.flatMap((g) =>
-      g.categories.map((c) => ({ ...c, groupName: g.name })),
+      g.categories.map((c) => ({ ...c, groupName: g.name, groupScope: g.scope })),
     ) ?? [];
+
+  const updateTxn = useMutation({
+    mutationFn: ({ txnId, edit }: { txnId: number; edit: TransactionEdit }) =>
+      api<Transaction>(`/api/transactions/${txnId}`, { method: "PATCH", body: edit }),
+    onSuccess: () => {
+      setEditingTxnId(null);
+      setEditError(null);
+      void qc.invalidateQueries({ queryKey: ["transactions"] });
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+    onError: (err) => setEditError(err instanceof Error ? err.message : "Update failed"),
+  });
 
   function toggleAccount(id: number) {
     setSelectedAccountIds((prev) => {
@@ -78,6 +97,10 @@ export function TransactionsPage() {
 
   const accountById = Object.fromEntries(accounts.map((a) => [a.id, a]));
   const categoryById = Object.fromEntries(flatCategories.map((c) => [c.id, c]));
+  const editingTransaction =
+    editingTxnId === null
+      ? undefined
+      : (txnsQuery.data ?? []).find((t) => t.id === editingTxnId);
 
   return (
     <div className="max-w-5xl space-y-6">
@@ -186,6 +209,7 @@ export function TransactionsPage() {
                   <th className="text-left px-5 py-2">Category</th>
                   <th className="hidden sm:table-cell text-left px-5 py-2">Memo</th>
                   <th className="text-right px-5 py-2">Amount</th>
+                  <th className="px-5 py-2"></th>
                 </tr>
               </thead>
               <tbody>
@@ -202,7 +226,14 @@ export function TransactionsPage() {
                         {t.payee || <span className="text-stone-400 dark:text-stone-500">—</span>}
                       </td>
                       <td className="px-5 py-2">
-                        {cat ? (
+                        {t.transfer_peer_id !== null ? (
+                          <span className="text-stone-600 dark:text-stone-300">
+                            Transfer :{" "}
+                            {(t.transfer_peer_account_id !== null
+                              ? accountById[t.transfer_peer_account_id]?.name
+                              : undefined) ?? "another account"}
+                          </span>
+                        ) : cat ? (
                           `${cat.groupName} › ${cat.name}`
                         ) : (
                           <span className="text-stone-400 dark:text-stone-500">Unassigned</span>
@@ -220,6 +251,17 @@ export function TransactionsPage() {
                       >
                         {formatCents(t.amount_cents)}
                       </td>
+                      <td className="px-5 py-2 text-right">
+                        <button
+                          onClick={() => {
+                            setEditError(null);
+                            setEditingTxnId(t.id);
+                          }}
+                          className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline px-2 py-1"
+                        >
+                          Edit
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -228,6 +270,30 @@ export function TransactionsPage() {
           </div>
         )}
       </div>
+
+      {editingTransaction && (
+        <EditTransactionModal
+          transaction={editingTransaction}
+          // Only categories in the transaction's own scope are valid — the
+          // backend rejects the rest with a 422.
+          categories={flatCategories.filter(
+            (c) => c.groupScope === accountById[editingTransaction.account_id]?.scope,
+          )}
+          peerAccount={
+            (editingTransaction.transfer_peer_account_id !== null
+              ? accountById[editingTransaction.transfer_peer_account_id]
+              : undefined) ?? null
+          }
+          isOpen={true}
+          onClose={() => {
+            setEditingTxnId(null);
+            setEditError(null);
+          }}
+          onSave={(edit) => updateTxn.mutate({ txnId: editingTransaction.id, edit })}
+          isPending={updateTxn.isPending}
+          error={editError}
+        />
+      )}
 
       {importOpen && (
         <YnabTransactionImportModal

@@ -3,7 +3,15 @@
 
 export type User = { id: number; email: string };
 
-export type AccountType = "checking" | "savings" | "cash" | string;
+export type AccountType = "checking" | "savings" | "cash" | "credit" | "loan" | string;
+
+export const MANUAL_ACCOUNT_TYPES: { value: string; label: string }[] = [
+  { value: "checking", label: "Checking" },
+  { value: "savings", label: "Savings" },
+  { value: "cash", label: "Cash" },
+  { value: "credit", label: "Credit" },
+  { value: "loan", label: "Loan" },
+];
 
 export type Scope = "personal" | "shared";
 
@@ -19,6 +27,7 @@ export type Account = {
   type: AccountType;
   scope: Scope;
   balance_cents: number;
+  closed: boolean;
   bank_connection_id: number | null;
   bank_account_mask: string | null;
   institution_name: string | null;
@@ -52,6 +61,15 @@ export type Transaction = {
   payee: string;
   memo: string;
   amount_cents: number;
+  // Set on both legs of a transfer, each pointing at the other.
+  transfer_peer_id: number | null;
+  // The account holding the other leg, for labelling transfer rows.
+  transfer_peer_account_id: number | null;
+};
+
+export type Transfer = {
+  from_transaction: Transaction;
+  to_transaction: Transaction;
 };
 
 export type BudgetCategoryRow = {

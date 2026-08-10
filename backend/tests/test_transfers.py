@@ -79,6 +79,29 @@ async def test_transfer_creates_two_linked_uncategorized_legs(client: AsyncClien
     assert outflow["category_id"] is None and inflow["category_id"] is None
     assert outflow["transfer_peer_id"] == inflow["id"]
     assert inflow["transfer_peer_id"] == outflow["id"]
+    # The peer's account travels on the response so a transaction list can
+    # label the row without fetching the other leg.
+    assert outflow["transfer_peer_account_id"] == savings
+    assert inflow["transfer_peer_account_id"] == checking
+
+
+@pytest.mark.asyncio
+async def test_listing_transactions_reports_each_legs_peer_account(client: AsyncClient):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    await _transfer(client, headers, checking, savings)
+    await _add_inflow(client, headers, checking, SALARY_CENTS, "2026-04-01")
+
+    rows = (await client.get("/api/transactions", headers=headers)).json()
+    peer_accounts = {
+        row["account_id"]: row["transfer_peer_account_id"]
+        for row in rows
+        if row["transfer_peer_id"] is not None
+    }
+    assert peer_accounts == {checking: savings, savings: checking}
+    # A plain transaction carries no peer.
+    assert any(row["transfer_peer_account_id"] is None for row in rows)
 
 
 @pytest.mark.asyncio

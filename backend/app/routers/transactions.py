@@ -1,4 +1,6 @@
+from collections.abc import Sequence
 from datetime import date
+
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
@@ -16,6 +18,24 @@ from app.schemas.transaction import (
 from app.services.budget_calc import month_start, next_month_start, parse_month
 
 router = APIRouter(prefix="/api/transactions", tags=["transactions"])
+
+
+async def _peer_accounts(db, rows: Sequence[Transaction]) -> dict[int, int]:
+    """Map peer transaction id -> the account holding it, for transfer labels."""
+    peer_ids = {t.transfer_peer_id for t in rows if t.transfer_peer_id is not None}
+    if not peer_ids:
+        return {}
+    result = await db.execute(
+        select(Transaction.id, Transaction.account_id).where(Transaction.id.in_(peer_ids))
+    )
+    return {row[0]: row[1] for row in result.all()}
+
+
+def _to_response(txn: Transaction, peer_accounts: dict[int, int]) -> TransactionResponse:
+    response = TransactionResponse.model_validate(txn)
+    if txn.transfer_peer_id is not None:
+        response.transfer_peer_account_id = peer_accounts.get(txn.transfer_peer_id)
+    return response
 
 
 async def _owned_transaction(db, user_id: int, txn_id: int) -> Transaction:
@@ -83,7 +103,8 @@ async def list_transactions(
         stmt = stmt.where(Transaction.date <= end_date)
     stmt = stmt.order_by(Transaction.date.desc(), Transaction.id.desc())
     rows = (await db.execute(stmt)).scalars().all()
-    return [TransactionResponse.model_validate(r) for r in rows]
+    peer_accounts = await _peer_accounts(db, rows)
+    return [_to_response(r, peer_accounts) for r in rows]
 
 
 @router.post("/import-ynab", response_model=TransactionImportResponse)
@@ -178,9 +199,10 @@ async def create_transfer(
     await db.refresh(outflow)
     await db.refresh(inflow)
 
+    peer_accounts = {outflow.id: outflow.account_id, inflow.id: inflow.account_id}
     return TransferResponse(
-        from_transaction=TransactionResponse.model_validate(outflow),
-        to_transaction=TransactionResponse.model_validate(inflow),
+        from_transaction=_to_response(outflow, peer_accounts),
+        to_transaction=_to_response(inflow, peer_accounts),
     )
 
 
@@ -262,7 +284,7 @@ async def update_transaction(
 
     await db.commit()
     await db.refresh(txn)
-    return TransactionResponse.model_validate(txn)
+    return _to_response(txn, await _peer_accounts(db, [txn]))
 
 
 @router.delete("/{txn_id}", status_code=status.HTTP_204_NO_CONTENT)

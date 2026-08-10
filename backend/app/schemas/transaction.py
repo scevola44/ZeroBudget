@@ -32,6 +32,9 @@ class TransactionResponse(BaseModel):
     memo: str
     amount_cents: int
     transfer_peer_id: int | None = None
+    # The account holding the other leg. Denormalized onto the response so a
+    # transaction list can label transfers without fetching the peer rows.
+    transfer_peer_account_id: int | None = None
 
 
 class TransferCreate(BaseModel):

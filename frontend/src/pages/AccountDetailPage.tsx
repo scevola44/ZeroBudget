@@ -3,10 +3,22 @@ import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { Account, CategoryGroup, Transaction } from "../api/types";
+import type { Account, CategoryGroup, Transaction, Transfer } from "../api/types";
+import {
+  EditTransactionModal,
+  type TransactionEdit,
+} from "../components/EditTransactionModal";
 import { ScopeChip } from "../components/ScopeChip";
 import { todayISO } from "../lib/dates";
 import { formatCents, parseAmountToCents } from "../lib/money";
+
+// Marks a "Transfer : <account>" choice in the category picker, YNAB-style.
+const TRANSFER_OPTION_PREFIX = "transfer:";
+
+function transferTargetId(categoryChoice: string): number | null {
+  if (!categoryChoice.startsWith(TRANSFER_OPTION_PREFIX)) return null;
+  return Number(categoryChoice.slice(TRANSFER_OPTION_PREFIX.length));
+}
 
 export function AccountDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -47,9 +59,34 @@ export function AccountDetailPage() {
   const [categoryId, setCategoryId] = useState<string>("");
   const [formError, setFormError] = useState<string | null>(null);
   const [editingCategoryTxnId, setEditingCategoryTxnId] = useState<number | null>(null);
+  const [editingTxnId, setEditingTxnId] = useState<number | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
   const [editingBalance, setEditingBalance] = useState(false);
   const [balanceInput, setBalanceInput] = useState("");
   const [balanceError, setBalanceError] = useState<string | null>(null);
+
+  const accountById = new Map((accountsQuery.data ?? []).map((a) => [a.id, a]));
+  const transferTargets = (accountsQuery.data ?? []).filter(
+    (a) => a.id !== accountId && !a.closed,
+  );
+
+  const editingTransaction =
+    editingTxnId === null
+      ? undefined
+      : txnsQuery.data?.find((t) => t.id === editingTxnId);
+
+  function peerAccountOf(txn: Transaction): Account | undefined {
+    return txn.transfer_peer_account_id === null
+      ? undefined
+      : accountById.get(txn.transfer_peer_account_id);
+  }
+
+  // A transfer touches a second account, so the broad prefix has to go too.
+  function invalidateAfterChange() {
+    void qc.invalidateQueries({ queryKey: ["transactions"] });
+    void qc.invalidateQueries({ queryKey: ["accounts"] });
+    void qc.invalidateQueries({ queryKey: ["budget"] });
+  }
 
   const createTxn = useMutation({
     mutationFn: (body: {
@@ -61,24 +98,43 @@ export function AccountDetailPage() {
       amount_cents: number;
     }) => api<Transaction>("/api/transactions", { method: "POST", body }),
     onSuccess: () => {
-      setPayee("");
-      setMemo("");
-      setAmount("");
-      setCategoryId("");
-      void qc.invalidateQueries({ queryKey: ["transactions", accountId] });
-      void qc.invalidateQueries({ queryKey: ["accounts"] });
-      void qc.invalidateQueries({ queryKey: ["budget"] });
+      resetForm();
+      invalidateAfterChange();
     },
+  });
+
+  const createTransfer = useMutation({
+    mutationFn: (body: {
+      from_account_id: number;
+      to_account_id: number;
+      date: string;
+      payee: string;
+      memo: string;
+      amount_cents: number;
+    }) => api<Transfer>("/api/transactions/transfer", { method: "POST", body }),
+    onSuccess: () => {
+      resetForm();
+      invalidateAfterChange();
+    },
+    onError: (err) =>
+      setFormError(err instanceof Error ? err.message : "Could not create the transfer"),
   });
 
   const deleteTxn = useMutation({
     mutationFn: (txnId: number) =>
       api(`/api/transactions/${txnId}`, { method: "DELETE" }),
+    onSuccess: invalidateAfterChange,
+  });
+
+  const updateTxn = useMutation({
+    mutationFn: ({ txnId, edit }: { txnId: number; edit: TransactionEdit }) =>
+      api<Transaction>(`/api/transactions/${txnId}`, { method: "PATCH", body: edit }),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["transactions", accountId] });
-      void qc.invalidateQueries({ queryKey: ["accounts"] });
-      void qc.invalidateQueries({ queryKey: ["budget"] });
+      setEditingTxnId(null);
+      setEditError(null);
+      invalidateAfterChange();
     },
+    onError: (err) => setEditError(err instanceof Error ? err.message : "Update failed"),
   });
 
   const setBalance = useMutation({
@@ -102,12 +158,17 @@ export function AccountDetailPage() {
         body: { category_id: catId },
       }),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["transactions", accountId] });
-      void qc.invalidateQueries({ queryKey: ["accounts"] });
-      void qc.invalidateQueries({ queryKey: ["budget"] });
+      invalidateAfterChange();
       setEditingCategoryTxnId(null);
     },
   });
+
+  function resetForm() {
+    setPayee("");
+    setMemo("");
+    setAmount("");
+    setCategoryId("");
+  }
 
   function onBalanceSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -128,6 +189,26 @@ export function AccountDetailPage() {
       setFormError("Enter a valid amount (use '-' for outflow).");
       return;
     }
+
+    const peerAccountId = transferTargetId(categoryId);
+    if (peerAccountId !== null) {
+      if (cents === 0) {
+        setFormError("A transfer needs a non-zero amount.");
+        return;
+      }
+      // The sign says which way the money moves relative to this account.
+      const movingOut = cents < 0;
+      createTransfer.mutate({
+        from_account_id: movingOut ? accountId : peerAccountId,
+        to_account_id: movingOut ? peerAccountId : accountId,
+        date,
+        payee,
+        memo,
+        amount_cents: Math.abs(cents),
+      });
+      return;
+    }
+
     createTxn.mutate({
       account_id: accountId,
       category_id: categoryId ? Number(categoryId) : null,
@@ -246,6 +327,15 @@ export function AccountDetailPage() {
                   {c.groupName} › {c.name}
                 </option>
               ))}
+              {transferTargets.length > 0 && (
+                <optgroup label="Transfer">
+                  {transferTargets.map((a) => (
+                    <option key={a.id} value={`${TRANSFER_OPTION_PREFIX}${a.id}`}>
+                      Transfer : {a.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
             <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
               <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -275,11 +365,16 @@ export function AccountDetailPage() {
         </div>
         <button
           type="submit"
-          disabled={createTxn.isPending}
+          disabled={createTxn.isPending || createTransfer.isPending}
           className="md:col-span-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-medium rounded-lg px-4 py-2"
         >
           Add
         </button>
+        {transferTargetId(categoryId) !== null && (
+          <p className="md:col-span-6 text-sm text-stone-500 dark:text-stone-400">
+            A negative amount sends money out of this account; a positive amount brings it in.
+          </p>
+        )}
         {formError && (
           <p className="md:col-span-6 text-sm text-red-600 dark:text-red-400">{formError}</p>
         )}
@@ -306,12 +401,17 @@ export function AccountDetailPage() {
             <tbody>
               {txnsQuery.data.map((t) => {
                 const cat = flatCategories.find((c) => c.id === t.category_id);
+                const peerAccount = peerAccountOf(t);
                 return (
                   <tr key={t.id} className="border-t border-stone-100 dark:border-stone-800">
                     <td className="px-5 py-2 text-stone-600 dark:text-stone-400">{t.date}</td>
                     <td className="px-5 py-2">{t.payee || <span className="text-stone-400 dark:text-stone-500">—</span>}</td>
                     <td className="px-5 py-2">
-                      {editingCategoryTxnId === t.id ? (
+                      {t.transfer_peer_id !== null ? (
+                        <span className="text-stone-600 dark:text-stone-300">
+                          Transfer : {peerAccount?.name ?? "another account"}
+                        </span>
+                      ) : editingCategoryTxnId === t.id ? (
                         <div className="relative">
                           <select
                             autoFocus
@@ -356,9 +456,23 @@ export function AccountDetailPage() {
                     >
                       {formatCents(t.amount_cents)}
                     </td>
-                    <td className="px-5 py-2 text-right">
+                    <td className="px-5 py-2 text-right space-x-2 whitespace-nowrap">
+                      <button
+                        onClick={() => {
+                          setEditError(null);
+                          setEditingTxnId(t.id);
+                        }}
+                        className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline px-2 py-1"
+                      >
+                        Edit
+                      </button>
                       <button
                         onClick={() => deleteTxn.mutate(t.id)}
+                        title={
+                          t.transfer_peer_id !== null
+                            ? "Deletes both legs of the transfer"
+                            : undefined
+                        }
                         className="text-xs text-stone-500 dark:text-stone-400 hover:text-red-600 dark:hover:text-red-400 px-2 py-1"
                       >
                         Delete
@@ -372,6 +486,22 @@ export function AccountDetailPage() {
           </div>
         )}
       </div>
+
+      {editingTransaction && (
+        <EditTransactionModal
+          transaction={editingTransaction}
+          categories={eligibleCategories}
+          peerAccount={peerAccountOf(editingTransaction) ?? null}
+          isOpen={true}
+          onClose={() => {
+            setEditingTxnId(null);
+            setEditError(null);
+          }}
+          onSave={(edit) => updateTxn.mutate({ txnId: editingTransaction.id, edit })}
+          isPending={updateTxn.isPending}
+          error={editError}
+        />
+      )}
     </div>
   );
 }
