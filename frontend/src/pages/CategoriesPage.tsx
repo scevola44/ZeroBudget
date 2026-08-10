@@ -22,6 +22,7 @@ import { DragHandle } from "../components/DragHandle";
 import { ScopeChip } from "../components/ScopeChip";
 import { EditGroupModal } from "../components/EditGroupModal";
 import { DeleteGroupConfirmModal } from "../components/DeleteGroupConfirmModal";
+import { DeleteCategoryConfirmModal } from "../components/DeleteCategoryConfirmModal";
 import { YnabImportModal } from "./YnabImportModal";
 import { formatGoal } from "../lib/goal";
 import { parseAmountToCents } from "../lib/money";
@@ -79,6 +80,7 @@ function SortableCategoryItem({
   onDraftChange,
   onEditSave,
   onEditCancel,
+  onDeleteClick,
 }: {
   category: Category;
   isEditing: boolean;
@@ -87,6 +89,7 @@ function SortableCategoryItem({
   onDraftChange: (patch: Partial<NewCategoryDraft>) => void;
   onEditSave: () => void;
   onEditCancel: () => void;
+  onDeleteClick: () => void;
 }) {
   const { attributes, listeners, isDragging, transform } = useSortable({
     id: `category-${category.id}`,
@@ -182,18 +185,30 @@ function SortableCategoryItem({
           </div>
         </form>
       ) : (
-        <button
-          type="button"
-          onClick={() => onEditStart()}
-          className="text-left cursor-pointer flex-1 group"
-        >
-          <div className="group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
-            {category.name}
-          </div>
-          <div className="text-xs text-stone-500 dark:text-stone-400">
-            {formatGoal(category)}
-          </div>
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={() => onEditStart()}
+            className="text-left cursor-pointer flex-1 group"
+          >
+            <div className="group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
+              {category.name}
+            </div>
+            <div className="text-xs text-stone-500 dark:text-stone-400">
+              {formatGoal(category)}
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={onDeleteClick}
+            className="mt-1 text-stone-500 dark:text-stone-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+            title="Delete category"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        </>
       )}
     </li>
   );
@@ -234,7 +249,31 @@ export function CategoriesPage() {
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
   const [deletingGroupId, setDeletingGroupId] = useState<number | null>(null);
+  const [deletingCategoryId, setDeletingCategoryId] = useState<number | null>(null);
+  const [deleteCategoryError, setDeleteCategoryError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // Reassignment can only target the same scope — the server rejects the rest,
+  // and a cross-scope move would strand transactions in the wrong pool.
+  const deletingCategory = (() => {
+    if (deletingCategoryId === null) return null;
+    const groups = groupsQuery.data ?? [];
+    const owningGroup = groups.find((g) =>
+      g.categories.some((c) => c.id === deletingCategoryId),
+    );
+    const category = owningGroup?.categories.find((c) => c.id === deletingCategoryId);
+    if (!owningGroup || !category) return null;
+    return {
+      category,
+      reassignTargets: groups
+        .filter((g) => g.scope === owningGroup.scope)
+        .flatMap((g) =>
+          g.categories
+            .filter((c) => c.id !== category.id)
+            .map((c) => ({ id: c.id, name: c.name, groupName: g.name })),
+        ),
+    };
+  })();
 
   function getDraft(groupId: number): NewCategoryDraft {
     return draftByGroup[groupId] ?? EMPTY_DRAFT;
@@ -347,6 +386,25 @@ export function CategoriesPage() {
       void qc.invalidateQueries({ queryKey: ["category-groups"] });
       void qc.invalidateQueries({ queryKey: ["budget"] });
     },
+  });
+
+  const deleteCategory = useMutation({
+    mutationFn: (vars: { categoryId: number; reassignTo: number | null }) =>
+      api(
+        vars.reassignTo === null
+          ? `/api/categories/${vars.categoryId}`
+          : `/api/categories/${vars.categoryId}?reassign_to=${vars.reassignTo}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: () => {
+      setDeletingCategoryId(null);
+      setDeleteCategoryError(null);
+      void qc.invalidateQueries({ queryKey: ["category-groups"] });
+      void qc.invalidateQueries({ queryKey: ["transactions"] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+    onError: (err) =>
+      setDeleteCategoryError(err instanceof Error ? err.message : "Delete failed"),
   });
 
   const updateCategoryOrder = useMutation({
@@ -542,6 +600,10 @@ export function CategoriesPage() {
                         });
                       }}
                       onEditCancel={() => setEditingCategoryId(null)}
+                      onDeleteClick={() => {
+                        setDeleteCategoryError(null);
+                        setDeletingCategoryId(c.id);
+                      }}
                     />
                   ))}
                   {group.categories.length === 0 && (
@@ -598,6 +660,23 @@ export function CategoriesPage() {
           onClose={() => setDeletingGroupId(null)}
           onConfirm={() => deleteGroup.mutate(deletingGroupId)}
           isPending={deleteGroup.isPending}
+        />
+      )}
+
+      {deletingCategory && (
+        <DeleteCategoryConfirmModal
+          category={deletingCategory.category}
+          reassignTargets={deletingCategory.reassignTargets}
+          isOpen={true}
+          onClose={() => {
+            setDeletingCategoryId(null);
+            setDeleteCategoryError(null);
+          }}
+          onConfirm={(reassignTo) =>
+            deleteCategory.mutate({ categoryId: deletingCategory.category.id, reassignTo })
+          }
+          isPending={deleteCategory.isPending}
+          error={deleteCategoryError}
         />
       )}
     </DndContext>

@@ -44,6 +44,7 @@ def _to_response(
         type=account.type,
         scope=account.scope,
         balance_cents=balance_cents,
+        closed=account.closed,
         bank_connection_id=account.bank_connection_id,
         bank_account_mask=account.bank_account_mask,
         institution_name=institution_name,
@@ -90,6 +91,7 @@ async def list_accounts(db: DbSession, current_user: CurrentUser) -> list[Accoun
                 type=a.type,
                 scope=a.scope,
                 balance_cents=totals.get(a.id, 0),
+                closed=a.closed,
                 bank_connection_id=a.bank_connection_id,
                 bank_account_mask=a.bank_account_mask,
                 institution_name=institution_name,
@@ -155,6 +157,8 @@ async def update_account(
                 ),
             )
         account.scope = payload.scope
+    if payload.closed is not None:
+        account.closed = payload.closed
     await db.commit()
     await db.refresh(account)
 
@@ -204,6 +208,16 @@ async def delete_account(account_id: int, db: DbSession, current_user: CurrentUs
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Linked accounts must be unlinked via /api/banking/connections/{id}.",
+        )
+    # Deleting cascades to the account's transactions, silently rewriting every
+    # budget month they appear in. Closing keeps the history and hides the row.
+    has_transactions = await db.scalar(
+        select(Transaction.id).where(Transaction.account_id == account.id).limit(1)
+    )
+    if has_transactions is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This account has transactions. Close it instead of deleting it.",
         )
     await db.delete(account)
     await db.commit()

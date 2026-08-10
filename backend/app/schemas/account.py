@@ -13,6 +13,7 @@ class AccountUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     type: str | None = Field(default=None, max_length=32)
     scope: Scope | None = None
+    closed: bool | None = None
 
 
 class AccountBalanceUpdate(BaseModel):
@@ -27,6 +28,7 @@ class AccountResponse(BaseModel):
     type: str
     scope: Scope
     balance_cents: int = 0
+    closed: bool = False
     # Bank-link metadata (all None for manual accounts).
     bank_connection_id: int | None = None
     bank_account_mask: str | None = None

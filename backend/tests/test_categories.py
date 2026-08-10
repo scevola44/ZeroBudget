@@ -3,7 +3,7 @@
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import create_category, create_group, register_user
+from tests.conftest import create_account, create_category, create_group, register_user
 
 
 @pytest.mark.asyncio
@@ -141,3 +141,81 @@ async def test_cannot_update_or_delete_other_users_group(client: AsyncClient):
     assert r.status_code == 404
     r = await client.delete(f"/api/category-groups/{alice_group}", headers=bob)
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_category_can_rehome_its_transactions(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    dining = await create_category(client, headers, group, "Dining")
+    groceries = await create_category(client, headers, group, "Groceries")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": account,
+            "category_id": dining,
+            "date": "2026-04-05",
+            "payee": "Cafe",
+            "memo": "",
+            "amount_cents": -2_500,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+
+    r = await client.delete(
+        f"/api/categories/{dining}?reassign_to={groceries}", headers=headers
+    )
+    assert r.status_code == 204, r.text
+
+    rows = (await client.get("/api/transactions", headers=headers)).json()
+    assert [row["category_id"] for row in rows] == [groceries]
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_category_without_reassignment_uncategorizes(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    dining = await create_category(client, headers, group, "Dining")
+
+    await client.post(
+        "/api/transactions",
+        json={
+            "account_id": account,
+            "category_id": dining,
+            "date": "2026-04-05",
+            "payee": "Cafe",
+            "memo": "",
+            "amount_cents": -2_500,
+        },
+        headers=headers,
+    )
+
+    r = await client.delete(f"/api/categories/{dining}", headers=headers)
+    assert r.status_code == 204, r.text
+
+    rows = (await client.get("/api/transactions", headers=headers)).json()
+    assert [row["category_id"] for row in rows] == [None]
+
+
+@pytest.mark.asyncio
+async def test_reassigning_across_scopes_is_rejected(client: AsyncClient):
+    """The moved transactions would sit in a category whose scope disagrees
+    with their account — the state the transaction scope guard prevents."""
+    headers = await register_user(client)
+    personal_group = await create_group(client, headers, "Personal", scope="personal")
+    shared_group = await create_group(client, headers, "Family", scope="shared")
+    dining = await create_category(client, headers, personal_group, "Dining")
+    joint_food = await create_category(client, headers, shared_group, "Food")
+
+    r = await client.delete(
+        f"/api/categories/{dining}?reassign_to={joint_food}", headers=headers
+    )
+    assert r.status_code == 422, r.text
+
+    groups = (await client.get("/api/category-groups", headers=headers)).json()
+    surviving = {c["id"] for g in groups for c in g["categories"]}
+    assert dining in surviving

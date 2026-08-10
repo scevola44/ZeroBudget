@@ -1,5 +1,17 @@
 import { useEffect, useState } from "react";
-import { type Account, type Scope, scopeLabel } from "../api/types";
+import {
+  MANUAL_ACCOUNT_TYPES,
+  type Account,
+  type Scope,
+  scopeLabel,
+} from "../api/types";
+
+export type AccountEdit = {
+  name: string;
+  scope: Scope;
+  type?: string;
+  closed: boolean;
+};
 
 export function EditAccountModal({
   account,
@@ -12,17 +24,24 @@ export function EditAccountModal({
   account: Account;
   isOpen: boolean;
   onClose: () => void;
-  onSave: (name: string, scope: Scope) => void;
+  onSave: (edit: AccountEdit) => void;
   isPending: boolean;
   error: string | null;
 }) {
   const [name, setName] = useState(account.name);
   const [scope, setScope] = useState<Scope>(account.scope);
+  const [type, setType] = useState(account.type);
+  const [closed, setClosed] = useState(account.closed);
+
+  // A linked account's type comes from the bank; the server rejects changes.
+  const isLinked = account.bank_connection_id !== null;
 
   useEffect(() => {
     if (isOpen) {
       setName(account.name);
       setScope(account.scope);
+      setType(account.type);
+      setClosed(account.closed);
     }
   }, [isOpen, account]);
 
@@ -54,7 +73,13 @@ export function EditAccountModal({
           className="p-6 space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
-            if (nameOk) onSave(name.trim(), scope);
+            if (!nameOk) return;
+            onSave({
+              name: name.trim(),
+              scope,
+              type: isLinked ? undefined : type,
+              closed,
+            });
           }}
         >
           <div className="space-y-1">
@@ -69,6 +94,36 @@ export function EditAccountModal({
               disabled={isPending}
               className="w-full border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
             />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-stone-700 dark:text-stone-300">
+              Type
+            </label>
+            <div className="relative">
+              <select
+                value={type}
+                onChange={(e) => setType(e.target.value)}
+                disabled={isPending || isLinked}
+                className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg pl-3 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+              >
+                {MANUAL_ACCOUNT_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </div>
+            </div>
+            {isLinked && (
+              <p className="text-xs text-stone-500 dark:text-stone-400">
+                Set by your bank and can't be changed here.
+              </p>
+            )}
           </div>
 
           <div className="space-y-1">
@@ -92,6 +147,22 @@ export function EditAccountModal({
               </div>
             </div>
           </div>
+
+          <label className="flex items-start gap-2 text-sm text-stone-700 dark:text-stone-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={closed}
+              onChange={(e) => setClosed(e.target.checked)}
+              disabled={isPending}
+              className="mt-0.5 rounded accent-indigo-600 disabled:opacity-50"
+            />
+            <span>
+              Closed
+              <span className="block text-xs text-stone-500 dark:text-stone-400">
+                Hides the account. Its transactions still count towards every past month.
+              </span>
+            </span>
+          </label>
 
           {error && (
             <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/50 rounded-lg px-3 py-2 text-sm text-red-800 dark:text-red-200">

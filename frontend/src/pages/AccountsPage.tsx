@@ -5,8 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../api/client";
 import { bankingApi } from "../api/banking";
 import type { Aspsp, BankConnection, SyncStatus } from "../api/banking";
-import type { Account, Scope } from "../api/types";
-import { EditAccountModal } from "../components/EditAccountModal";
+import { MANUAL_ACCOUNT_TYPES, type Account, type Scope } from "../api/types";
+import { EditAccountModal, type AccountEdit } from "../components/EditAccountModal";
 import { ScopeChip } from "../components/ScopeChip";
 import { formatCents } from "../lib/money";
 
@@ -37,6 +37,7 @@ export function AccountsPage() {
   const [error, setError] = useState<string | null>(null);
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [showClosed, setShowClosed] = useState(false);
 
   const createMutation = useMutation({
     mutationFn: (body: { name: string; type: string; scope: Scope }) =>
@@ -48,10 +49,10 @@ export function AccountsPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (vars: { accountId: number; name: string; scope: Scope }) =>
+    mutationFn: (vars: { accountId: number; edit: AccountEdit }) =>
       api<Account>(`/api/accounts/${vars.accountId}`, {
         method: "PATCH",
-        body: { name: vars.name, scope: vars.scope },
+        body: vars.edit,
       }),
     onSuccess: () => {
       setEditingAccountId(null);
@@ -61,6 +62,12 @@ export function AccountsPage() {
     },
     onError: (err) => setEditError(err instanceof Error ? err.message : "Update failed"),
   });
+
+  const openAccounts = (accountsQuery.data ?? []).filter((a) => !a.closed);
+  const closedAccounts = (accountsQuery.data ?? []).filter((a) => a.closed);
+  const visibleAccounts = showClosed
+    ? [...openAccounts, ...closedAccounts]
+    : openAccounts;
 
   const connectionsNeedingReauth = (connectionsQuery.data ?? []).filter(connectionNeedsReauth);
 
@@ -116,9 +123,11 @@ export function AccountsPage() {
               onChange={(e) => setType(e.target.value)}
               className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
             >
-              <option value="checking">Checking</option>
-              <option value="savings">Savings</option>
-              <option value="cash">Cash</option>
+              {MANUAL_ACCOUNT_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
+              ))}
             </select>
             <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
               <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -183,7 +192,7 @@ export function AccountsPage() {
               </tr>
             </thead>
             <tbody>
-              {accountsQuery.data.map((a) => (
+              {visibleAccounts.map((a) => (
                 <AccountRow
                   key={a.id}
                   account={a}
@@ -205,6 +214,18 @@ export function AccountsPage() {
           </table>
           </div>
         )}
+        {closedAccounts.length > 0 && (
+          <div className="border-t border-stone-100 dark:border-stone-800 px-5 py-3">
+            <button
+              onClick={() => setShowClosed((v) => !v)}
+              className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+            >
+              {showClosed
+                ? "Hide closed accounts"
+                : `Show closed accounts (${closedAccounts.length})`}
+            </button>
+          </div>
+        )}
       </div>
 
       {editingAccountId !== null && accountsQuery.data && (
@@ -215,8 +236,8 @@ export function AccountsPage() {
             setEditingAccountId(null);
             setEditError(null);
           }}
-          onSave={(name, scope) => {
-            updateMutation.mutate({ accountId: editingAccountId, name, scope });
+          onSave={(edit) => {
+            updateMutation.mutate({ accountId: editingAccountId, edit });
           }}
           isPending={updateMutation.isPending}
           error={editError}
@@ -251,14 +272,34 @@ function AccountRow({
     onError: (err) => onError(err instanceof Error ? err.message : "Disconnect failed"),
   });
 
+  // The server refuses to delete an account that has transactions — closing is
+  // the way to retire those. Its message is what the user sees.
+  const deleteMutation = useMutation({
+    mutationFn: () => api(`/api/accounts/${account.id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+    onError: (err) => onError(err instanceof Error ? err.message : "Delete failed"),
+  });
+
   return (
-    <tr className="border-t border-stone-100 dark:border-stone-800">
+    <tr
+      className={`border-t border-stone-100 dark:border-stone-800 ${
+        account.closed ? "opacity-60" : ""
+      }`}
+    >
       <td className="px-5 py-3">
         <div className="flex items-center gap-2">
           <Link to={`/accounts/${account.id}`} className="text-indigo-600 dark:text-indigo-400 hover:underline">
             {account.name}
           </Link>
           <ScopeChip scope={account.scope} />
+          {account.closed && (
+            <span className="text-xs rounded-full px-2 py-0.5 bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400">
+              Closed
+            </span>
+          )}
         </div>
         {account.bank_account_mask && (
           <span className="text-xs text-stone-400 dark:text-stone-500">••{account.bank_account_mask}</span>
@@ -276,7 +317,7 @@ function AccountRow({
         >
           Edit
         </button>
-        {account.bank_connection_id !== null && (
+        {account.bank_connection_id !== null ? (
           <button
             onClick={() => {
               if (confirm("Disconnect this bank? Its accounts and imported transactions will be deleted.")) {
@@ -287,6 +328,14 @@ function AccountRow({
             className="text-xs text-red-600 dark:text-red-400 hover:underline disabled:text-stone-400 dark:disabled:text-stone-500 px-2 py-1"
           >
             Disconnect
+          </button>
+        ) : (
+          <button
+            onClick={() => deleteMutation.mutate()}
+            disabled={deleteMutation.isPending}
+            className="text-xs text-red-600 dark:text-red-400 hover:underline disabled:text-stone-400 dark:disabled:text-stone-500 px-2 py-1"
+          >
+            Delete
           </button>
         )}
       </td>

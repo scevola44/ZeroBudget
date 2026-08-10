@@ -33,16 +33,15 @@ def upgrade() -> None:
             ["id"],
             ondelete="SET NULL",
         )
-    op.create_index(
-        "ix_transactions_transfer_peer_id",
-        "transactions",
-        ["transfer_peer_id"],
-        unique=True,
-    )
+        batch_op.create_index(
+            "ix_transactions_transfer_peer_id",
+            ["transfer_peer_id"],
+            unique=True,
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_transactions_transfer_peer_id", table_name="transactions")
     with op.batch_alter_table("transactions") as batch_op:
+        batch_op.drop_index("ix_transactions_transfer_peer_id")
         batch_op.drop_constraint("fk_transactions_transfer_peer_id", type_="foreignkey")
         batch_op.drop_column("transfer_peer_id")

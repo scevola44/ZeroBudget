@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy import select, update
 
 from app.deps import CurrentUser, DbSession
-from app.models import Category, CategoryGroup
+from app.models import Category, CategoryGroup, Transaction
 from app.schemas.category import (
     CategoryCreate,
     CategoryGroupCreate,
@@ -215,9 +215,52 @@ async def update_category(
 
 @router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_category(
-    category_id: int, db: DbSession, current_user: CurrentUser
+    category_id: int,
+    db: DbSession,
+    current_user: CurrentUser,
+    reassign_to: int | None = Query(
+        default=None,
+        description="Move this category's transactions here before deleting it.",
+    ),
 ) -> None:
+    """Delete a category, optionally rehoming its transactions first.
+
+    Without ``reassign_to`` the transactions keep a NULL category (the FK is
+    ON DELETE SET NULL) and read as uncategorized. Either way the category's
+    monthly assignments cascade away with it, so the money it was holding
+    returns to Ready to Assign in every month it was assigned.
+    """
     category = await _owned_category(db, current_user.id, category_id)
+
+    if reassign_to is not None:
+        if reassign_to == category_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Cannot reassign a category's transactions to itself.",
+            )
+        target = await _owned_category(db, current_user.id, reassign_to)
+        source_group = await _owned_group(db, current_user.id, category.group_id)
+        target_group = await _owned_group(db, current_user.id, target.group_id)
+        if source_group.scope != target_group.scope:
+            # Moving them would strand transactions in a category whose scope
+            # disagrees with their account — exactly what the transaction
+            # router's scope guard exists to prevent.
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Cannot move transactions from a {source_group.scope} category "
+                    f"to a {target_group.scope} one."
+                ),
+            )
+        await db.execute(
+            update(Transaction)
+            .where(
+                Transaction.user_id == current_user.id,
+                Transaction.category_id == category_id,
+            )
+            .values(category_id=reassign_to)
+        )
+
     await db.delete(category)
     await db.commit()
 
