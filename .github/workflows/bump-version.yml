@@ -5,6 +5,10 @@ on:
     types: [closed]
     branches: [develop]
 
+concurrency:
+  group: bump-version
+  cancel-in-progress: false
+
 jobs:
   bump:
     if: github.event.pull_request.merged == true
@@ -17,6 +21,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Close stale bump PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # A previous bump PR that never merged is superseded by this run's
+          # bump (which starts from a newer develop HEAD anyway). Leaving it
+          # open causes the next "Push branch" step to collide non-fast-forward
+          # on the same branch name, since NEW_VERSION is recomputed from the
+          # still-unbumped VERSION file.
+          gh pr list --repo "$GITHUB_REPOSITORY" --base develop --state open \
+            --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("chore/bump-version-")) | .number' |
+          while read -r pr_number; do
+            echo "Closing stale bump PR #$pr_number"
+            gh pr close "$pr_number" --repo "$GITHUB_REPOSITORY" --delete-branch
+          done
 
       - name: Get bump label
         id: label
