@@ -58,6 +58,9 @@ class TxnRow:
     # Scope of the account holding this row's transfer peer; None when the row
     # isn't a transfer leg. See ``feeds_ready_to_assign``.
     transfer_peer_scope: str | None = None
+    # Whether this row's account feeds Ready to Assign — False for savings
+    # accounts. See ``feeds_ready_to_assign``.
+    on_budget: bool = True
 
 
 def feeds_ready_to_assign(txn: TxnRow) -> bool:
@@ -76,10 +79,13 @@ def feeds_ready_to_assign(txn: TxnRow) -> bool:
     never stopped being theirs, so neither month's pool should move. Writing it
     as an exclusion rather than relying on cancellation is what pins that, and
     what lets ``insights_calc`` apply the identical rule.
+
+    Off-budget accounts (savings) are excluded outright, regardless of
+    category or transfer status — that money sits outside the budget entirely.
     """
     if txn.category_id is not None:
         return False
-    return txn.transfer_peer_scope != txn.scope
+    return txn.on_budget and txn.transfer_peer_scope != txn.scope
 
 
 @dataclass(frozen=True)

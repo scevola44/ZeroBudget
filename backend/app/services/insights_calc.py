@@ -102,8 +102,10 @@ def _month_from_index(index: int) -> date:
 def _is_income(txn: TxnRow) -> bool:
     """Uncategorized inflow is the sole source of Ready to Assign, and so the
     only thing that counts as income (ROADMAP invariant 6). A categorized inflow
-    is a refund."""
-    return txn.category_id is None and txn.amount_cents > 0
+    is a refund. Off-budget (savings) inflow is excluded the same way
+    ``budget_calc.feeds_ready_to_assign`` excludes it — it never reached Ready
+    to Assign in the first place."""
+    return txn.category_id is None and txn.amount_cents > 0 and txn.on_budget
 
 
 def _is_internal_transfer(txn: TxnRow) -> bool:
@@ -176,6 +178,10 @@ def compute_spending_breakdown(
     for txn in transactions:
         if not period.contains(txn.date) or _is_internal_transfer(txn):
             continue
+        if txn.category_id is None and not txn.on_budget:
+            # Uncategorized off-budget (savings) activity never entered the
+            # budget, so it is neither income nor uncategorized spending.
+            continue
         scope = _scope_of(txn, category_scope)
         if scope not in uncategorized:
             continue
@@ -244,6 +250,10 @@ def flow_by_month(
 
     for txn in transactions:
         if _scope_of(txn, category_scope) != scope or _is_internal_transfer(txn):
+            continue
+        if txn.category_id is None and not txn.on_budget:
+            # Excluded entirely, not reclassified as spending — see the
+            # identical guard in ``compute_spending_breakdown``.
             continue
         bucket = month_start(txn.date)
         if bucket not in income:

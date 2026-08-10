@@ -41,9 +41,14 @@ def _txn(
     date: date,
     amount_cents: int,
     scope: str = "personal",
+    on_budget: bool = True,
 ) -> TxnRow:
     return TxnRow(
-        category_id=category_id, date=date, amount_cents=amount_cents, scope=scope
+        category_id=category_id,
+        date=date,
+        amount_cents=amount_cents,
+        scope=scope,
+        on_budget=on_budget,
     )
 
 
@@ -219,6 +224,50 @@ def test_categorized_spending_follows_its_category_group_not_its_account():
     assert spending["personal"].total_spent_cents == 0
 
 
+def test_uncategorized_off_budget_outflow_is_excluded_from_spending_breakdown():
+    # An uncategorized withdrawal from a savings account never entered the
+    # budget, so it must not appear as uncategorized spending either.
+    period = _range(_month(2026, 4), _month(2026, 4))
+    transactions = [
+        _txn(category_id=None, date=date(2026, 4, 6), amount_cents=-5_000, on_budget=False),
+    ]
+
+    spending = compute_spending_breakdown(transactions, period, {}, SCOPES)
+
+    assert spending["personal"].uncategorized_spent_cents == 0
+    assert spending["personal"].total_spent_cents == 0
+
+
+def test_uncategorized_off_budget_inflow_is_not_income():
+    period = _range(_month(2026, 4), _month(2026, 4))
+    transactions = [
+        _txn(category_id=None, date=date(2026, 4, 1), amount_cents=250_000, on_budget=False)
+    ]
+
+    spending = compute_spending_breakdown(transactions, period, {}, SCOPES)
+
+    assert spending["personal"].uncategorized_spent_cents == 0
+    assert spending["personal"].total_spent_cents == 0
+
+
+def test_categorized_activity_in_off_budget_account_still_counts_as_spending():
+    period = _range(_month(2026, 4), _month(2026, 4))
+    transactions = [
+        _txn(
+            category_id=GROCERIES,
+            date=date(2026, 4, 5),
+            amount_cents=-40_000,
+            on_budget=False,
+        ),
+    ]
+
+    spending = compute_spending_breakdown(
+        transactions, period, {GROCERIES: "personal"}, SCOPES
+    )
+
+    assert spending["personal"].by_category[GROCERIES].spent_cents == 40_000
+
+
 def test_transactions_outside_the_period_are_excluded():
     period = _range(_month(2026, 4), _month(2026, 4))
     transactions = [
@@ -325,6 +374,51 @@ def test_monthly_spending_sums_to_the_breakdown_total():
     )
 
     assert sum(flow.spent_cents for flow in flows) == spending["personal"].total_spent_cents
+
+
+def test_uncategorized_off_budget_inflow_contributes_no_income():
+    period = _range(_month(2026, 4), _month(2026, 4))
+    transactions = [
+        _txn(category_id=None, date=date(2026, 4, 1), amount_cents=250_000, on_budget=False),
+    ]
+
+    flow = flow_by_month(transactions, period, "personal", {})[0]
+
+    assert flow.income_cents == 0
+    assert flow.spent_cents == 0
+    assert flow.refund_cents == 0
+
+
+def test_uncategorized_off_budget_outflow_is_excluded_not_counted_as_spent():
+    # The pitfall this guards against: without excluding the row outright, a
+    # negative uncategorized off-budget amount would fall through into the
+    # ordinary "spent" branch once _is_income rejects it.
+    period = _range(_month(2026, 4), _month(2026, 4))
+    transactions = [
+        _txn(category_id=None, date=date(2026, 4, 6), amount_cents=-5_000, on_budget=False),
+    ]
+
+    flow = flow_by_month(transactions, period, "personal", {})[0]
+
+    assert flow.spent_cents == 0
+    assert flow.income_cents == 0
+    assert flow.refund_cents == 0
+
+
+def test_categorized_activity_in_off_budget_account_still_flows_normally():
+    period = _range(_month(2026, 4), _month(2026, 4))
+    transactions = [
+        _txn(
+            category_id=GROCERIES,
+            date=date(2026, 4, 5),
+            amount_cents=-40_000,
+            on_budget=False,
+        ),
+    ]
+
+    flow = flow_by_month(transactions, period, "personal", {GROCERIES: "personal"})[0]
+
+    assert flow.spent_cents == 40_000
 
 
 # ---------------------------------------------------------------------------

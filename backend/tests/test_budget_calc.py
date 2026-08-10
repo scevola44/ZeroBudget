@@ -29,6 +29,7 @@ def _txn(
     amount_cents: int,
     scope: str = "personal",
     transfer_peer_scope: str | None = None,
+    on_budget: bool = True,
 ) -> TxnRow:
     return TxnRow(
         category_id=category_id,
@@ -36,6 +37,7 @@ def _txn(
         amount_cents=amount_cents,
         scope=scope,
         transfer_peer_scope=transfer_peer_scope,
+        on_budget=on_budget,
     )
 
 
@@ -279,3 +281,61 @@ def test_incoming_same_scope_transfer_leg_is_not_treated_as_income():
         ),
     ]
     assert compute_ready_to_assign(txns, [], APRIL, "personal") == 0
+
+
+# --- Off-budget (savings) accounts --------------------------------------------
+
+
+def test_off_budget_uncategorized_inflow_does_not_feed_ready_to_assign():
+    # Money landing directly in a savings account (e.g. bank-synced interest)
+    # never touches Ready to Assign.
+    txns = [
+        _txn(category_id=None, date=date(2026, 4, 3), amount_cents=100_000, on_budget=False),
+    ]
+    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 0
+
+
+def test_off_budget_uncategorized_outflow_does_not_reduce_ready_to_assign():
+    txns = [
+        _txn(category_id=None, date=date(2026, 4, 1), amount_cents=100_000),
+        _txn(category_id=None, date=date(2026, 4, 5), amount_cents=-40_000, on_budget=False),
+    ]
+    # The off-budget outflow is invisible, not subtracted.
+    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 100_000
+
+
+def test_same_scope_transfer_into_savings_leaves_ready_to_assign_untouched():
+    # The 99% case: checking -> savings, same scope. Already excluded by the
+    # same-scope-transfer rule alone, but the savings leg's own on_budget=False
+    # must not change that.
+    txns = [
+        _txn(category_id=None, date=date(2026, 4, 1), amount_cents=100_000),
+        _txn(
+            category_id=None,
+            date=date(2026, 4, 2),
+            amount_cents=-60_000,
+            transfer_peer_scope="personal",
+        ),
+        _txn(
+            category_id=None,
+            date=date(2026, 4, 2),
+            amount_cents=60_000,
+            transfer_peer_scope="personal",
+            on_budget=False,
+        ),
+    ]
+    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 100_000
+
+
+def test_categorized_transaction_in_off_budget_account_still_reduces_category_balance():
+    # Categorization is unaffected by on_budget — only uncategorized rows are
+    # excluded from Ready to Assign.
+    cat = 1
+    txns = [
+        _txn(category_id=cat, date=date(2026, 4, 5), amount_cents=-15_000, on_budget=False),
+    ]
+    assigns = [_assign(category_id=cat, month=APRIL, amount_cents=60_000)]
+    balances = compute_category_balances([cat], txns, assigns, APRIL)
+    b = balances[cat]
+    assert b.activity_cents == -15_000
+    assert b.balance_cents == 45_000

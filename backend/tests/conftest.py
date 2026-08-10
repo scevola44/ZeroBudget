@@ -82,10 +82,11 @@ async def create_account(
     name: str = "Checking",
     *,
     scope: str = "personal",
+    type: str = "checking",
 ) -> int:
     r = await client.post(
         "/api/accounts",
-        json={"name": name, "type": "checking", "scope": scope},
+        json={"name": name, "type": type, "scope": scope},
         headers=headers,
     )
     assert r.status_code == 201, r.text

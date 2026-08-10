@@ -6,7 +6,8 @@ and the two are pinned against each other by
 ``test_insights_calc.py::test_month_end_balances_match_compute_category_balances``
 and ``test_insights_api.py::test_insights_reconciles_with_the_budget_page_for_the_same_month``.
 Building the rows in one place is what stops the transfer rule drifting between
-them and quietly breaking those tests.
+them and quietly breaking those tests. Both routers must also build and pass
+``account_on_budget`` identically for the same reason.
 """
 
 from collections.abc import Sequence
@@ -40,6 +41,7 @@ async def load_peer_account_ids(
 def build_txn_rows(
     transactions: Sequence[Transaction],
     account_scope: dict[int, str],
+    account_on_budget: dict[int, bool],
     peer_account_id: dict[int, int],
 ) -> list[TxnRow]:
     """Join each transaction to its account's scope and its transfer peer's.
@@ -49,6 +51,9 @@ def build_txn_rows(
     """
     own_scope: dict[int, str] = {
         t.id: account_scope.get(t.account_id, PERSONAL) for t in transactions
+    }
+    own_on_budget: dict[int, bool] = {
+        t.id: account_on_budget.get(t.account_id, True) for t in transactions
     }
 
     def peer_scope(txn: Transaction) -> str | None:
@@ -70,6 +75,7 @@ def build_txn_rows(
             amount_cents=t.amount_cents,
             scope=own_scope[t.id],
             transfer_peer_scope=peer_scope(t),
+            on_budget=own_on_budget[t.id],
         )
         for t in transactions
     ]
