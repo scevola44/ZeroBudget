@@ -344,9 +344,14 @@ function CategoryRow({
         <div className="text-xs text-stone-500 dark:text-stone-400 flex items-center gap-2">
           <span>{formatGoal(cat)}</span>
           {needed !== null && needed > 0 && (
-            <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-200 text-[10px] font-semibold tabular-nums">
+            <button
+              type="button"
+              onClick={() => onAssign(cat.assigned_cents + needed)}
+              className="inline-block px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-200 text-[10px] font-semibold tabular-nums hover:bg-indigo-200 dark:hover:bg-indigo-800/60 cursor-pointer"
+              aria-label={`Assign ${formatCents(needed)} to reach this month's goal`}
+            >
               Need {formatCents(needed)}
-            </span>
+            </button>
           )}
         </div>
       </td>
