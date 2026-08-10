@@ -199,3 +199,47 @@ async def test_cannot_update_or_delete_other_users_transaction(client: AsyncClie
     assert r.status_code == 404
     r = await client.delete(f"/api/transactions/{txn_id}", headers=bob)
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_category_suggestions_span_all_of_the_users_accounts(client: AsyncClient):
+    headers = await register_user(client)
+    a1 = await create_account(client, headers, "Checking")
+    a2 = await create_account(client, headers, "Savings")
+    g = await create_group(client, headers)
+    groceries = await create_category(client, headers, g, "Groceries")
+
+    await _add_txn(
+        client, headers, account_id=a1, date="2026-04-01", amount=-1000,
+        category_id=groceries, payee="Store From Home",
+    )
+
+    r = await client.get(
+        "/api/transactions/category-suggestions",
+        params={"account_id": a2, "payee": "Store From Home"},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json() == [groceries]
+
+
+@pytest.mark.asyncio
+async def test_category_suggestions_exclude_mismatched_scope_categories(client: AsyncClient):
+    headers = await register_user(client)
+    personal_account = await create_account(client, headers, "Checking", scope="personal")
+    shared_account = await create_account(client, headers, "Joint", scope="shared")
+    personal_group = await create_group(client, headers, "Bills", scope="personal")
+    personal_category = await create_category(client, headers, personal_group, "Rent")
+
+    await _add_txn(
+        client, headers, account_id=personal_account, date="2026-04-01", amount=-1000,
+        category_id=personal_category, payee="Store From Home",
+    )
+
+    r = await client.get(
+        "/api/transactions/category-suggestions",
+        params={"account_id": shared_account, "payee": "Store From Home"},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json() == []
