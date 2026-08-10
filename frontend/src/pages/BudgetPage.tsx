@@ -10,6 +10,15 @@ import { formatCents, parseAmountToCents } from "../lib/money";
 
 const COLLAPSED_GROUPS_STORAGE_KEY = "budget:collapsed-groups";
 
+// Shared column width/padding so the group header, category rows, and totals
+// row all line up on desktop — matched by a `md:table-fixed` colgroup on the
+// categories table. Only enforced from `md:` up: below that, the table falls
+// back to its native auto layout and the header/totals rows fall back to
+// gap-based flex spacing, exactly like before this column model existed —
+// mobile only ever shows two of the four columns, so nothing to misalign.
+const VALUE_COL_WIDTH = "md:w-36"; // Goals / Assigned / Activity / Available
+const VALUE_COL_PADDING = "md:px-5";
+
 function loadCollapsedGroups(): Set<number> {
   try {
     const raw = localStorage.getItem(COLLAPSED_GROUPS_STORAGE_KEY);
@@ -202,6 +211,7 @@ function ScopeSection({
   const allCategories = groups.flatMap((g) => g.categories);
   const totalGoalCents = allCategories.reduce((s, c) => s + monthlyGoalCents(c), 0);
   const totalAssignedCents = allCategories.reduce((s, c) => s + c.assigned_cents, 0);
+  const totalActivityCents = allCategories.reduce((s, c) => s + c.activity_cents, 0);
   const totalAvailableCents = allCategories.reduce((s, c) => s + c.balance_cents, 0);
 
   return (
@@ -227,6 +237,7 @@ function ScopeSection({
           {groups.map((group) => {
             const isCollapsed = collapsedGroups.has(group.id);
             const groupMonthlyGoalCents = group.categories.reduce((s, c) => s + monthlyGoalCents(c), 0);
+            const groupActivityCents = group.categories.reduce((s, c) => s + c.activity_cents, 0);
             return (
               <div
                 key={group.id}
@@ -236,7 +247,7 @@ function ScopeSection({
                   type="button"
                   onClick={() => toggleGroup(group.id)}
                   aria-expanded={!isCollapsed}
-                  className="w-full flex items-center gap-2 px-5 py-3 bg-stone-50 dark:bg-stone-800 border-b border-stone-200 dark:border-stone-700 text-sm font-semibold text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-700/60 text-left"
+                  className="w-full flex items-center gap-2 px-5 md:pl-5 md:pr-0 py-3 bg-stone-50 dark:bg-stone-800 border-b border-stone-200 dark:border-stone-700 text-sm font-semibold text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-700/60 text-left"
                 >
                   <svg
                     className={`w-4 h-4 shrink-0 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
@@ -258,8 +269,8 @@ function ScopeSection({
                       {formatCents(groupMonthlyGoalCents)}/mo
                     </span>
                   </span>
-                  <div className="flex gap-6 shrink-0">
-                    <div className="hidden md:block text-right">
+                  <div className="flex gap-6 md:gap-0 shrink-0">
+                    <div className={`hidden md:block text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
                       <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
                         Goals/mo
                       </div>
@@ -267,7 +278,7 @@ function ScopeSection({
                         {formatCents(groupMonthlyGoalCents)}
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className={`text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
                       <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
                         Assigned
                       </div>
@@ -277,7 +288,15 @@ function ScopeSection({
                         )}
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div
+                      className={`hidden landscape:block md:block text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}
+                    >
+                      <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+                        Activity
+                      </div>
+                      <div className="tabular-nums">{formatCents(groupActivityCents)}</div>
+                    </div>
+                    <div className={`text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
                       <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
                         Available
                       </div>
@@ -296,7 +315,14 @@ function ScopeSection({
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
+                      <table className="w-full text-sm md:table-fixed">
+                        <colgroup>
+                          <col />
+                          <col className={`hidden md:table-column ${VALUE_COL_WIDTH}`} />
+                          <col className={VALUE_COL_WIDTH} />
+                          <col className={`hidden landscape:table-column md:table-column ${VALUE_COL_WIDTH}`} />
+                          <col className={VALUE_COL_WIDTH} />
+                        </colgroup>
                         <tbody>
                           {group.categories.map((cat) => (
                             <CategoryRow
@@ -315,6 +341,7 @@ function ScopeSection({
           <SectionTotalsRow
             totalGoalCents={totalGoalCents}
             totalAssignedCents={totalAssignedCents}
+            totalActivityCents={totalActivityCents}
             totalAvailableCents={totalAvailableCents}
           />
         </>
@@ -326,29 +353,37 @@ function ScopeSection({
 function SectionTotalsRow({
   totalGoalCents,
   totalAssignedCents,
+  totalActivityCents,
   totalAvailableCents,
 }: {
   totalGoalCents: number;
   totalAssignedCents: number;
+  totalActivityCents: number;
   totalAvailableCents: number;
 }) {
   return (
-    <div className="flex items-center gap-2 px-5 py-3 border-t-2 border-stone-300 dark:border-stone-600 text-sm font-semibold text-stone-700 dark:text-stone-200">
+    <div className="flex items-center gap-2 px-5 md:pl-5 md:pr-0 py-3 border-t-2 border-stone-300 dark:border-stone-600 text-sm font-semibold text-stone-700 dark:text-stone-200">
       <span className="flex-1 min-w-0">Total</span>
-      <div className="flex gap-6 shrink-0">
-        <div className="hidden md:block text-right min-w-[5rem]">
+      <div className="flex gap-6 md:gap-0 shrink-0">
+        <div className={`hidden md:block text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
           <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
             Goals/mo
           </div>
           <div className="tabular-nums">{formatCents(totalGoalCents)}</div>
         </div>
-        <div className="text-right min-w-[5rem]">
+        <div className={`text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
           <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
             Assigned
           </div>
           <div className="tabular-nums">{formatCents(totalAssignedCents)}</div>
         </div>
-        <div className="text-right min-w-[5rem]">
+        <div className={`hidden landscape:block md:block text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
+          <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+            Activity
+          </div>
+          <div className="tabular-nums">{formatCents(totalActivityCents)}</div>
+        </div>
+        <div className={`text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
           <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
             Available
           </div>
@@ -396,6 +431,7 @@ function CategoryRow({
           )}
         </div>
       </td>
+      <td className="hidden md:table-cell" aria-hidden="true" />
       <td className="px-5 py-2 text-right tabular-nums">
         {editing ? (
           <input
