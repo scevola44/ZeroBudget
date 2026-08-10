@@ -31,6 +31,25 @@ async def _assign(client: AsyncClient, headers: dict, month: str, category_id: i
     assert r.status_code == 204, r.text
 
 
+async def _add_outflow(
+    client: AsyncClient, headers: dict, account_id: int, category_id: int, amount: int, date: str
+):
+    """Post a spending transaction against ``category_id``, reducing its balance."""
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": account_id,
+            "category_id": category_id,
+            "date": date,
+            "payee": "",
+            "memo": "",
+            "amount_cents": -amount,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201
+
+
 @pytest.mark.asyncio
 async def test_empty_budget_has_zero_ready_to_assign(client: AsyncClient):
     headers = await register_user(client)
@@ -177,6 +196,72 @@ async def test_monthly_goal_needed_drops_to_zero_when_balance_meets_goal(
     row = body["groups"][0]["categories"][0]
     assert row["goal_kind"] == "monthly"
     assert row["needed_this_month_cents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_yearly_goal_needed_decreases_by_assigned_amount_when_balance_negative(
+    client: AsyncClient,
+):
+    """Regression test: overspending a yearly-goal category must not pin
+    ``needed_this_month_cents`` at goal/12 forever — each euro assigned should
+    reduce it by exactly one euro, even while the category's balance is
+    negative."""
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    cat = await create_category(
+        client,
+        headers,
+        group,
+        name="Vacation",
+        goal_kind="yearly",
+        goal_amount_cents=120_000,
+    )
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+
+    # Assign 5_000, spend 10_000 -> balance = -5_000. per_month = 10_000, so
+    # needed should be 10_000 - (-5_000) = 15_000, not pinned at 10_000.
+    await _assign(client, headers, "2026-04", cat, 5_000)
+    await _add_outflow(client, headers, account, cat, 10_000, "2026-04-02")
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    row = body["groups"][0]["categories"][0]
+    assert row["needed_this_month_cents"] == 15_000
+
+    # Assign 3_000 more (still overspent overall: balance = -2_000). Needed
+    # must drop by exactly the newly assigned 3_000, to 12_000.
+    await _assign(client, headers, "2026-04", cat, 8_000)
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    row = body["groups"][0]["categories"][0]
+    assert row["needed_this_month_cents"] == 12_000
+
+
+@pytest.mark.asyncio
+async def test_target_date_goal_needed_reflects_negative_balance(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    cat = await create_category(
+        client,
+        headers,
+        group,
+        name="Trip",
+        goal_kind="target_date",
+        goal_amount_cents=120_000,
+        goal_target_month="2026-09-01",
+    )
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+
+    # No assignment, but 6_000 of spending against the category -> balance =
+    # -6_000. April -> September is 6 months inclusive, so remaining should
+    # be 120_000 - (-6_000) = 126_000, needed = 126_000 // 6 = 21_000 (not
+    # the 20_000 it would be if the negative balance were clamped to zero).
+    await _add_outflow(client, headers, account, cat, 6_000, "2026-04-02")
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    row = body["groups"][0]["categories"][0]
+    assert row["needed_this_month_cents"] == 21_000
 
 
 @pytest.mark.asyncio
