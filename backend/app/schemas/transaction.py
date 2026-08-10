@@ -31,6 +31,22 @@ class TransactionResponse(BaseModel):
     payee: str
     memo: str
     amount_cents: int
+    transfer_peer_id: int | None = None
+
+
+class TransferCreate(BaseModel):
+    from_account_id: int
+    to_account_id: int
+    date: DateType
+    payee: str = Field(default="", max_length=255)
+    memo: str = Field(default="", max_length=500)
+    # Magnitude only — each leg derives its own sign from the direction.
+    amount_cents: int = Field(gt=0)
+
+
+class TransferResponse(BaseModel):
+    from_transaction: TransactionResponse
+    to_transaction: TransactionResponse
 
 
 class TransactionImportRow(BaseModel):

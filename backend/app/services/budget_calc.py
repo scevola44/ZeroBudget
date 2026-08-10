@@ -14,7 +14,9 @@ see ``tests/test_budget_calc.py``.
 
 Each ``TxnRow`` carries the scope of its **account** and each
 ``AssignmentRow`` carries the scope of its **category's group**. The router
-joins the relevant rows before passing them in.
+joins the relevant rows before passing them in. A transfer leg additionally
+carries the scope of its peer's account, which decides whether it touches RTA —
+see ``feeds_ready_to_assign``.
 """
 
 from __future__ import annotations
@@ -53,6 +55,27 @@ class TxnRow:
     date: date
     amount_cents: int  # signed
     scope: str  # account scope: "personal" | "shared"
+    # Scope of the account holding this row's transfer peer; None when the row
+    # isn't a transfer leg. See ``feeds_ready_to_assign``.
+    transfer_peer_scope: str | None = None
+
+
+def feeds_ready_to_assign(txn: TxnRow) -> bool:
+    """Whether ``txn`` is money arriving in (or leaving) its scope's RTA pool.
+
+    Uncategorized rows are the sole source of Ready to Assign. Transfer legs
+    are uncategorized too, but only *cross-scope* legs actually move money
+    between pools: a same-scope transfer is one pool's money changing accounts,
+    so both its legs are excluded and the pool is untouched.
+
+    Excluding same-scope legs is arithmetically the same as letting them cancel
+    each other out — the two legs are equal and opposite and share a date. It is
+    written as an exclusion so the intent is pinned rather than incidental, and
+    so ``insights_calc`` can apply the identical rule.
+    """
+    if txn.category_id is not None:
+        return False
+    return txn.transfer_peer_scope != txn.scope
 
 
 @dataclass(frozen=True)
@@ -90,7 +113,7 @@ def compute_ready_to_assign(
     inflow_through_month = sum(
         t.amount_cents
         for t in transactions
-        if t.scope == scope and t.category_id is None and t.date < boundary
+        if t.scope == scope and feeds_ready_to_assign(t) and t.date < boundary
     )
     assigned_through_month = sum(
         a.amount_cents
@@ -101,7 +124,7 @@ def compute_ready_to_assign(
     future_inflow = sum(
         t.amount_cents
         for t in transactions
-        if t.scope == scope and t.category_id is None and t.date >= boundary
+        if t.scope == scope and feeds_ready_to_assign(t) and t.date >= boundary
     )
     future_assigned = sum(
         a.amount_cents

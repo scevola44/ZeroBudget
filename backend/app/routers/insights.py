@@ -41,6 +41,7 @@ from app.services.insights_calc import (
     compute_spending_breakdown,
     flow_by_month,
 )
+from app.services.txn_rows import build_txn_rows
 
 router = APIRouter(prefix="/api/insights", tags=["insights"])
 
@@ -150,15 +151,7 @@ async def get_insights(
     category_name: dict[int, str] = {c.id: c.name for c in categories}
     group_name: dict[int, str] = {g.id: g.name for g in groups}
 
-    txns = [
-        TxnRow(
-            category_id=t.category_id,
-            date=t.date,
-            amount_cents=t.amount_cents,
-            scope=account_scope.get(t.account_id, PERSONAL),
-        )
-        for t in txn_rows_db
-    ]
+    txns = build_txn_rows(txn_rows_db, account_scope)
     assignments = [
         AssignmentRow(
             category_id=a.category_id,
