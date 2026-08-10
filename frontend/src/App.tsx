@@ -9,6 +9,7 @@ import { AccountsPage } from "./pages/AccountsPage";
 import { BankingCallbackPage } from "./pages/BankingCallbackPage";
 import { BudgetPage } from "./pages/BudgetPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
+import { InsightsPage } from "./pages/InsightsPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
 import { PrivacyPage } from "./legal/PrivacyPage";
 import { TermsPage } from "./legal/TermsPage";
@@ -86,6 +87,16 @@ export default function App() {
           <RequireAuth>
             <Layout>
               <TransactionsPage />
+            </Layout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/insights"
+        element={
+          <RequireAuth>
+            <Layout>
+              <InsightsPage />
             </Layout>
           </RequireAuth>
         }

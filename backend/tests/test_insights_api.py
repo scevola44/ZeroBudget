@@ -176,6 +176,7 @@ async def test_rows_carry_category_and_group_names(client: AsyncClient):
         "group_id": group,
         "name": "Daily",
         "spent_cents": 40_000,
+        "sort_index": 0,
     }
 
 

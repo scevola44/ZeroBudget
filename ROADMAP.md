@@ -96,12 +96,17 @@ Implemented:
   edits preserved on updated transactions (`routers/banking.py`,
   `services/banking_client.py`, `services/bank_sync.py`,
   `services/sync_scheduler.py`). No deletion detection (no delta API).
+- **Insights page**: spending breakdown by category/group/scope, income vs
+  spending per month, and an overspending report comparing each category
+  against its recent norm; `1M | 3M | 6M | YTD | 1Y` range presets with
+  month-stepping arrows (`routers/insights.py`, `services/insights_calc.py`,
+  `frontend/src/pages/InsightsPage.tsx`). See Phase 5.
 - Responsive layout with dark mode (`darkMode: "media"`), mobile off-canvas nav.
 
 Not implemented (the gap this roadmap closes): transfers, full transaction
 editing in the UI, account/category management gaps, payees, splits,
-search/bulk edit, move-money/auto-assign, scheduled transactions, reports,
-generic CSV import, import matching, settings/auth hardening,
+search/bulk edit, move-money/auto-assign, scheduled transactions, net worth
+over time, generic CSV import, import matching, settings/auth hardening,
 cleared/reconciliation, credit-card budgeting.
 
 ---
@@ -297,34 +302,68 @@ cover overspending, fund goals, move money without mental arithmetic.
 
 ---
 
-## Phase 5 — Reports
+## Phase 5 — Insights (mostly shipped)
 
 **Goal**: answer "where did the money go / how are we doing" — YNAB's
-Reflect tab, scope-aware.
+Reflect tab, scope-aware. Called **Insights**, not Reports: `/insights`,
+`/api/insights`, `services/insights_calc.py`.
 
-### Work items
+### Shipped
 
-1. **Backend aggregation endpoints** (`/api/reports/...`), with the heavy
-   math in a new pure, DB-free service module mirroring the `budget_calc.py`
-   pattern (`backend/app/services/report_calc.py`, pinned by its own test
-   file):
-   - Spending by category/group for a month + trailing-12-months trend.
-   - Income vs expense by month.
-   - Net worth over time (per-month cumulative transaction sums per account —
-     derived, per invariant 4).
-   - *Stretch*: Age of Money (YNAB's FIFO days-between-inflow-and-outflow).
-2. **Reports page** (`/reports`, new sidebar entry in
-   `frontend/src/components/Layout.tsx`): scope toggle (Personal / Family /
-   both side-by-side — default to per-scope, consistent with the dual-RTA
-   design), month/date-range picker, charts. Prefer a tiny dependency-light
-   chart approach (SVG or a small lib) consistent with the hand-rolled
-   component style; must support dark mode.
+1. **`GET /api/insights?start_month=&end_month=`** — one endpoint serving all
+   three sections, since they share the same row load. Explicit inclusive
+   bounds match `/api/transactions`; range presets stay a frontend concern.
+   Math lives in the pure, DB-free `backend/app/services/insights_calc.py`
+   (mirroring `budget_calc.py`), pinned by `tests/test_insights_calc.py`:
+   - Spending by category/group/scope over a span of whole months.
+   - Income vs spending per month.
+   - Per-category comparison against a recent norm.
+2. **Insights page** (`/insights`, sidebar entry in
+   `frontend/src/components/Layout.tsx`): Personal and Family rendered as two
+   parallel columns throughout; `1M | 3M | 6M | YTD | 1Y` presets plus arrows
+   that step the anchor month by one. Charts are hand-rolled Tailwind divs —
+   no chart dependency was added. The categorical palette in
+   `frontend/src/lib/chartColors.ts` was validated against both surfaces for
+   contrast and colour-vision separation; re-validate before changing it.
+
+**Definitions worth not re-deriving:**
+
+- Spending is **gross**, with refunds reported alongside rather than netted
+  in. A floored net does not sum across months when a refund lands in a
+  different month from its purchase.
+- Income stays uncategorized inflow only (invariant 6), so
+  `income - spending` is the scope's net cash flow.
+- "Usual" is the **median** per-month value over the six whole months before
+  the period, counting only months at or after a category's first activity
+  and requiring at least three. Median because one annual bill in the window
+  would otherwise make every ordinary month read as far below usual.
+- The threshold is a strict `> 10%`. Available balances are walked month by
+  month, so a category that dipped mid-period is still reported.
+
+### Not shipped — follow-up
+
+- **Net worth over time** (per-month cumulative transaction sums per account —
+  derived, per invariant 4).
+- **Age of Money** (YNAB's FIFO days-between-inflow-and-outflow).
+
+### Known limitation
+
+Transfers are still two untagged uncategorized transactions (Phase 1), so the
+receiving leg reads as income and the sending leg as uncategorized spending.
+The uncategorized bucket is labelled "Uncategorized (incl. transfers)" to be
+honest about it. Once transfer legs carry a marker, excluding them is a single
+filter in `insights_calc.py` — there is a `TODO(phase-1)` on it.
 
 ### Acceptance criteria
 
-- Report numbers reconcile with the budget page for the same month (pin at
-  least one cross-check in tests: sum of category activity = report spending).
-- All reports are per-scope; no report ever mixes pools silently.
+- Insights numbers reconcile with the budget page for the same month — pinned
+  by `test_insights_api.py::test_insights_reconciles_with_the_budget_page_for_the_same_month`
+  and, at the pure level, by
+  `test_insights_calc.py::test_month_end_balances_match_compute_category_balances`.
+  The latter is load-bearing: `insights_calc` re-implements the rollover walk
+  for speed, and that test is what stops it drifting from `budget_calc`.
+- Personal and Family are computed and rendered separately. The only
+  cross-scope figure is the explicitly labelled Personal-vs-Family split bar.
 
 ---
 

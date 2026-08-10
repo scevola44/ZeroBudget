@@ -173,8 +173,9 @@ async def get_insights(
     baseline = baseline_range(period)
 
     def breakdown_for(scope: str) -> ScopeBreakdown:
+        scope_groups = [g.id for g in groups if g.scope == scope]
         return _scope_breakdown(
-            spending[scope], category_group, category_name, group_name
+            spending[scope], scope_groups, category_group, category_name, group_name
         )
 
     def flow_for(scope: str) -> ScopeFlow:
@@ -215,6 +216,7 @@ async def get_insights(
 
 def _scope_breakdown(
     spending: ScopeSpending,
+    scope_group_ids: list[int],
     category_group: dict[int, int],
     category_name: dict[int, str],
     group_name: dict[int, str],
@@ -235,7 +237,7 @@ def _scope_breakdown(
         key=lambda row: (-row.spent_cents, row.category_id),
     )
 
-    group_totals: dict[int, int] = {}
+    group_totals: dict[int, int] = {group_id: 0 for group_id in scope_group_ids}
     for row in categories:
         group_totals[row.group_id] = group_totals.get(row.group_id, 0) + row.spent_cents
 
@@ -248,9 +250,10 @@ def _scope_breakdown(
                 GroupSpendingRow(
                     group_id=group_id,
                     name=group_name.get(group_id, ""),
-                    spent_cents=total,
+                    spent_cents=group_totals[group_id],
+                    sort_index=sort_index,
                 )
-                for group_id, total in group_totals.items()
+                for sort_index, group_id in enumerate(scope_group_ids)
             ),
             key=lambda row: (-row.spent_cents, row.group_id),
         ),

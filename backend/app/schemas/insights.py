@@ -36,6 +36,10 @@ class GroupSpendingRow(BaseModel):
     group_id: int
     name: str
     spent_cents: int
+    # The group's position in its scope's own ordering. Charts colour by this
+    # rather than by rank, so changing the period never repaints the groups that
+    # were already on screen.
+    sort_index: int
 
 
 class ScopeBreakdown(BaseModel):
