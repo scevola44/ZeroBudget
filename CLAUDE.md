@@ -20,3 +20,10 @@
 - **Match the conventions of the file you're editing** — formatting, naming, imports, patterns. Consistency beats personal preference.
 - **Tests describe behavior, not implementation.** Assert on observable outcomes, not on internals the caller doesn't care about.
 - **Type everything the language lets you type.** Full type hints in Python, no implicit `any` in TypeScript.
+
+# Git & branching
+
+- **Target PRs at `develop`, not `main`.** `Bump Version` (`.github/workflows/bump-version.yml`) only triggers on `pull_request: closed` events whose base branch is `develop`; a PR opened against `main` never fires it and the version won't bump. `main` only receives the automated `chore/release-*` PR from `Prepare Release`.
+- **Never name your own branches with the `chore/bump-version-*`, `chore/release-*`, or `chore/sync-*-to-develop` prefixes.** These are reserved for CI — `Bump Version` and `Prepare Release` create and push branches with those exact names (e.g. `chore/bump-version-1.4.0-beta.1`). A collision makes the workflow's `git checkout -b` or `git push origin` step fail.
+- **Apply at most one `bump:major` / `bump:minor` / `bump:patch` label to the PR** when the change warrants a real version bump. `Bump Version` reads that label to pick the bump type; with no label it just increments the beta counter (e.g. `-beta.1` → `-beta.2`).
+- Everyday branch names (`feature/...`, `fix/...`, etc.) are otherwise unconstrained — the workflow only looks at the PR's base branch and labels, not the head branch name.
