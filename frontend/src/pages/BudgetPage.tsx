@@ -11,13 +11,23 @@ import { formatCents, parseAmountToCents } from "../lib/money";
 const COLLAPSED_GROUPS_STORAGE_KEY = "budget:collapsed-groups";
 
 // Shared column width/padding so the group header, category rows, and totals
-// row all line up on desktop — matched by a `md:table-fixed` colgroup on the
-// categories table. Only enforced from `md:` up: below that, the table falls
-// back to its native auto layout and the header/totals rows fall back to
-// gap-based flex spacing, exactly like before this column model existed —
-// mobile only ever shows two of the four columns, so nothing to misalign.
+// row all line up on desktop — matched by the categories table's colgroup
+// (see TABLE_VALUE_COL_WIDTH below). Only enforced from `md:` up: below
+// that, the header/totals rows fall back to gap-based flex spacing, exactly
+// like before this column model existed — mobile only ever shows two of the
+// four columns, so nothing to misalign there.
 const VALUE_COL_WIDTH = "md:w-36"; // Goals / Assigned / Activity / Available
 const VALUE_COL_PADDING = "md:px-5";
+
+// The categories table stays table-fixed at every width (not just `md:`) so
+// the name column can never push Assigned/Activity/Available past the
+// card's `overflow-hidden` edge — auto layout has no guaranteed-space
+// contract between columns, which is what let the Available pill get
+// clipped below `md`. These reserve just enough room for the pill/values on
+// a phone; the header/totals rows (flex, not table) don't need this since
+// their value area is already `shrink-0` and never the one that overflows.
+const TABLE_VALUE_COL_WIDTH = "w-28 md:w-36";
+const TABLE_VALUE_COL_PADDING = "px-2 md:px-5";
 
 function loadCollapsedGroups(): Set<number> {
   try {
@@ -265,7 +275,7 @@ function ScopeSection({
                   </svg>
                   <span className="flex-1 min-w-0">
                     <span className="block truncate">{group.name}</span>
-                    <span className="block md:hidden text-xs font-normal text-stone-400 dark:text-stone-500 tabular-nums">
+                    <span className="block md:hidden truncate text-xs font-normal text-stone-400 dark:text-stone-500 tabular-nums">
                       {formatCents(groupMonthlyGoalCents)}/mo
                     </span>
                   </span>
@@ -315,13 +325,13 @@ function ScopeSection({
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm md:table-fixed">
+                      <table className="w-full text-sm table-fixed">
                         <colgroup>
                           <col />
                           <col className={`hidden md:table-column ${VALUE_COL_WIDTH}`} />
-                          <col className={VALUE_COL_WIDTH} />
-                          <col className={`hidden landscape:table-column md:table-column ${VALUE_COL_WIDTH}`} />
-                          <col className={VALUE_COL_WIDTH} />
+                          <col className={TABLE_VALUE_COL_WIDTH} />
+                          <col className={`hidden landscape:table-column md:table-column ${TABLE_VALUE_COL_WIDTH}`} />
+                          <col className={TABLE_VALUE_COL_WIDTH} />
                         </colgroup>
                         <tbody>
                           {group.categories.map((cat) => (
@@ -417,7 +427,7 @@ function CategoryRow({
     <tr className="border-t border-stone-100 dark:border-stone-800">
       <td className="px-5 py-2">
         <div>{cat.name}</div>
-        <div className="text-xs text-stone-500 dark:text-stone-400 flex items-center gap-2">
+        <div className="text-xs text-stone-500 dark:text-stone-400 flex items-center gap-2 flex-wrap">
           <span>{formatGoal(cat)}</span>
           {needed !== null && needed > 0 && (
             <button
@@ -432,7 +442,7 @@ function CategoryRow({
         </div>
       </td>
       <td className="hidden md:table-cell" aria-hidden="true" />
-      <td className="px-5 py-2 text-right tabular-nums">
+      <td className={`${TABLE_VALUE_COL_PADDING} py-2 text-right tabular-nums whitespace-nowrap`}>
         {editing ? (
           <input
             autoFocus
@@ -444,7 +454,7 @@ function CategoryRow({
               if (e.key === "Escape") setEditing(false);
             }}
             inputMode="decimal"
-            className="w-28 text-right border border-indigo-300 dark:border-indigo-500 bg-transparent dark:bg-stone-900 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            className="w-20 md:w-28 text-right border border-indigo-300 dark:border-indigo-500 bg-transparent dark:bg-stone-900 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         ) : (
           <button
@@ -458,10 +468,12 @@ function CategoryRow({
           </button>
         )}
       </td>
-      <td className="hidden landscape:table-cell md:table-cell px-5 py-2 text-right tabular-nums text-stone-600 dark:text-stone-400">
+      <td
+        className={`hidden landscape:table-cell md:table-cell ${TABLE_VALUE_COL_PADDING} py-2 text-right tabular-nums whitespace-nowrap text-stone-600 dark:text-stone-400`}
+      >
         {formatCents(cat.activity_cents)}
       </td>
-      <td className="px-5 py-2 text-right">
+      <td className={`${TABLE_VALUE_COL_PADDING} py-2 text-right whitespace-nowrap`}>
         <span
           className={`inline-block px-2.5 py-1 rounded-full text-xs font-semibold tabular-nums ${availablePillClass(cat.assigned_cents, cat.balance_cents)}`}
         >
