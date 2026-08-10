@@ -50,6 +50,28 @@ async def _add_outflow(
     assert r.status_code == 201
 
 
+async def _transfer(
+    client: AsyncClient,
+    headers: dict,
+    from_account_id: int,
+    to_account_id: int,
+    amount: int,
+    date: str,
+):
+    """Create a properly-linked transfer pair via the dedicated endpoint."""
+    r = await client.post(
+        "/api/transactions/transfer",
+        json={
+            "from_account_id": from_account_id,
+            "to_account_id": to_account_id,
+            "amount_cents": amount,
+            "date": date,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+
+
 @pytest.mark.asyncio
 async def test_empty_budget_has_zero_ready_to_assign(client: AsyncClient):
     headers = await register_user(client)
@@ -431,3 +453,52 @@ async def test_group_scope_change_blocked_when_categories_exist(client: AsyncCli
         f"/api/category-groups/{group}", json={"scope": "shared"}, headers=headers
     )
     assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_uncategorized_inflow_to_a_savings_account_does_not_raise_ready_to_assign(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    savings = await create_account(client, headers, "Savings", type="savings")
+
+    await _add_inflow(client, headers, savings, 100_000, "2026-04-01")
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    assert body["personal_ready_to_assign_cents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_transfer_from_checking_to_savings_does_not_move_ready_to_assign(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking", type="checking")
+    savings = await create_account(client, headers, "Savings", type="savings")
+
+    await _add_inflow(client, headers, checking, 100_000, "2026-04-01")
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    assert body["personal_ready_to_assign_cents"] == 100_000
+
+    await _transfer(client, headers, checking, savings, 60_000, "2026-04-02")
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    assert body["personal_ready_to_assign_cents"] == 100_000
+
+
+@pytest.mark.asyncio
+async def test_categorized_transaction_in_savings_account_still_funds_its_category_balance(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    savings = await create_account(client, headers, "Savings", type="savings")
+    group = await create_group(client, headers)
+    cat = await create_category(client, headers, group)
+
+    await _assign(client, headers, "2026-04", cat, 60_000)
+    await _add_outflow(client, headers, savings, cat, 15_000, "2026-04-05")
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    row = body["groups"][0]["categories"][0]
+    assert row["activity_cents"] == -15_000
+    assert row["balance_cents"] == 45_000

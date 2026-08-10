@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.deps import CurrentUser, DbSession
 from app.models import Account, Category, CategoryGroup, MonthlyAssignment, Transaction
+from app.models.account_types import account_on_budget
 from app.models.scope import PERSONAL, SHARED
 from app.schemas.budget import (
     AssignRequest,
@@ -117,11 +118,12 @@ async def get_budget_month(
     )
 
     account_scope: dict[int, str] = {a.id: a.scope for a in accounts}
+    account_on_budget_map: dict[int, bool] = {a.id: account_on_budget(a.type) for a in accounts}
     group_scope: dict[int, str] = {g.id: g.scope for g in groups}
     category_scope: dict[int, str] = {c.id: group_scope[c.group_id] for c in categories}
 
     peer_account_id = await load_peer_account_ids(db, txn_rows_db)
-    txns = build_txn_rows(txn_rows_db, account_scope, peer_account_id)
+    txns = build_txn_rows(txn_rows_db, account_scope, account_on_budget_map, peer_account_id)
     assignments = [
         AssignmentRow(
             category_id=a.category_id,

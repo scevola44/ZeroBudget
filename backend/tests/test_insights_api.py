@@ -367,6 +367,13 @@ async def test_insights_reconciles_with_the_budget_page_for_the_same_month(
     await _post_transaction(client, headers, joint_account, -90_000, "2026-04-03", rent)
     await _post_transaction(client, headers, personal_account, -5_000, "2026-04-06")
 
+    # A savings account with a mix of categorized and uncategorized activity —
+    # the categorized leg must still reconcile normally, the uncategorized leg
+    # must vanish from both pages identically.
+    savings = await create_account(client, headers, "Savings", type="savings")
+    await _post_transaction(client, headers, savings, -2_500, "2026-04-08", groceries)
+    await _post_transaction(client, headers, savings, 9_000, "2026-04-09")
+
     budget = (await client.get(f"/api/budget/{APRIL}", headers=headers)).json()
     insights = (await _get_insights(client, headers)).json()
 
@@ -390,8 +397,9 @@ async def test_insights_reconciles_with_the_budget_page_for_the_same_month(
             row["spent_cents"] for row in breakdown["categories"]
         ) + breakdown["uncategorized_spent_cents"]
 
-    assert insights["breakdown"]["personal"]["total_spent_cents"] == 52_500
+    assert insights["breakdown"]["personal"]["total_spent_cents"] == 55_000
     assert insights["breakdown"]["shared"]["total_spent_cents"] == 90_000
+    assert insights["income_vs_spending"]["personal"]["income_cents"] == 0
 
 
 @pytest.mark.asyncio
@@ -452,6 +460,42 @@ async def test_a_cross_scope_transfer_stays_visible_in_both_pools(client: AsyncC
 
     assert insights["breakdown"]["personal"]["uncategorized_spent_cents"] == 60_000
     assert insights["income_vs_spending"]["shared"]["income_cents"] == 60_000
+
+
+@pytest.mark.asyncio
+async def test_uncategorized_savings_activity_is_excluded_from_income_and_spending(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    savings = await create_account(client, headers, "Savings", type="savings")
+
+    await _post_transaction(client, headers, savings, 100_000, "2026-04-01")
+    await _post_transaction(client, headers, savings, -5_000, "2026-04-06")
+
+    body = (await _get_insights(client, headers)).json()
+
+    assert body["income_vs_spending"]["personal"]["income_cents"] == 0
+    assert body["income_vs_spending"]["personal"]["spent_cents"] == 0
+    assert body["breakdown"]["personal"]["uncategorized_spent_cents"] == 0
+    assert body["breakdown"]["personal"]["total_spent_cents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_categorized_savings_activity_still_appears_in_spending_breakdown(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    savings = await create_account(client, headers, "Savings", type="savings")
+    group = await create_group(client, headers)
+    groceries = await create_category(client, headers, group, "Groceries")
+
+    await _post_transaction(client, headers, savings, -6_000, "2026-04-05", groceries)
+
+    body = (await _get_insights(client, headers)).json()
+
+    category = body["breakdown"]["personal"]["categories"][0]
+    assert category["name"] == "Groceries"
+    assert category["spent_cents"] == 6_000
 
 
 async def _link_transfer(
