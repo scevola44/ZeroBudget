@@ -8,6 +8,7 @@ import {
   EditTransactionModal,
   type TransactionEdit,
 } from "../components/EditTransactionModal";
+import { LinkTransferModal } from "../components/LinkTransferModal";
 import { ScopeChip } from "../components/ScopeChip";
 import { todayISO } from "../lib/dates";
 import { formatCents, parseAmountToCents } from "../lib/money";
@@ -59,8 +60,16 @@ export function AccountDetailPage() {
   const [categoryId, setCategoryId] = useState<string>("");
   const [formError, setFormError] = useState<string | null>(null);
   const [editingCategoryTxnId, setEditingCategoryTxnId] = useState<number | null>(null);
+  // The existing row being linked to a transfer, and the account holding its
+  // other leg — set together when "Transfer : <account>" is picked on a row.
+  const [linking, setLinking] = useState<{ txnId: number; accountId: number } | null>(
+    null,
+  );
   const [editingTxnId, setEditingTxnId] = useState<number | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  // Failures from the in-row actions, which have no modal of their own to
+  // surface them.
+  const [rowActionError, setRowActionError] = useState<string | null>(null);
   const [editingBalance, setEditingBalance] = useState(false);
   const [balanceInput, setBalanceInput] = useState("");
   const [balanceError, setBalanceError] = useState<string | null>(null);
@@ -74,6 +83,10 @@ export function AccountDetailPage() {
     editingTxnId === null
       ? undefined
       : txnsQuery.data?.find((t) => t.id === editingTxnId);
+
+  const linkingTransaction =
+    linking === null ? undefined : txnsQuery.data?.find((t) => t.id === linking.txnId);
+  const linkingAccount = linking === null ? undefined : accountById.get(linking.accountId);
 
   function peerAccountOf(txn: Transaction): Account | undefined {
     return txn.transfer_peer_account_id === null
@@ -161,6 +174,21 @@ export function AccountDetailPage() {
       invalidateAfterChange();
       setEditingCategoryTxnId(null);
     },
+    onError: (err) =>
+      setRowActionError(err instanceof Error ? err.message : "Could not set the category"),
+  });
+
+  const unlinkTransfer = useMutation({
+    mutationFn: (txnId: number) =>
+      api(`/api/transactions/${txnId}/transfer-link`, { method: "DELETE" }),
+    onSuccess: () => {
+      invalidateAfterChange();
+      void qc.invalidateQueries({ queryKey: ["transfer-suggestions"] });
+    },
+    onError: (err) =>
+      setRowActionError(
+        err instanceof Error ? err.message : "Could not unlink the transfer",
+      ),
   });
 
   function resetForm() {
@@ -380,6 +408,10 @@ export function AccountDetailPage() {
         )}
       </form>
 
+      {rowActionError && (
+        <p className="text-sm text-red-600 dark:text-red-400">{rowActionError}</p>
+      )}
+
       <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl overflow-hidden">
         {txnsQuery.isLoading && <div className="p-5 text-stone-500 dark:text-stone-400">Loading…</div>}
         {txnsQuery.data && txnsQuery.data.length === 0 && (
@@ -417,6 +449,13 @@ export function AccountDetailPage() {
                             autoFocus
                             defaultValue={t.category_id ?? ""}
                             onChange={(e) => {
+                              setRowActionError(null);
+                              const targetAccountId = transferTargetId(e.target.value);
+                              if (targetAccountId !== null) {
+                                setLinking({ txnId: t.id, accountId: targetAccountId });
+                                setEditingCategoryTxnId(null);
+                                return;
+                              }
                               const newId = e.target.value === "" ? null : Number(e.target.value);
                               updateCategory.mutate({ txnId: t.id, categoryId: newId });
                             }}
@@ -425,11 +464,23 @@ export function AccountDetailPage() {
                             className="h-9 w-full appearance-none border border-indigo-300 dark:border-indigo-500 bg-white dark:bg-stone-900 rounded-md pl-2 pr-6 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                           >
                             <option value="">— Unassigned —</option>
-                            {flatCategories.map((c) => (
+                            {eligibleCategories.map((c) => (
                               <option key={c.id} value={c.id}>
                                 {c.groupName} › {c.name}
                               </option>
                             ))}
+                            {transferTargets.length > 0 && (
+                              <optgroup label="Transfer">
+                                {transferTargets.map((a) => (
+                                  <option
+                                    key={a.id}
+                                    value={`${TRANSFER_OPTION_PREFIX}${a.id}`}
+                                  >
+                                    Transfer : {a.name}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
                           </select>
                           <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center text-indigo-500">
                             <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -466,6 +517,18 @@ export function AccountDetailPage() {
                       >
                         Edit
                       </button>
+                      {t.transfer_peer_id !== null && (
+                        <button
+                          onClick={() => {
+                            setRowActionError(null);
+                            unlinkTransfer.mutate(t.id);
+                          }}
+                          title="Keeps both transactions, just not as a transfer"
+                          className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline px-2 py-1"
+                        >
+                          Unlink
+                        </button>
+                      )}
                       <button
                         onClick={() => deleteTxn.mutate(t.id)}
                         title={
@@ -498,8 +561,25 @@ export function AccountDetailPage() {
             setEditError(null);
           }}
           onSave={(edit) => updateTxn.mutate({ txnId: editingTransaction.id, edit })}
+          onUnlinkTransfer={() => {
+            setEditingTxnId(null);
+            setRowActionError(null);
+            unlinkTransfer.mutate(editingTransaction.id);
+          }}
           isPending={updateTxn.isPending}
           error={editError}
+        />
+      )}
+
+      {linkingTransaction && linkingAccount && (
+        <LinkTransferModal
+          transaction={linkingTransaction}
+          targetAccount={linkingAccount}
+          onClose={() => setLinking(null)}
+          onLinked={() => {
+            setLinking(null);
+            invalidateAfterChange();
+          }}
         />
       )}
     </div>

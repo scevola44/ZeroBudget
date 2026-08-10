@@ -7,6 +7,7 @@ import {
   EditTransactionModal,
   type TransactionEdit,
 } from "../components/EditTransactionModal";
+import { TransferSuggestionsBanner } from "../components/TransferSuggestionsBanner";
 import { currentMonth } from "../lib/dates";
 import { formatCents } from "../lib/money";
 import { YnabTransactionImportModal, type ImportRow } from "./YnabTransactionImportModal";
@@ -76,6 +77,26 @@ export function TransactionsPage() {
     onError: (err) => setEditError(err instanceof Error ? err.message : "Update failed"),
   });
 
+  // A transfer touches two accounts, so the broad prefix has to go too.
+  function invalidateAfterLink() {
+    void qc.invalidateQueries({ queryKey: ["transactions"] });
+    void qc.invalidateQueries({ queryKey: ["accounts"] });
+    void qc.invalidateQueries({ queryKey: ["budget"] });
+  }
+
+  const unlinkTransfer = useMutation({
+    mutationFn: (txnId: number) =>
+      api(`/api/transactions/${txnId}/transfer-link`, { method: "DELETE" }),
+    onSuccess: () => {
+      setEditingTxnId(null);
+      setEditError(null);
+      invalidateAfterLink();
+      void qc.invalidateQueries({ queryKey: ["transfer-suggestions"] });
+    },
+    onError: (err) =>
+      setEditError(err instanceof Error ? err.message : "Could not unlink the transfer"),
+  });
+
   function toggleAccount(id: number) {
     setSelectedAccountIds((prev) => {
       const next = new Set(prev);
@@ -114,6 +135,15 @@ export function TransactionsPage() {
           Import YNAB
         </button>
       </div>
+
+      {/* Renders nothing when there is nothing to suggest, so it can't leave a
+          gap in the page's vertical rhythm. */}
+      <TransferSuggestionsBanner
+        startDate={startDate}
+        endDate={endDate}
+        accountById={accountById}
+        onLinked={invalidateAfterLink}
+      />
 
       {/* Filter panel */}
       <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 space-y-4">
@@ -290,7 +320,8 @@ export function TransactionsPage() {
             setEditError(null);
           }}
           onSave={(edit) => updateTxn.mutate({ txnId: editingTransaction.id, edit })}
-          isPending={updateTxn.isPending}
+          onUnlinkTransfer={() => unlinkTransfer.mutate(editingTransaction.id)}
+          isPending={updateTxn.isPending || unlinkTransfer.isPending}
           error={editError}
         />
       )}

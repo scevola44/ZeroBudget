@@ -72,6 +72,20 @@ export type Transfer = {
   to_transaction: Transaction;
 };
 
+// A transaction that could be the other leg of one being linked.
+export type TransferCandidate = {
+  transaction: Transaction;
+  // Signed, relative to the transaction being linked: -2 means two days earlier.
+  date_offset_days: number;
+};
+
+// Two imported rows that look like the two halves of one transfer. Always a
+// suggestion — the user confirms before anything is linked.
+export type TransferSuggestion = {
+  outflow: Transaction;
+  inflow: Transaction;
+};
+
 export type BudgetCategoryRow = {
   id: number;
   name: string;

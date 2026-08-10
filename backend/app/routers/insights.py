@@ -41,7 +41,7 @@ from app.services.insights_calc import (
     compute_spending_breakdown,
     flow_by_month,
 )
-from app.services.txn_rows import build_txn_rows
+from app.services.txn_rows import build_txn_rows, load_peer_account_ids
 
 router = APIRouter(prefix="/api/insights", tags=["insights"])
 
@@ -151,7 +151,10 @@ async def get_insights(
     category_name: dict[int, str] = {c.id: c.name for c in categories}
     group_name: dict[int, str] = {g.id: g.name for g in groups}
 
-    txns = build_txn_rows(txn_rows_db, account_scope)
+    # Peers are loaded separately: this query is date-windowed, and a transfer
+    # linked from two bank imports can straddle the horizon.
+    peer_account_id = await load_peer_account_ids(db, txn_rows_db)
+    txns = build_txn_rows(txn_rows_db, account_scope, peer_account_id)
     assignments = [
         AssignmentRow(
             category_id=a.category_id,

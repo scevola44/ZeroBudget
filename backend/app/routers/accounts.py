@@ -6,8 +6,7 @@ from sqlalchemy import func, select
 from app.deps import CurrentUser, DbSession
 from app.models import Account, BankConnection, Transaction
 from app.schemas.account import AccountBalanceUpdate, AccountCreate, AccountResponse, AccountUpdate
-
-BALANCE_ADJUSTMENT_PAYEE = "Balance Adjustment"
+from app.services.synthetic_payees import BALANCE_ADJUSTMENT_PAYEE
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 

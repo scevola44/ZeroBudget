@@ -1,5 +1,4 @@
-from collections.abc import Sequence
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
@@ -12,23 +11,38 @@ from app.schemas.transaction import (
     TransactionImportResponse,
     TransactionResponse,
     TransactionUpdate,
+    TransferCandidate,
     TransferCreate,
+    TransferLinkRequest,
     TransferResponse,
+    TransferSuggestion,
 )
 from app.services.budget_calc import month_start, next_month_start, parse_month
+from app.services.transfer_match import (
+    SUGGESTION_DEFAULT_DAYS,
+    TRANSFER_MATCH_WINDOW_DAYS,
+    MatchRow,
+    find_candidates,
+    suggest_pairs,
+)
+from app.services.txn_rows import load_peer_account_ids
 
 router = APIRouter(prefix="/api/transactions", tags=["transactions"])
 
+# For rows that cannot be transfer legs, so ``_to_response`` has nothing to look up.
+NO_PEER_ACCOUNTS: dict[int, int] = {}
 
-async def _peer_accounts(db, rows: Sequence[Transaction]) -> dict[int, int]:
-    """Map peer transaction id -> the account holding it, for transfer labels."""
-    peer_ids = {t.transfer_peer_id for t in rows if t.transfer_peer_id is not None}
-    if not peer_ids:
-        return {}
-    result = await db.execute(
-        select(Transaction.id, Transaction.account_id).where(Transaction.id.in_(peer_ids))
+
+def _to_match_row(txn: Transaction) -> MatchRow:
+    return MatchRow(
+        id=txn.id,
+        account_id=txn.account_id,
+        category_id=txn.category_id,
+        date=txn.date,
+        amount_cents=txn.amount_cents,
+        payee=txn.payee,
+        transfer_peer_id=txn.transfer_peer_id,
     )
-    return {row[0]: row[1] for row in result.all()}
 
 
 def _to_response(txn: Transaction, peer_accounts: dict[int, int]) -> TransactionResponse:
@@ -103,7 +117,7 @@ async def list_transactions(
         stmt = stmt.where(Transaction.date <= end_date)
     stmt = stmt.order_by(Transaction.date.desc(), Transaction.id.desc())
     rows = (await db.execute(stmt)).scalars().all()
-    peer_accounts = await _peer_accounts(db, rows)
+    peer_accounts = await load_peer_account_ids(db, rows)
     return [_to_response(r, peer_accounts) for r in rows]
 
 
@@ -206,6 +220,181 @@ async def create_transfer(
     )
 
 
+async def _linkable_rows_between(
+    db, user_id: int, start_date: date, end_date: date
+) -> list[Transaction]:
+    """Unlinked transactions in a date window, the raw material for matching.
+
+    Narrowed in SQL only by ownership and date — both indexed, and both purely
+    about not loading the whole ledger. Which of these rows actually pair is
+    ``transfer_match``'s call alone, so the rule lives in exactly one place.
+    """
+    stmt = select(Transaction).where(
+        Transaction.user_id == user_id,
+        Transaction.transfer_peer_id.is_(None),
+        Transaction.date >= start_date,
+        Transaction.date <= end_date,
+    )
+    return list((await db.execute(stmt)).scalars().all())
+
+
+@router.get("/transfer-candidates", response_model=list[TransferCandidate])
+async def list_transfer_candidates(
+    db: DbSession,
+    current_user: CurrentUser,
+    transaction_id: int = Query(..., description="The leg being linked"),
+    account_id: int | None = Query(
+        default=None, description="Restrict to the other leg's account"
+    ),
+) -> list[TransferCandidate]:
+    """Transactions that could be ``transaction_id``'s other leg, best first."""
+    target = await _owned_transaction(db, current_user.id, transaction_id)
+    window = timedelta(days=TRANSFER_MATCH_WINDOW_DAYS)
+    rows = await _linkable_rows_between(
+        db, current_user.id, target.date - window, target.date + window
+    )
+    by_id = {row.id: row for row in rows}
+    if account_id is not None:
+        rows = [row for row in rows if row.account_id == account_id]
+
+    matches = find_candidates(_to_match_row(target), [_to_match_row(r) for r in rows])
+    # Candidates are unlinked by definition, so none of them has a peer account
+    # to denormalize.
+    return [
+        TransferCandidate(
+            transaction=_to_response(by_id[match.id], NO_PEER_ACCOUNTS),
+            date_offset_days=(match.date - target.date).days,
+        )
+        for match in matches
+    ]
+
+
+@router.get("/transfer-suggestions", response_model=list[TransferSuggestion])
+async def list_transfer_suggestions(
+    db: DbSession,
+    current_user: CurrentUser,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+) -> list[TransferSuggestion]:
+    """Pairs of imported rows that look like the two halves of one transfer.
+
+    Only ever a suggestion: a sync writes each account's side independently and
+    can't know they belong together, and neither can this — so the user confirms
+    each pair. See ``transfer_match.suggest_pairs`` for what "look like" means.
+    """
+    resolved_end = end_date or date.today()
+    resolved_start = start_date or resolved_end - timedelta(days=SUGGESTION_DEFAULT_DAYS)
+    rows = await _linkable_rows_between(
+        db, current_user.id, resolved_start, resolved_end
+    )
+    by_id = {row.id: row for row in rows}
+
+    pairs = suggest_pairs([_to_match_row(row) for row in rows])
+    return [
+        TransferSuggestion(
+            outflow=_to_response(by_id[pair.outflow_id], NO_PEER_ACCOUNTS),
+            inflow=_to_response(by_id[pair.inflow_id], NO_PEER_ACCOUNTS),
+        )
+        for pair in pairs
+    ]
+
+
+def _reject_unlinkable_pair(txn: Transaction, peer: Transaction) -> None:
+    """Guard the invariants a linked pair must satisfy for the budget to add up.
+
+    Only the hard ones: the softer rules in ``transfer_match.is_linkable`` keep
+    the *suggestion* list quiet, but linking is an explicit instruction and the
+    user is allowed to overrule what the matcher would have volunteered.
+    """
+    if txn.id == peer.id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A transfer needs two different transactions.",
+        )
+    if txn.account_id == peer.account_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Both legs of a transfer cannot sit in the same account.",
+        )
+    for leg in (txn, peer):
+        if leg.transfer_peer_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="That transaction is already part of a transfer.",
+            )
+    if txn.amount_cents == 0 or txn.amount_cents != -peer.amount_cents:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "A transfer's two legs must be equal and opposite, but these are "
+                f"{txn.amount_cents} and {peer.amount_cents} cents."
+            ),
+        )
+
+
+@router.post("/{txn_id}/transfer-link", response_model=TransferResponse)
+async def link_transfer(
+    txn_id: int,
+    payload: TransferLinkRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> TransferResponse:
+    """Mark two transactions that already exist as the two legs of one transfer.
+
+    This is the imported case. A bank sync fetches each account separately, so a
+    real transfer lands as two unrelated rows; ``create_transfer`` is no help
+    because it makes *new* legs, and deleting the imported rows to retype them
+    by hand throws away the bank's own reference and invites the next sync to
+    re-import them.
+    """
+    txn = await _owned_transaction(db, current_user.id, txn_id)
+    peer = await _owned_transaction(db, current_user.id, payload.peer_transaction_id)
+    _reject_unlinkable_pair(txn, peer)
+
+    # A transfer isn't spending, so neither leg keeps a category — the invariant
+    # create_transfer starts from and update_transaction defends. Clearing one
+    # here is the honest completion of "this was never an expense", which is
+    # what the user just said.
+    txn.category_id = None
+    peer.category_id = None
+    txn.transfer_peer_id = peer.id
+    peer.transfer_peer_id = txn.id
+    await db.commit()
+    await db.refresh(txn)
+    await db.refresh(peer)
+
+    outflow, inflow = (txn, peer) if txn.amount_cents < 0 else (peer, txn)
+    peer_accounts = {outflow.id: outflow.account_id, inflow.id: inflow.account_id}
+    return TransferResponse(
+        from_transaction=_to_response(outflow, peer_accounts),
+        to_transaction=_to_response(inflow, peer_accounts),
+    )
+
+
+@router.delete("/{txn_id}/transfer-link", status_code=status.HTTP_204_NO_CONTENT)
+async def unlink_transfer(
+    txn_id: int, db: DbSession, current_user: CurrentUser
+) -> None:
+    """Break a transfer pair, keeping both transactions.
+
+    ``DELETE /{txn_id}`` drops both legs, which is right for a transfer the user
+    typed but wrong for two the bank imported — those are real records that the
+    next sync would re-import anyway. Unlinking leaves two ordinary
+    uncategorized rows behind.
+    """
+    txn = await _owned_transaction(db, current_user.id, txn_id)
+    if txn.transfer_peer_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="That transaction isn't part of a transfer.",
+        )
+    peer = await db.get(Transaction, txn.transfer_peer_id)
+    txn.transfer_peer_id = None
+    if peer is not None:
+        peer.transfer_peer_id = None
+    await db.commit()
+
+
 @router.post("", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
 async def create_transaction(
     payload: TransactionCreate, db: DbSession, current_user: CurrentUser
@@ -274,17 +463,21 @@ async def update_transaction(
     if payload.amount_cents is not None:
         txn.amount_cents = payload.amount_cents
 
-    if peer is not None:
-        # Date and amount define the transfer itself and must agree across the
-        # pair; payee and memo are per-leg annotations and stay where typed.
-        if payload.date is not None:
-            peer.date = payload.date
-        if payload.amount_cents is not None:
-            peer.amount_cents = -payload.amount_cents
+    # Amount is the one field that defines the transfer itself: the legs must
+    # stay equal and opposite or the budget math, which excludes both rather
+    # than summing them, starts inventing money.
+    #
+    # Date is deliberately *not* mirrored. Two legs linked from bank imports each
+    # carry their own bank's booking date — money leaves on the 31st and lands on
+    # the 2nd — and the edit modal submits every field on every save, so
+    # mirroring would overwrite the peer's real date on an unrelated memo edit.
+    # Payee and memo are per-leg for the same reason.
+    if peer is not None and payload.amount_cents is not None:
+        peer.amount_cents = -payload.amount_cents
 
     await db.commit()
     await db.refresh(txn)
-    return _to_response(txn, await _peer_accounts(db, [txn]))
+    return _to_response(txn, await load_peer_account_ids(db, [txn]))
 
 
 @router.delete("/{txn_id}", status_code=status.HTTP_204_NO_CONTENT)
