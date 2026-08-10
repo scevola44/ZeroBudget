@@ -103,15 +103,24 @@ Implemented:
   `frontend/src/pages/InsightsPage.tsx`). See Phase 5.
 - Responsive layout with dark mode (`darkMode: "media"`), mobile off-canvas nav.
 
-Not implemented (the gap this roadmap closes): transfers, full transaction
-editing in the UI, account/category management gaps, payees, splits,
+Not implemented (the gap this roadmap closes): payees, splits,
 search/bulk edit, move-money/auto-assign, scheduled transactions, net worth
 over time, generic CSV import, import matching, settings/auth hardening,
 cleared/reconciliation, credit-card budgeting.
 
+Phase 1 closed the rest: transfers are linked transaction pairs
+(`transfer_peer_id`, `POST /api/transactions/transfer`), every transaction
+field is editable from both transaction surfaces, accounts can be renamed,
+retyped, rescoped and closed, and categories can be deleted with optional
+reassignment of their transactions.
+
 ---
 
-## Phase 1 — Ledger completeness: transfers, full transaction editing, entity management
+## Phase 1 — Ledger completeness: transfers, full transaction editing, entity management ✅ **Done**
+
+> Shipped in the release cut from the PR that closed this phase. Two
+> decisions were settled during implementation and are recorded under
+> "Decisions taken" below.
 
 **Goal**: everything a user records in real life can be recorded correctly,
 and every entity the API can mutate is manageable from the UI.
@@ -166,11 +175,29 @@ a typo) is the most painful daily friction.
    keep `NULL` category (FK is `ON DELETE SET NULL`) — surface a
    YNAB-style "reassign transactions to another category first?" prompt.
 
+### Decisions taken
+
+1. **The RTA rule as originally written was self-contradictory.** Work item 1
+   said transfer legs "never count as inflow, regardless of sign" while also
+   requiring a cross-scope transfer to move RTA between pools — those cannot
+   both hold. Settled: a leg feeds RTA **only when its peer is in a different
+   scope**. Same-scope pairs are excluded outright; cross-scope pairs move
+   money between pools as specified. `budget_calc.feeds_ready_to_assign` is
+   the single definition, and `insights_calc._is_internal_transfer` applies
+   the same split, so the pinned Insights/Budget reconciliation still holds.
+   Both routers build their rows through `services/txn_rows.py` to keep the
+   two from drifting.
+2. **[owner decision] on account deletion: a `closed` flag.** Closing hides
+   the account and keeps its transactions, so past months are untouched.
+   `DELETE` is refused when an account has transactions.
+3. The migrations landed as **`0007`** (transfer peer) and **`0008`**
+   (account closed) — `0006` was already taken by `bank_auth_request_scope`.
+
 ### Acceptance criteria
 
 - Creating a transfer creates two linked legs; deleting/editing one keeps the
-  pair consistent; transfer legs never appear in RTA inflow
-  (pinned in `test_budget_calc.py` + router tests).
+  pair consistent; same-scope transfer legs never appear in RTA inflow
+  (pinned in `test_budget_calc.py` + `test_transfers.py`).
 - Same-scope transfer leaves both scopes' RTA unchanged; cross-scope transfer
   moves RTA between pools by exactly the amount.
 - Every transaction field is editable from both transaction surfaces.
@@ -353,13 +380,14 @@ Reflect tab, scope-aware. Called **Insights**, not Reports: `/insights`,
   derived, per invariant 4).
 - **Age of Money** (YNAB's FIFO days-between-inflow-and-outflow).
 
-### Known limitation
+### Resolved in Phase 1
 
-Transfers are still two untagged uncategorized transactions (Phase 1), so the
-receiving leg reads as income and the sending leg as uncategorized spending.
-The uncategorized bucket is labelled "Uncategorized (incl. transfers)" to be
-honest about it. Once transfer legs carry a marker, excluding them is a single
-filter in `insights_calc.py` — there is a `TODO(phase-1)` on it.
+Transfers used to be two untagged uncategorized transactions, so the receiving
+leg read as income and the sending leg as uncategorized spending. Legs now
+carry `transfer_peer_id`, and `insights_calc._is_internal_transfer` drops both
+legs of a same-scope transfer from every figure on the page. A **cross-scope**
+transfer still appears — it genuinely moves money between pools — so the
+bucket is labelled "Uncategorized (incl. cross-scope transfers)".
 
 ### Acceptance criteria
 
