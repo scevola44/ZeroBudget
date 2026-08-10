@@ -117,6 +117,11 @@ class ScopeOverspending(BaseModel):
 
 
 class Overspending(BaseModel):
+    # The rule these rows were selected by. Returned so the page can state it
+    # exactly instead of hardcoding numbers that would drift from the service.
+    threshold_pct: float
+    min_notable_cents: int
+    min_baseline_months: int
     personal: ScopeOverspending
     shared: ScopeOverspending
 

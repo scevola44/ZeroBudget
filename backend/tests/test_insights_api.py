@@ -128,6 +128,38 @@ async def test_period_reports_the_baseline_window_it_compared_against(
 
 
 @pytest.mark.asyncio
+async def test_overspending_publishes_the_rule_it_selected_rows_by(
+    client: AsyncClient,
+):
+    """The page states the rule in its footnote; it must read it, not guess it."""
+    headers = await register_user(client)
+
+    overspending = (await _get_insights(client, headers)).json()["overspending"]
+
+    assert overspending["threshold_pct"] == 10.0
+    assert overspending["min_notable_cents"] == 1_000
+    assert overspending["min_baseline_months"] == 3
+
+
+@pytest.mark.asyncio
+async def test_a_trivial_dip_into_the_red_is_not_reported(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    groceries = await create_category(client, headers, group, "Groceries")
+
+    await _assign(client, headers, APRIL, groceries, 24_700)
+    await _post_transaction(client, headers, account, -25_000, "2026-04-05", groceries)
+
+    overspending = (await _get_insights(client, headers)).json()["overspending"][
+        "personal"
+    ]
+
+    assert overspending["categories"] == []
+    assert overspending["on_track_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_personal_and_family_spending_are_reported_separately(
     client: AsyncClient,
 ):

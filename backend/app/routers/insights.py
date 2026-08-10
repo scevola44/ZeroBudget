@@ -30,6 +30,9 @@ from app.services.budget_calc import (
     parse_month,
 )
 from app.services.insights_calc import (
+    MIN_BASELINE_MONTHS,
+    MIN_NOTABLE_CENTS,
+    OVERSPEND_THRESHOLD_PCT,
     CategoryTrend,
     MonthRange,
     ScopeSpending,
@@ -209,7 +212,11 @@ async def get_insights(
             personal=flow_for(PERSONAL), shared=flow_for(SHARED)
         ),
         overspending=Overspending(
-            personal=overspending_for(PERSONAL), shared=overspending_for(SHARED)
+            threshold_pct=OVERSPEND_THRESHOLD_PCT,
+            min_notable_cents=MIN_NOTABLE_CENTS,
+            min_baseline_months=MIN_BASELINE_MONTHS,
+            personal=overspending_for(PERSONAL),
+            shared=overspending_for(SHARED),
         ),
     )
 

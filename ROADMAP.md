@@ -337,8 +337,15 @@ Reflect tab, scope-aware. Called **Insights**, not Reports: `/insights`,
   the period, counting only months at or after a category's first activity
   and requiring at least three. Median because one annual bill in the window
   would otherwise make every ordinary month read as far below usual.
-- The threshold is a strict `> 10%`. Available balances are walked month by
-  month, so a category that dipped mid-period is still reported.
+- A flag needs **both** a proportion and an amount: strictly above 10% *and*
+  at least `MIN_NOTABLE_CENTS` (€10) per month of the period. The percentage
+  governs large categories, the floor governs small ones, where 10% of a €20
+  habit is two euros. The same floor gates the negative-balance flag, so a few
+  euros overdrawn and covered the next month doesn't bury the real problems.
+  The rule is returned on the response so the page states it rather than
+  hardcoding numbers that would drift.
+- Available balances are walked month by month, so a category that dipped
+  mid-period is still reported.
 
 ### Not shipped — follow-up
 

@@ -431,6 +431,103 @@ def test_exactly_ten_percent_above_usual_does_not_flag():
     assert trend.flags == ()
 
 
+def test_a_small_category_needs_a_notable_amount_not_just_a_percentage():
+    """10% of a €20 habit is two euros — not worth interrupting anyone over."""
+    transactions = _steady_spending(2_000, BASELINE_MONTHS) + [
+        _txn(category_id=GROCERIES, date=date(2026, 4, 5), amount_cents=-2_600)
+    ]
+    assignments = _funding(2_000, BASELINE_MONTHS) + _funding(2_600, [_month(2026, 4)])
+
+    trend = compute_category_trends([GROCERIES], transactions, assignments, PERIOD)[
+        GROCERIES
+    ]
+
+    assert trend.spent_delta_pct == 30.0
+    assert trend.flags == ()
+
+
+def test_a_small_category_over_by_a_notable_amount_is_flagged():
+    transactions = _steady_spending(2_000, BASELINE_MONTHS) + [
+        _txn(category_id=GROCERIES, date=date(2026, 4, 5), amount_cents=-3_100)
+    ]
+    assignments = _funding(2_000, BASELINE_MONTHS) + _funding(3_100, [_month(2026, 4)])
+
+    trend = compute_category_trends([GROCERIES], transactions, assignments, PERIOD)[
+        GROCERIES
+    ]
+
+    assert SPENT_ABOVE_USUAL in trend.flags
+
+
+def test_the_notable_floor_scales_with_the_length_of_the_period():
+    """€10 a month, so a three-month range needs €30 before it counts."""
+    period = _range(_month(2026, 4), _month(2026, 6))
+    period_months = [_month(2026, 4), _month(2026, 5), _month(2026, 6)]
+    transactions = _steady_spending(2_000, BASELINE_MONTHS) + _steady_spending(
+        2_900, period_months
+    )
+    assignments = _funding(2_000, BASELINE_MONTHS) + _funding(2_900, period_months)
+
+    trend = compute_category_trends([GROCERIES], transactions, assignments, period)[
+        GROCERIES
+    ]
+
+    # €87 against a €60 norm is +45%, but only €27 over three months.
+    assert trend.spent_delta_cents == 2_700
+    assert trend.flags == ()
+
+
+def test_a_large_category_still_flags_on_the_percentage_alone():
+    transactions = _steady_spending(50_000, BASELINE_MONTHS) + [
+        _txn(category_id=GROCERIES, date=date(2026, 4, 5), amount_cents=-56_000)
+    ]
+    assignments = _funding(50_000, BASELINE_MONTHS) + _funding(
+        56_000, [_month(2026, 4)]
+    )
+
+    trend = compute_category_trends([GROCERIES], transactions, assignments, PERIOD)[
+        GROCERIES
+    ]
+
+    assert trend.spent_delta_pct == 12.0
+    assert SPENT_ABOVE_USUAL in trend.flags
+
+
+def test_a_trivial_dip_into_the_red_is_not_flagged():
+    period = _range(_month(2026, 4), _month(2026, 4))
+    assignments = [
+        _assign(category_id=GROCERIES, month=_month(2026, 4), amount_cents=24_700)
+    ]
+    transactions = [
+        _txn(category_id=GROCERIES, date=date(2026, 4, 5), amount_cents=-25_000)
+    ]
+
+    trend = compute_category_trends([GROCERIES], transactions, assignments, period)[
+        GROCERIES
+    ]
+
+    assert trend.worst_balance_cents == -300
+    assert trend.worst_balance_month is None
+    assert trend.flags == ()
+
+
+def test_a_dormant_category_needs_notable_spending_to_count_as_new():
+    assignments = [
+        _assign(category_id=GROCERIES, month=month, amount_cents=10_000)
+        for month in BASELINE_MONTHS
+    ] + _funding(10_000, [_month(2026, 4)])
+    transactions = [
+        _txn(category_id=GROCERIES, date=date(2026, 4, 5), amount_cents=-200)
+    ]
+
+    trend = compute_category_trends([GROCERIES], transactions, assignments, PERIOD)[
+        GROCERIES
+    ]
+
+    assert trend.expected_spent_cents == 0
+    assert NEW_SPENDING not in trend.flags
+
+
 def test_spending_below_usual_is_not_flagged():
     transactions = _steady_spending(10_000, BASELINE_MONTHS) + [
         _txn(category_id=GROCERIES, date=date(2026, 4, 5), amount_cents=-5_000)

@@ -44,6 +44,11 @@ BASELINE_WINDOW_MONTHS = 6
 MIN_BASELINE_MONTHS = 3
 # How far above the norm counts as "not planned for".
 OVERSPEND_THRESHOLD_PCT = 10.0
+# The smallest amount of money worth drawing attention to. A bare percentage
+# rule is too twitchy at the small end — 10% of a €20 habit is two euros — and a
+# bare euro floor is meaningless at the large end. Every flag therefore needs
+# both: the percentage governs big categories, this floor governs small ones.
+MIN_NOTABLE_CENTS = 1_000
 
 SPENT_ABOVE_USUAL = "spent_above_usual"
 ASSIGNED_ABOVE_USUAL = "assigned_above_usual"
@@ -354,6 +359,7 @@ def compute_category_trends(
                 expected_spent=expected_spent,
                 baseline_month_count=len(observed),
                 worst_balance_cents=worst_balance,
+                period_month_count=period.month_count,
             ),
         )
     return trends
@@ -465,6 +471,9 @@ def _worst_balance(
     "Went negative" means dipped: a category that blew up in March and was
     covered in April still deserves the mention. Rollover from before the period
     is included, matching ``compute_category_balances``.
+
+    The month is only reported when the dip clears ``dipped_negative``, so the
+    figure the UI shows and the flag it shows it for always agree.
     """
     balance = opening_cents
     worst = balance
@@ -474,7 +483,7 @@ def _worst_balance(
         if balance < worst or month == period.start:
             worst = balance
             worst_month = month
-    return worst, worst_month if worst < 0 else None
+    return worst, worst_month if dipped_negative(worst) else None
 
 
 def _flags(
@@ -485,21 +494,45 @@ def _flags(
     expected_spent: int | None,
     baseline_month_count: int,
     worst_balance_cents: int,
+    period_month_count: int,
 ) -> tuple[str, ...]:
     flags: list[str] = []
     if baseline_month_count >= MIN_BASELINE_MONTHS:
-        if _above_norm(spent_cents, expected_spent):
+        if _above_norm(spent_cents, expected_spent, period_month_count):
             flags.append(SPENT_ABOVE_USUAL)
-        elif expected_spent == 0 and spent_cents > 0:
+        elif expected_spent == 0 and spent_cents >= MIN_NOTABLE_CENTS:
             flags.append(NEW_SPENDING)
-        if _above_norm(assigned_cents, expected_assigned):
+        if _above_norm(assigned_cents, expected_assigned, period_month_count):
             flags.append(ASSIGNED_ABOVE_USUAL)
-    if worst_balance_cents < 0:
+    if dipped_negative(worst_balance_cents):
         flags.append(AVAILABLE_NEGATIVE)
     return tuple(flags)
 
 
-def _above_norm(actual_cents: int, expected_cents: int | None) -> bool:
-    """Strictly above the threshold — exactly 10% over does not count."""
-    delta_pct = _delta_pct(actual_cents, expected_cents)
-    return delta_pct is not None and delta_pct > OVERSPEND_THRESHOLD_PCT
+def _above_norm(
+    actual_cents: int, expected_cents: int | None, period_month_count: int
+) -> bool:
+    """Above the norm by both a proportion and an amount worth mentioning.
+
+    The trigger is ``max(MIN_NOTABLE_CENTS per month, OVERSPEND_THRESHOLD_PCT)``.
+    The floor scales with the period because the norm does: over six months it
+    means "at least €10 a month above usual on average", which is the same
+    judgement a one-month range makes.
+
+    Strictly above, so exactly 10% over does not count.
+    """
+    if expected_cents is None or expected_cents <= 0:
+        return False
+    delta_cents = actual_cents - expected_cents
+    proportional_trigger = expected_cents * OVERSPEND_THRESHOLD_PCT / 100
+    absolute_trigger = MIN_NOTABLE_CENTS * period_month_count
+    return delta_cents > max(proportional_trigger, absolute_trigger)
+
+
+def dipped_negative(worst_balance_cents: int) -> bool:
+    """Whether a balance went far enough into the red to be worth reporting.
+
+    A few euros overdrawn for a fortnight and covered the next month is not
+    overspending, and listing it buries the categories that are.
+    """
+    return worst_balance_cents <= -MIN_NOTABLE_CENTS

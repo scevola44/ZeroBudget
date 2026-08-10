@@ -177,7 +177,15 @@ export type Insights = {
   period: InsightsPeriod;
   breakdown: SpendingBreakdown;
   income_vs_spending: { personal: ScopeFlow; shared: ScopeFlow };
-  overspending: { personal: ScopeOverspending; shared: ScopeOverspending };
+  overspending: Overspending;
+};
+
+export type Overspending = {
+  threshold_pct: number;
+  min_notable_cents: number;
+  min_baseline_months: number;
+  personal: ScopeOverspending;
+  shared: ScopeOverspending;
 };
 
 export type YnabImportRow = { group: string; category: string };

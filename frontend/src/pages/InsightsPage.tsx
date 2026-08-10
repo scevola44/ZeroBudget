@@ -489,9 +489,16 @@ function LegendSwatch({ className, label }: { className: string; label: string }
 // ---------------------------------------------------------------------------
 
 function OverspendingSection({ insights }: { insights: Insights }) {
-  const { personal, shared } = insights.overspending;
+  const {
+    personal,
+    shared,
+    threshold_pct: thresholdPct,
+    min_notable_cents: minNotableCents,
+    min_baseline_months: minBaselineMonths,
+  } = insights.overspending;
   const { baseline_start_month: baselineStart, baseline_end_month: baselineEnd } =
     insights.period;
+  const floor = formatCents(minNotableCents);
 
   return (
     <section className="space-y-4">
@@ -502,8 +509,11 @@ function OverspendingSection({ insights }: { insights: Insights }) {
       </div>
       <p className={`text-xs ${MUTED_CLASS}`}>
         "Usual" is a typical month between {monthLabel(baselineStart)} and{" "}
-        {monthLabel(baselineEnd)}. Categories with less than three months of history
-        there are only listed when their Available balance went negative.
+        {monthLabel(baselineEnd)}. A category is listed when it runs more than{" "}
+        {Math.round(thresholdPct)}% <em>and</em> at least {floor} a month above that,
+        or when its Available balance dipped {floor} or more into the red. Categories
+        with less than {minBaselineMonths} months of history there are only listed for
+        a negative balance.
       </p>
     </section>
   );
