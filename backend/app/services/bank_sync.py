@@ -32,6 +32,7 @@ from app.services.bank_amount import (
 )
 from app.services.banking_client import BankingClient, BankingError
 from app.services.encryption import decrypt
+from app.services.payees import resolve_payee
 from app.services.synthetic_payees import OPENING_BALANCE_PAYEE
 
 logger = logging.getLogger(__name__)
@@ -201,6 +202,8 @@ async def _import_opening_balance(
             # Sorts before every transaction imported by this sync's window.
             date=date_from - timedelta(days=1),
             payee=OPENING_BALANCE_PAYEE,
+            # payee_id left NULL: this describes a bookkeeping reconciliation,
+            # not a real counterparty (see services.payees.resolve_payee).
             memo=(
                 "Balance imported from the bank on connection; covers transactions "
                 "older than the sync window."
@@ -301,12 +304,14 @@ async def sync_connection(
             ).scalar_one_or_none()
 
             if existing is None:
+                payee = _payee(txn)
                 db.add(
                     Transaction(
                         user_id=connection.user_id,
                         account_id=account.id,
                         date=txn_date,
-                        payee=_payee(txn),
+                        payee=payee,
+                        payee_id=await resolve_payee(db, connection.user_id, payee),
                         memo="",
                         amount_cents=amount_cents,
                         external_transaction_id=external_id,

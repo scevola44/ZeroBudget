@@ -487,6 +487,46 @@ async def test_transfer_from_checking_to_savings_does_not_move_ready_to_assign(
 
 
 @pytest.mark.asyncio
+async def test_split_transaction_activity_lands_per_category(client: AsyncClient):
+    """End-to-end proof that the txn_rows flattening design works: a split
+    transaction's lines show up as each category's own activity on the
+    budget page, not lumped under one category or missing entirely."""
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    groceries = await create_category(client, headers, group, "Groceries")
+    fuel = await create_category(client, headers, group, "Fuel")
+
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": account,
+            "date": "2026-04-05",
+            "payee": "Supermarket",
+            "memo": "",
+            "amount_cents": -10_000,
+            "splits": [
+                {"category_id": groceries, "amount_cents": -7_000, "memo": ""},
+                {"category_id": fuel, "amount_cents": -3_000, "memo": ""},
+            ],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    rows = {c["name"]: c for g in body["groups"] for c in g["categories"]}
+    assert rows["Groceries"]["activity_cents"] == -7_000
+    assert rows["Groceries"]["balance_cents"] == -7_000
+    assert rows["Fuel"]["activity_cents"] == -3_000
+    assert rows["Fuel"]["balance_cents"] == -3_000
+    # Uncategorized inflow only comes from the parent's own category_id being
+    # NULL — a split transaction must not also count itself as inflow.
+    assert body["personal_ready_to_assign_cents"] == 100_000
+
+
+@pytest.mark.asyncio
 async def test_categorized_transaction_in_savings_account_still_funds_its_category_balance(
     client: AsyncClient,
 ):

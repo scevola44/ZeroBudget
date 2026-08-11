@@ -37,7 +37,8 @@ async def test_list_empty(client: AsyncClient):
     headers = await register_user(client)
     r = await client.get("/api/transactions", headers=headers)
     assert r.status_code == 200
-    assert r.json() == []
+    assert r.json()["items"] == []
+    assert r.json()["total"] == 0
 
 
 @pytest.mark.asyncio
@@ -52,7 +53,7 @@ async def test_filter_by_account(client: AsyncClient):
 
     r = await client.get(f"/api/transactions?account_id={a1}", headers=headers)
     assert r.status_code == 200
-    amounts = sorted(t["amount_cents"] for t in r.json())
+    amounts = sorted(t["amount_cents"] for t in r.json()["items"])
     assert amounts == [1000, 2000]
 
 
@@ -68,8 +69,141 @@ async def test_filter_by_month(client: AsyncClient):
     await _add_txn(client, headers, account_id=a, date="2026-05-01", amount=500)
 
     r = await client.get("/api/transactions?month=2026-04", headers=headers)
-    amounts = sorted(t["amount_cents"] for t in r.json())
+    amounts = sorted(t["amount_cents"] for t in r.json()["items"])
     assert amounts == [200, 300, 400]
+
+
+@pytest.mark.asyncio
+async def test_filter_by_repeated_account_id(client: AsyncClient):
+    headers = await register_user(client)
+    a1 = await create_account(client, headers, "A1")
+    a2 = await create_account(client, headers, "A2")
+    a3 = await create_account(client, headers, "A3")
+
+    await _add_txn(client, headers, account_id=a1, date="2026-04-01", amount=1000)
+    await _add_txn(client, headers, account_id=a2, date="2026-04-02", amount=2000)
+    await _add_txn(client, headers, account_id=a3, date="2026-04-03", amount=3000)
+
+    r = await client.get(f"/api/transactions?account_id={a1}&account_id={a2}", headers=headers)
+    assert r.status_code == 200
+    amounts = sorted(t["amount_cents"] for t in r.json()["items"])
+    assert amounts == [1000, 2000]
+
+
+@pytest.mark.asyncio
+async def test_pagination_limit_and_offset(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    for i in range(5):
+        await _add_txn(client, headers, account_id=a, date=f"2026-04-0{i + 1}", amount=100 + i)
+
+    r = await client.get("/api/transactions?limit=2&offset=0", headers=headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 5
+    assert len(body["items"]) == 2
+    # order_by(date.desc()) puts the most recent first.
+    assert [t["amount_cents"] for t in body["items"]] == [104, 103]
+
+    r = await client.get("/api/transactions?limit=2&offset=2", headers=headers)
+    body = r.json()
+    assert body["total"] == 5
+    assert [t["amount_cents"] for t in body["items"]] == [102, 101]
+
+    r = await client.get("/api/transactions?limit=2&offset=4", headers=headers)
+    body = r.json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["amount_cents"] == 100
+
+
+@pytest.mark.asyncio
+async def test_search_matches_payee_or_memo(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=-100, payee="Aldi Market")
+    lidl_id = await _add_txn(client, headers, account_id=a, date="2026-04-02", amount=-200, payee="Lidl")
+
+    r = await client.patch(
+        f"/api/transactions/{lidl_id}",
+        json={"memo": "weekly groceries at aldi"},
+        headers=headers,
+    )
+    assert r.status_code == 200
+
+    r = await client.get("/api/transactions?q=aldi", headers=headers)
+    assert r.status_code == 200
+    payees = {t["payee"] for t in r.json()["items"]}
+    assert payees == {"Aldi Market", "Lidl"}  # payee match + memo match
+
+    r = await client.get("/api/transactions?q=nonexistent", headers=headers)
+    assert r.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_category_filter_matches_split_lines_too(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    groceries = await create_category(client, headers, g, "Groceries")
+    fuel = await create_category(client, headers, g, "Fuel")
+
+    await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=-1000, category_id=groceries)
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "date": "2026-04-02",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -3000,
+            "splits": [
+                {"category_id": fuel, "amount_cents": -2000, "memo": ""},
+                {"category_id": groceries, "amount_cents": -1000, "memo": ""},
+            ],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201
+
+    r = await client.get(f"/api/transactions?category_id={groceries}", headers=headers)
+    assert r.status_code == 200
+    assert r.json()["total"] == 2  # the plain transaction and the split line
+
+    r = await client.get(f"/api/transactions?category_id={fuel}", headers=headers)
+    assert r.json()["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_uncategorized_filter_excludes_split_parents(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    c1 = await create_category(client, headers, g, "A")
+    c2 = await create_category(client, headers, g, "B")
+
+    await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=100000)  # uncategorized inflow
+    await _add_txn(client, headers, account_id=a, date="2026-04-02", amount=-500, category_id=c1)
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "date": "2026-04-03",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -3000,
+            "splits": [
+                {"category_id": c1, "amount_cents": -2000, "memo": ""},
+                {"category_id": c2, "amount_cents": -1000, "memo": ""},
+            ],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201
+
+    r = await client.get("/api/transactions?uncategorized=true", headers=headers)
+    assert r.status_code == 200
+    assert r.json()["total"] == 1
+    assert r.json()["items"][0]["amount_cents"] == 100000
 
 
 @pytest.mark.asyncio
@@ -183,7 +317,7 @@ async def test_delete_transaction(client: AsyncClient):
 
     r = await client.delete(f"/api/transactions/{txn_id}", headers=headers)
     assert r.status_code == 204
-    assert (await client.get("/api/transactions", headers=headers)).json() == []
+    assert (await client.get("/api/transactions", headers=headers)).json()["items"] == []
 
 
 @pytest.mark.asyncio
@@ -221,6 +355,281 @@ async def test_category_suggestions_span_all_of_the_users_accounts(client: Async
     )
     assert r.status_code == 200
     assert r.json() == [groceries]
+
+
+@pytest.mark.asyncio
+async def test_create_split_transaction(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    groceries = await create_category(client, headers, g, "Groceries")
+    fuel = await create_category(client, headers, g, "Fuel")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "category_id": None,
+            "date": "2026-04-01",
+            "payee": "Supermarket",
+            "memo": "",
+            "amount_cents": -10000,
+            "splits": [
+                {"category_id": groceries, "amount_cents": -7000, "memo": "food"},
+                {"category_id": fuel, "amount_cents": -3000, "memo": "gas"},
+            ],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["category_id"] is None
+    assert len(body["splits"]) == 2
+    assert {s["category_id"] for s in body["splits"]} == {groceries, fuel}
+    assert sum(s["amount_cents"] for s in body["splits"]) == -10000
+
+
+@pytest.mark.asyncio
+async def test_split_sum_mismatch_is_rejected(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    c1 = await create_category(client, headers, g, "A")
+    c2 = await create_category(client, headers, g, "B")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -10000,
+            "splits": [
+                {"category_id": c1, "amount_cents": -7000, "memo": ""},
+                {"category_id": c2, "amount_cents": -2000, "memo": ""},
+            ],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_single_line_split_is_rejected(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    c1 = await create_category(client, headers, g, "A")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -10000,
+            "splits": [{"category_id": c1, "amount_cents": -10000, "memo": ""}],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_category_and_splits_together_is_rejected(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    c1 = await create_category(client, headers, g, "A")
+    c2 = await create_category(client, headers, g, "B")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "category_id": c1,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -10000,
+            "splits": [
+                {"category_id": c1, "amount_cents": -5000, "memo": ""},
+                {"category_id": c2, "amount_cents": -5000, "memo": ""},
+            ],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_split_scope_mismatch_is_rejected(client: AsyncClient):
+    headers = await register_user(client)
+    personal_account = await create_account(client, headers, "Checking", scope="personal")
+    personal_group = await create_group(client, headers, "Bills", scope="personal")
+    shared_group = await create_group(client, headers, "Family", scope="shared")
+    c1 = await create_category(client, headers, personal_group, "A")
+    c2 = await create_category(client, headers, shared_group, "B")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": personal_account,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -10000,
+            "splits": [
+                {"category_id": c1, "amount_cents": -5000, "memo": ""},
+                {"category_id": c2, "amount_cents": -5000, "memo": ""},
+            ],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_splitting_a_transfer_leg_is_rejected(client: AsyncClient):
+    headers = await register_user(client)
+    a1 = await create_account(client, headers, "A1")
+    a2 = await create_account(client, headers, "A2")
+    g = await create_group(client, headers)
+    c1 = await create_category(client, headers, g, "A")
+    c2 = await create_category(client, headers, g, "B")
+
+    r = await client.post(
+        "/api/transactions/transfer",
+        json={"from_account_id": a1, "to_account_id": a2, "amount_cents": 10000, "date": "2026-04-01"},
+        headers=headers,
+    )
+    assert r.status_code == 201
+    leg_id = r.json()["from_transaction"]["id"]
+
+    r = await client.patch(
+        f"/api/transactions/{leg_id}",
+        json={
+            "splits": [
+                {"category_id": c1, "amount_cents": -5000, "memo": ""},
+                {"category_id": c2, "amount_cents": -5000, "memo": ""},
+            ]
+        },
+        headers=headers,
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_can_replace_and_clear_splits(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    c1 = await create_category(client, headers, g, "A")
+    c2 = await create_category(client, headers, g, "B")
+    c3 = await create_category(client, headers, g, "C")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -10000,
+            "splits": [
+                {"category_id": c1, "amount_cents": -6000, "memo": ""},
+                {"category_id": c2, "amount_cents": -4000, "memo": ""},
+            ],
+        },
+        headers=headers,
+    )
+    txn_id = r.json()["id"]
+
+    # Replace with a different split.
+    r = await client.patch(
+        f"/api/transactions/{txn_id}",
+        json={"splits": [
+            {"category_id": c3, "amount_cents": -3000, "memo": ""},
+            {"category_id": c1, "amount_cents": -7000, "memo": ""},
+        ]},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert len(r.json()["splits"]) == 2
+    assert {s["category_id"] for s in r.json()["splits"]} == {c1, c3}
+
+    # Clear splits entirely -> reverts to a plain, uncategorized transaction.
+    r = await client.patch(f"/api/transactions/{txn_id}", json={"splits": []}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["splits"] == []
+    assert r.json()["category_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_setting_category_alone_on_a_split_transaction_is_rejected(client: AsyncClient):
+    """A category_id-only PATCH (the transaction table's quick inline picker)
+    must not silently categorize a still-split transaction — that would leave
+    category_id non-null alongside live split rows."""
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    c1 = await create_category(client, headers, g, "A")
+    c2 = await create_category(client, headers, g, "B")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -10000,
+            "splits": [
+                {"category_id": c1, "amount_cents": -6000, "memo": ""},
+                {"category_id": c2, "amount_cents": -4000, "memo": ""},
+            ],
+        },
+        headers=headers,
+    )
+    txn_id = r.json()["id"]
+
+    r = await client.patch(
+        f"/api/transactions/{txn_id}", json={"category_id": c1}, headers=headers
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_updating_unrelated_field_preserves_existing_splits(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    c1 = await create_category(client, headers, g, "A")
+    c2 = await create_category(client, headers, g, "B")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -10000,
+            "splits": [
+                {"category_id": c1, "amount_cents": -6000, "memo": ""},
+                {"category_id": c2, "amount_cents": -4000, "memo": ""},
+            ],
+        },
+        headers=headers,
+    )
+    txn_id = r.json()["id"]
+
+    r = await client.patch(f"/api/transactions/{txn_id}", json={"memo": "updated"}, headers=headers)
+    assert r.status_code == 200
+    assert r.json()["memo"] == "updated"
+    assert len(r.json()["splits"]) == 2
 
 
 @pytest.mark.asyncio

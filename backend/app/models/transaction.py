@@ -23,6 +23,13 @@ class Transaction(Base):
     )
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     payee: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # TODO(payee-string-cleanup): normalized payee, added alongside the
+    # legacy ``payee`` string column above. Every write path keeps both in
+    # sync (see services/payees.resolve_payee) rather than dropping the
+    # string column in the same pass — see ROADMAP.md Phase 2 follow-up.
+    payee_id: Mapped[int | None] = mapped_column(
+        ForeignKey("payees.id", ondelete="SET NULL"), index=True, nullable=True
+    )
     memo: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     # Signed integer cents. Positive = inflow, negative = outflow.
     amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)

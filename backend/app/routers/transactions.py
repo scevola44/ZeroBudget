@@ -1,15 +1,22 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from app.deps import CurrentUser, DbSession
-from app.models import Account, Category, CategoryGroup, Transaction
+from app.models import Account, Category, CategoryGroup, Transaction, TransactionSplit
 from app.schemas.transaction import (
+    BulkCategoryRequest,
+    BulkCategoryResponse,
+    BulkDeleteRequest,
+    BulkDeleteResponse,
     TransactionCreate,
     TransactionImportRequest,
     TransactionImportResponse,
+    TransactionListResponse,
     TransactionResponse,
+    TransactionSplitInput,
+    TransactionSplitResponse,
     TransactionUpdate,
     TransferCandidate,
     TransferCreate,
@@ -19,6 +26,7 @@ from app.schemas.transaction import (
 )
 from app.services.budget_calc import month_start, next_month_start, parse_month
 from app.services.category_suggest import PayeeHistoryRow, suggest_categories
+from app.services.payees import resolve_payee
 from app.services.transfer_match import (
     SUGGESTION_DEFAULT_DAYS,
     TRANSFER_MATCH_WINDOW_DAYS,
@@ -26,12 +34,15 @@ from app.services.transfer_match import (
     find_candidates,
     suggest_pairs,
 )
-from app.services.txn_rows import load_peer_account_ids
+from app.services.txn_rows import load_peer_account_ids, load_splits_by_transaction_id
 
 router = APIRouter(prefix="/api/transactions", tags=["transactions"])
 
 # For rows that cannot be transfer legs, so ``_to_response`` has nothing to look up.
 NO_PEER_ACCOUNTS: dict[int, int] = {}
+# For rows known to have no splits (transfer legs, new rows before their own
+# splits are written), so ``_to_response`` has nothing to look up.
+NO_SPLITS: dict[int, list[TransactionSplit]] = {}
 
 
 def _to_match_row(txn: Transaction) -> MatchRow:
@@ -46,10 +57,24 @@ def _to_match_row(txn: Transaction) -> MatchRow:
     )
 
 
-def _to_response(txn: Transaction, peer_accounts: dict[int, int]) -> TransactionResponse:
+def _splits_to_response(splits: list[TransactionSplit]) -> list[TransactionSplitResponse]:
+    return [
+        TransactionSplitResponse(
+            id=s.id, category_id=s.category_id, amount_cents=s.amount_cents, memo=s.memo
+        )
+        for s in splits
+    ]
+
+
+def _to_response(
+    txn: Transaction,
+    peer_accounts: dict[int, int],
+    splits_by_txn_id: dict[int, list[TransactionSplit]] = NO_SPLITS,
+) -> TransactionResponse:
     response = TransactionResponse.model_validate(txn)
     if txn.transfer_peer_id is not None:
         response.transfer_peer_account_id = peer_accounts.get(txn.transfer_peer_id)
+    response.splits = _splits_to_response(splits_by_txn_id.get(txn.id, []))
     return response
 
 
@@ -96,30 +121,117 @@ async def _enforce_scope_match(
         )
 
 
-@router.get("", response_model=list[TransactionResponse])
+def _validate_splits(splits: list[TransactionSplitInput], final_amount_cents: int) -> None:
+    """Enforce the shape a set of split lines must have, independent of ownership.
+
+    A single-line "split" is just a categorized transaction, so two lines is
+    the floor. Amounts must sum exactly to the parent — the budget treats a
+    split transaction as its lines, not its total, so any mismatch would be
+    money the math silently drops or invents.
+    """
+    if len(splits) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A split needs at least two lines.",
+        )
+    if any(s.amount_cents == 0 for s in splits):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Split lines cannot be zero.",
+        )
+    total = sum(s.amount_cents for s in splits)
+    if total != final_amount_cents:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Split lines must sum to the transaction amount "
+                f"({final_amount_cents} cents), got {total}."
+            ),
+        )
+
+
+async def _has_splits(db, txn_id: int) -> bool:
+    return (
+        await db.scalar(
+            select(TransactionSplit.id).where(TransactionSplit.transaction_id == txn_id).limit(1)
+        )
+    ) is not None
+
+
+DEFAULT_PAGE_SIZE = 100
+MAX_PAGE_SIZE = 500
+
+
+@router.get("", response_model=TransactionListResponse)
 async def list_transactions(
     db: DbSession,
     current_user: CurrentUser,
-    account_id: int | None = Query(default=None),
+    account_id: list[int] | None = Query(
+        default=None, description="Repeatable: ?account_id=1&account_id=2"
+    ),
+    category_id: int | None = Query(
+        default=None, description="Matches a plain category_id or any split line's"
+    ),
+    uncategorized: bool = Query(
+        default=False, description="Parent category_id is NULL and it has no splits"
+    ),
+    q: str | None = Query(default=None, description="Case-insensitive match on payee or memo"),
     month: str | None = Query(default=None, description="YYYY-MM"),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-) -> list[TransactionResponse]:
-    stmt = select(Transaction).where(Transaction.user_id == current_user.id)
-    if account_id is not None:
-        stmt = stmt.where(Transaction.account_id == account_id)
+    limit: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
+) -> TransactionListResponse:
+    filters = [Transaction.user_id == current_user.id]
+    if account_id:
+        filters.append(Transaction.account_id.in_(account_id))
     if month is not None:
         start = month_start(parse_month(month))
         end = next_month_start(start)
-        stmt = stmt.where(Transaction.date >= start, Transaction.date < end)
+        filters.append(Transaction.date >= start)
+        filters.append(Transaction.date < end)
     if start_date is not None:
-        stmt = stmt.where(Transaction.date >= start_date)
+        filters.append(Transaction.date >= start_date)
     if end_date is not None:
-        stmt = stmt.where(Transaction.date <= end_date)
-    stmt = stmt.order_by(Transaction.date.desc(), Transaction.id.desc())
+        filters.append(Transaction.date <= end_date)
+
+    has_splits = (
+        select(TransactionSplit.id)
+        .where(TransactionSplit.transaction_id == Transaction.id)
+        .exists()
+    )
+    if uncategorized:
+        filters.append(Transaction.category_id.is_(None))
+        filters.append(~has_splits)
+    elif category_id is not None:
+        split_has_category = (
+            select(TransactionSplit.id)
+            .where(
+                TransactionSplit.transaction_id == Transaction.id,
+                TransactionSplit.category_id == category_id,
+            )
+            .exists()
+        )
+        filters.append(or_(Transaction.category_id == category_id, split_has_category))
+    if q:
+        pattern = f"%{q}%"
+        filters.append(or_(Transaction.payee.ilike(pattern), Transaction.memo.ilike(pattern)))
+
+    total = await db.scalar(select(func.count()).select_from(Transaction).where(*filters))
+    stmt = (
+        select(Transaction)
+        .where(*filters)
+        .order_by(Transaction.date.desc(), Transaction.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     rows = (await db.execute(stmt)).scalars().all()
     peer_accounts = await load_peer_account_ids(db, rows)
-    return [_to_response(r, peer_accounts) for r in rows]
+    splits_by_txn_id = await load_splits_by_transaction_id(db, rows)
+    return TransactionListResponse(
+        items=[_to_response(r, peer_accounts, splits_by_txn_id) for r in rows],
+        total=total or 0,
+    )
 
 
 @router.get("/category-suggestions", response_model=list[int])
@@ -201,6 +313,7 @@ async def import_transactions_from_ynab(
                 category_id=category_id,
                 date=row.date,
                 payee=row.payee,
+                payee_id=await resolve_payee(db, current_user.id, row.payee),
                 memo=row.memo,
                 amount_cents=row.amount_cents,
             )
@@ -230,6 +343,7 @@ async def create_transfer(
         )
     await _owned_account(db, current_user.id, payload.from_account_id)
     await _owned_account(db, current_user.id, payload.to_account_id)
+    payee_id = await resolve_payee(db, current_user.id, payload.payee)
 
     def _leg(account_id: int, amount_cents: int) -> Transaction:
         return Transaction(
@@ -238,6 +352,7 @@ async def create_transfer(
             category_id=None,
             date=payload.date,
             payee=payload.payee,
+            payee_id=payee_id,
             memo=payload.memo,
             amount_cents=amount_cents,
         )
@@ -395,6 +510,11 @@ async def link_transfer(
     so the missing leg is created instead of searched for.
     """
     txn = await _owned_transaction(db, current_user.id, txn_id)
+    if await _has_splits(db, txn.id):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A split transaction cannot be linked as a transfer leg.",
+        )
     if (payload.peer_transaction_id is None) == (payload.to_account_id is None):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -402,6 +522,11 @@ async def link_transfer(
         )
     if payload.peer_transaction_id is not None:
         peer = await _owned_transaction(db, current_user.id, payload.peer_transaction_id)
+        if await _has_splits(db, peer.id):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="A split transaction cannot be linked as a transfer leg.",
+            )
     else:
         target_account = await _owned_account(db, current_user.id, payload.to_account_id)
         peer = Transaction(
@@ -410,6 +535,7 @@ async def link_transfer(
             category_id=None,
             date=txn.date,
             payee=txn.payee,
+            payee_id=txn.payee_id,
             memo=txn.memo,
             amount_cents=-txn.amount_cents,
         )
@@ -466,24 +592,149 @@ async def create_transaction(
     payload: TransactionCreate, db: DbSession, current_user: CurrentUser
 ) -> TransactionResponse:
     await _owned_account(db, current_user.id, payload.account_id)
+    has_splits = bool(payload.splits)
+    if has_splits and payload.category_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot both categorize and split a transaction.",
+        )
     if payload.category_id is not None:
         await _owned_category(db, current_user.id, payload.category_id)
     await _enforce_scope_match(
         db, current_user.id, payload.account_id, payload.category_id
     )
+    if has_splits:
+        _validate_splits(payload.splits, payload.amount_cents)
+        for s in payload.splits:
+            if s.category_id is not None:
+                await _owned_category(db, current_user.id, s.category_id)
+            await _enforce_scope_match(db, current_user.id, payload.account_id, s.category_id)
+
     txn = Transaction(
         user_id=current_user.id,
         account_id=payload.account_id,
-        category_id=payload.category_id,
+        category_id=None if has_splits else payload.category_id,
         date=payload.date,
         payee=payload.payee,
+        payee_id=await resolve_payee(db, current_user.id, payload.payee),
         memo=payload.memo,
         amount_cents=payload.amount_cents,
     )
     db.add(txn)
+    await db.flush()
+
+    new_splits: list[TransactionSplit] = []
+    if has_splits:
+        new_splits = [
+            TransactionSplit(
+                user_id=current_user.id,
+                transaction_id=txn.id,
+                category_id=s.category_id,
+                amount_cents=s.amount_cents,
+                memo=s.memo,
+            )
+            for s in payload.splits
+        ]
+        db.add_all(new_splits)
+        await db.flush()
+
     await db.commit()
     await db.refresh(txn)
-    return TransactionResponse.model_validate(txn)
+    response = TransactionResponse.model_validate(txn)
+    response.splits = _splits_to_response(new_splits)
+    return response
+
+
+async def _delete_with_peer(db, txn: Transaction) -> int:
+    """Delete ``txn``, and its transfer peer too if it has one.
+
+    Shared by the single and bulk delete endpoints so transfer-pair
+    consistency (half a transfer is never a meaningful record) can't drift
+    between the two paths. Returns the number of rows actually removed (1 or
+    2), so a bulk delete can report an accurate count.
+    """
+    removed = 1
+    if txn.transfer_peer_id is not None:
+        # Break the links first so neither delete trips the other's foreign key.
+        peer = await db.get(Transaction, txn.transfer_peer_id)
+        txn.transfer_peer_id = None
+        if peer is not None:
+            peer.transfer_peer_id = None
+            await db.flush()
+            await db.delete(peer)
+            removed = 2
+    await db.delete(txn)
+    return removed
+
+
+# Registered ahead of the "/{txn_id}" routes below: FastAPI matches routes in
+# declaration order, and "bulk-category"/"bulk-delete" would otherwise be
+# captured by "{txn_id}" first and fail int conversion instead of reaching
+# these handlers.
+@router.patch("/bulk-category", response_model=BulkCategoryResponse)
+async def bulk_set_category(
+    payload: BulkCategoryRequest, db: DbSession, current_user: CurrentUser
+) -> BulkCategoryResponse:
+    """Set the same category on many transactions at once, all-or-nothing.
+
+    Ids that don't belong to the user are silently dropped (the UI never
+    hands us one it didn't itself list); every id that *is* owned must pass
+    every check before anything is written, so a bad row in the middle of a
+    big selection can't leave the batch half-applied.
+    """
+    txns: list[Transaction] = []
+    for txn_id in payload.transaction_ids:
+        txn = await db.get(Transaction, txn_id)
+        if txn is None or txn.user_id != current_user.id:
+            continue
+        txns.append(txn)
+
+    if payload.category_id is not None:
+        await _owned_category(db, current_user.id, payload.category_id)
+
+    for txn in txns:
+        if txn.transfer_peer_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Transaction {txn.id} is a transfer leg and cannot be categorized.",
+            )
+        if await _has_splits(db, txn.id):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Transaction {txn.id} is split and cannot be bulk-categorized.",
+            )
+        await _enforce_scope_match(db, current_user.id, txn.account_id, payload.category_id)
+
+    for txn in txns:
+        txn.category_id = payload.category_id
+
+    await db.commit()
+    return BulkCategoryResponse(updated=len(txns))
+
+
+@router.post("/bulk-delete", response_model=BulkDeleteResponse)
+async def bulk_delete_transactions(
+    payload: BulkDeleteRequest, db: DbSession, current_user: CurrentUser
+) -> BulkDeleteResponse:
+    """Delete many transactions at once. Ids that don't belong to the user
+    are silently dropped. Deleting one leg of a transfer pair drops both, same
+    as the single-delete endpoint — ``deleted`` counts actual rows removed, so
+    a pair counts as 2 even if only one leg's id was in the request."""
+    deleted = 0
+    already_deleted: set[int] = set()
+    for txn_id in payload.transaction_ids:
+        if txn_id in already_deleted:
+            continue
+        txn = await db.get(Transaction, txn_id)
+        if txn is None or txn.user_id != current_user.id:
+            continue
+        peer_id = txn.transfer_peer_id
+        deleted += await _delete_with_peer(db, txn)
+        already_deleted.add(txn_id)
+        if peer_id is not None:
+            already_deleted.add(peer_id)
+    await db.commit()
+    return BulkDeleteResponse(deleted=deleted)
 
 
 @router.patch("/{txn_id}", response_model=TransactionResponse)
@@ -506,6 +757,33 @@ async def update_transaction(
             detail="A transfer leg cannot be categorized. Delete the transfer instead.",
         )
 
+    splits_touched = "splits" in payload.model_fields_set
+    new_split_inputs = (payload.splits or []) if splits_touched else []
+    has_new_splits = splits_touched and len(new_split_inputs) > 0
+
+    if has_new_splits and peer is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A transfer leg cannot be split.",
+        )
+    if has_new_splits and payload.category_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot both categorize and split a transaction.",
+        )
+    if (
+        payload.category_id is not None
+        and not splits_touched
+        and await _has_splits(db, txn.id)
+    ):
+        # Setting category_id without touching splits would otherwise leave a
+        # split transaction with a non-null parent category — the invariant
+        # every other write path defends. Clear or replace the splits first.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This transaction is split — clear its splits before setting a single category.",
+        )
+
     if payload.account_id is not None:
         await _owned_account(db, current_user.id, payload.account_id)
         if peer is not None and payload.account_id == peer.account_id:
@@ -518,16 +796,65 @@ async def update_transaction(
         if payload.category_id is not None:
             await _owned_category(db, current_user.id, payload.category_id)
         txn.category_id = payload.category_id
+    if has_new_splits:
+        # Splits imply an uncategorized parent, regardless of what the
+        # category_id field said (or didn't say) above.
+        txn.category_id = None
     # Re-check scope match against the merged (account_id, category_id) pair.
     await _enforce_scope_match(db, current_user.id, txn.account_id, txn.category_id)
     if payload.date is not None:
         txn.date = payload.date
     if payload.payee is not None:
         txn.payee = payload.payee
+        txn.payee_id = await resolve_payee(db, current_user.id, payload.payee)
     if payload.memo is not None:
         txn.memo = payload.memo
     if payload.amount_cents is not None:
         txn.amount_cents = payload.amount_cents
+
+    new_splits: list[TransactionSplit] = []
+    if splits_touched:
+        existing_splits = (
+            (
+                await db.execute(
+                    select(TransactionSplit).where(TransactionSplit.transaction_id == txn.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for old in existing_splits:
+            await db.delete(old)
+        if has_new_splits:
+            _validate_splits(new_split_inputs, txn.amount_cents)
+            for s in new_split_inputs:
+                if s.category_id is not None:
+                    await _owned_category(db, current_user.id, s.category_id)
+                await _enforce_scope_match(db, current_user.id, txn.account_id, s.category_id)
+            new_splits = [
+                TransactionSplit(
+                    user_id=current_user.id,
+                    transaction_id=txn.id,
+                    category_id=s.category_id,
+                    amount_cents=s.amount_cents,
+                    memo=s.memo,
+                )
+                for s in new_split_inputs
+            ]
+            db.add_all(new_splits)
+            await db.flush()
+    else:
+        # Not touched by this request, but the response must still reflect
+        # whatever the row already has.
+        new_splits = (
+            (
+                await db.execute(
+                    select(TransactionSplit).where(TransactionSplit.transaction_id == txn.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
 
     # Amount is the one field that defines the transfer itself: the legs must
     # stay equal and opposite or the budget math, which excludes both rather
@@ -543,7 +870,9 @@ async def update_transaction(
 
     await db.commit()
     await db.refresh(txn)
-    return _to_response(txn, await load_peer_account_ids(db, [txn]))
+    response = _to_response(txn, await load_peer_account_ids(db, [txn]))
+    response.splits = _splits_to_response(new_splits)
+    return response
 
 
 @router.delete("/{txn_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -551,14 +880,5 @@ async def delete_transaction(
     txn_id: int, db: DbSession, current_user: CurrentUser
 ) -> None:
     txn = await _owned_transaction(db, current_user.id, txn_id)
-    if txn.transfer_peer_id is not None:
-        # Half a transfer is never a meaningful record: drop the pair. Break the
-        # links first so neither delete trips the other's foreign key.
-        peer = await db.get(Transaction, txn.transfer_peer_id)
-        txn.transfer_peer_id = None
-        if peer is not None:
-            peer.transfer_peer_id = None
-            await db.flush()
-            await db.delete(peer)
-    await db.delete(txn)
+    await _delete_with_peer(db, txn)
     await db.commit()

@@ -185,7 +185,7 @@ async def test_set_balance_creates_adjustment_transaction(client: AsyncClient):
 
     txns = (
         await client.get(f"/api/transactions?account_id={account_id}", headers=headers)
-    ).json()
+    ).json()["items"]
     assert len(txns) == 1
     assert txns[0]["payee"] == "Balance Adjustment"
     assert txns[0]["amount_cents"] == 50_000
@@ -209,7 +209,7 @@ async def test_set_balance_is_noop_when_already_matching(client: AsyncClient):
 
     txns = (
         await client.get(f"/api/transactions?account_id={account_id}", headers=headers)
-    ).json()
+    ).json()["items"]
     assert txns == []
 
 

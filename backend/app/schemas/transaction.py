@@ -3,6 +3,21 @@ from datetime import date as DateType
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class TransactionSplitInput(BaseModel):
+    category_id: int | None = None
+    amount_cents: int  # signed; every line's amount must sum to the parent amount
+    memo: str = Field(default="", max_length=500)
+
+
+class TransactionSplitResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    category_id: int | None
+    amount_cents: int
+    memo: str
+
+
 class TransactionCreate(BaseModel):
     account_id: int
     category_id: int | None = None
@@ -10,6 +25,10 @@ class TransactionCreate(BaseModel):
     payee: str = Field(default="", max_length=255)
     memo: str = Field(default="", max_length=500)
     amount_cents: int  # signed: positive = inflow, negative = outflow
+    # Two or more lines to split this transaction across categories. When
+    # given, category_id above must be omitted/null — the parent stays
+    # uncategorized and activity is attributed per line (see txn_rows.py).
+    splits: list[TransactionSplitInput] | None = None
 
 
 class TransactionUpdate(BaseModel):
@@ -19,6 +38,9 @@ class TransactionUpdate(BaseModel):
     payee: str | None = Field(default=None, max_length=255)
     memo: str | None = Field(default=None, max_length=500)
     amount_cents: int | None = None
+    # Omitted: leave existing splits untouched. []: clear them, reverting to
+    # a plain transaction. Non-empty: replace them entirely.
+    splits: list[TransactionSplitInput] | None = None
 
 
 class TransactionResponse(BaseModel):
@@ -29,12 +51,16 @@ class TransactionResponse(BaseModel):
     category_id: int | None
     date: DateType
     payee: str
+    # Denormalized: the resolved Payee row backing the string above, or None
+    # for a blank/synthetic payee. See Transaction.payee_id's TODO.
+    payee_id: int | None = None
     memo: str
     amount_cents: int
     transfer_peer_id: int | None = None
     # The account holding the other leg. Denormalized onto the response so a
     # transaction list can label transfers without fetching the peer rows.
     transfer_peer_account_id: int | None = None
+    splits: list[TransactionSplitResponse] = []
 
 
 class TransferCreate(BaseModel):
@@ -87,3 +113,25 @@ class TransactionImportRequest(BaseModel):
 
 class TransactionImportResponse(BaseModel):
     imported: int
+
+
+class TransactionListResponse(BaseModel):
+    items: list[TransactionResponse]
+    total: int
+
+
+class BulkCategoryRequest(BaseModel):
+    transaction_ids: list[int]
+    category_id: int | None = None
+
+
+class BulkCategoryResponse(BaseModel):
+    updated: int
+
+
+class BulkDeleteRequest(BaseModel):
+    transaction_ids: list[int]
+
+
+class BulkDeleteResponse(BaseModel):
+    deleted: int

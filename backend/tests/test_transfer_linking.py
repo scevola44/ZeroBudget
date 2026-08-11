@@ -50,7 +50,7 @@ async def _link(client: AsyncClient, headers: dict, txn_id: int, peer_id: int):
 
 
 async def _rows_by_id(client: AsyncClient, headers: dict) -> dict:
-    rows = (await client.get("/api/transactions", headers=headers)).json()
+    rows = (await client.get("/api/transactions", headers=headers)).json()["items"]
     return {row["id"]: row for row in rows}
 
 

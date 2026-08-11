@@ -101,18 +101,33 @@ Implemented:
   against its recent norm; `1M | 3M | 6M | YTD | 1Y` range presets with
   month-stepping arrows (`routers/insights.py`, `services/insights_calc.py`,
   `frontend/src/pages/InsightsPage.tsx`). See Phase 5.
+- **Payees**: normalized `payees` table with `payee_id` FK on transactions
+  (the legacy `payee` string column stays, mirrored on every write — see the
+  cleanup TODO on `Transaction.payee_id`); autocomplete via `<datalist>`,
+  rename/merge API and UI (`routers/payees.py`, `services/payees.py`,
+  `frontend/src/components/PayeeManager.tsx`).
+- **Split transactions**: `transaction_splits` table, each line independently
+  categorized (nullable `category_id`); budget/insights activity is
+  attributed per line via `services/txn_rows.py`'s flattening, not to the
+  parent; expandable split editor with a YNAB-style remaining-amount
+  indicator (`frontend/src/components/SplitEditor.tsx`).
+- **Transactions page, full-capability**: server-side filtering
+  (account/category, including split lines/`uncategorized`), pagination,
+  free-text search (`q` over payee/memo), and multi-select bulk actions (set
+  category, delete) (`routers/transactions.py`,
+  `frontend/src/pages/TransactionsPage.tsx`). See Phase 2.
 - Responsive layout with dark mode (`darkMode: "media"`), mobile off-canvas nav.
 
-Not implemented (the gap this roadmap closes): payees, splits,
-search/bulk edit, move-money/auto-assign, scheduled transactions, net worth
-over time, generic CSV import, import matching, settings/auth hardening,
-cleared/reconciliation, credit-card budgeting.
+Not implemented (the gap this roadmap closes): move-money/auto-assign,
+scheduled transactions, net worth over time, generic CSV import, import
+matching, settings/auth hardening, cleared/reconciliation, credit-card
+budgeting.
 
-Phase 1 closed the rest: transfers are linked transaction pairs
-(`transfer_peer_id`, `POST /api/transactions/transfer`), every transaction
-field is editable from both transaction surfaces, accounts can be renamed,
-retyped, rescoped and closed, and categories can be deleted with optional
-reassignment of their transactions.
+Phase 1 closed transfers: linked transaction pairs (`transfer_peer_id`,
+`POST /api/transactions/transfer`), every transaction field editable from
+both transaction surfaces, accounts renamed/retyped/rescoped/closed, and
+categories deletable with optional reassignment of their transactions
+(including split lines, added in Phase 2).
 
 ---
 
@@ -207,7 +222,12 @@ a typo) is the most painful daily friction.
 
 ---
 
-## Phase 2 — Daily-entry ergonomics: payees, split transactions, search & bulk edit
+## Phase 2 — Daily-entry ergonomics: payees, split transactions, search & bulk edit ✅ **Done**
+
+> Shipped in the release cut from the PR that closed this phase. This phase
+> was found unstarted (0% implemented) during a roadmap review despite not
+> being marked done — see "Decisions taken" below for what was settled
+> during implementation.
 
 **Goal**: entering and finding transactions is as fast as YNAB.
 
@@ -253,6 +273,39 @@ daily use of a budgeting app.
   integrity enforced (422 on mismatch); budget page activity reflects lines.
 - `/transactions` can search, paginate, filter server-side, and bulk-edit.
 - Migration backfills payees from existing strings without data loss.
+
+### Decisions taken
+
+1. **The `payee` string column was kept, not dropped**, contrary to work
+   item 1's "keep during migration, backfill, then drop." `payee_id` is the
+   source of truth; the string mirrors it on every write
+   (`services/payees.resolve_payee`). Dropping it in this phase would have
+   meant rewriting `services/transfer_match.py`'s synthetic-payee string
+   check and `services/category_suggest.py` in the same pass, and the
+   transactions-page search (`q`) uses the string column directly with no
+   join. **TODO** marked on `Transaction.payee_id`
+   (`backend/app/models/transaction.py`) as a cleanup candidate once every
+   write path is proven to keep the two in sync.
+2. **`transaction_splits.category_id` is nullable**, symmetric with a
+   top-level transaction and invariant 6 (uncategorized+positive is the sole
+   Ready-to-Assign source) — e.g. a deposit that's part reimbursement, part
+   categorized spend.
+3. **`budget_calc.py` was not touched.** Splits are handled entirely at the
+   `services/txn_rows.py` seam: a split transaction emits one `TxnRow` per
+   line instead of one row for the parent, so `compute_category_balances`
+   and `feeds_ready_to_assign` need no changes and stay exhaustively pinned
+   as-is (invariant 5).
+4. **The "last-used-category suggestion" sub-requirement of work item 1
+   was already shipped independently** of any payee model
+   (`services/category_suggest.py`, fuzzy-matched against the free-text
+   `payee` string) — left untouched rather than migrated to `payee_id`,
+   since its fuzzy-match tier is what tolerates bank-supplied noise
+   (`"Visa: Store From Home"` vs `"Store From Home"`) that an exact
+   `payee_id` join wouldn't.
+5. **Auto-categorization rules** (work item 1's stretch goal) were not
+   built — not required for the acceptance criteria above.
+6. Migrations landed as **`0009`** (payees) and **`0010`**
+   (transaction_splits).
 
 ---
 

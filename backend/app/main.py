@@ -14,7 +14,16 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.db import Base, SessionLocal, engine
 from app.models import *  # noqa: F401,F403 — register models on Base.metadata
-from app.routers import accounts, auth, banking, budget, categories, insights, transactions
+from app.routers import (
+    accounts,
+    auth,
+    banking,
+    budget,
+    categories,
+    insights,
+    payees,
+    transactions,
+)
 from app.services.banking_client import get_banking_client
 from app.services.sync_scheduler import scheduler_loop
 
@@ -90,6 +99,7 @@ app.include_router(auth.router)
 app.include_router(accounts.router)
 app.include_router(categories.router)
 app.include_router(transactions.router)
+app.include_router(payees.router)
 app.include_router(budget.router)
 app.include_router(insights.router)
 app.include_router(banking.router)

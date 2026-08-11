@@ -8,8 +8,10 @@ from app.models.account import Account
 from app.models.assignment import MonthlyAssignment
 from app.models.bank_connection import BankAuthRequest, BankConnection
 from app.models.category import Category, CategoryGroup
+from app.models.payee import Payee
 from app.models.sync_run import SyncRun
 from app.models.transaction import Transaction
+from app.models.transaction_split import TransactionSplit
 from app.models.user import User
 
 __all__ = [
@@ -19,7 +21,9 @@ __all__ = [
     "Category",
     "CategoryGroup",
     "MonthlyAssignment",
+    "Payee",
     "SyncRun",
     "Transaction",
+    "TransactionSplit",
     "User",
 ]

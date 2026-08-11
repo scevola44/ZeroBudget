@@ -53,18 +53,40 @@ export type CategoryGroup = {
   categories: Category[];
 };
 
+export type TransactionSplit = {
+  id: number;
+  category_id: number | null;
+  amount_cents: number;
+  memo: string;
+};
+
 export type Transaction = {
   id: number;
   account_id: number;
   category_id: number | null;
   date: string;
   payee: string;
+  // The resolved Payee row backing `payee`, or null for a blank/synthetic payee.
+  payee_id: number | null;
   memo: string;
   amount_cents: number;
   // Set on both legs of a transfer, each pointing at the other.
   transfer_peer_id: number | null;
   // The account holding the other leg, for labelling transfer rows.
   transfer_peer_account_id: number | null;
+  // Non-empty when this transaction is split across categories; category_id
+  // is then always null at the parent level.
+  splits: TransactionSplit[];
+};
+
+export type Payee = {
+  id: number;
+  name: string;
+};
+
+export type TransactionListResponse = {
+  items: Transaction[];
+  total: number;
 };
 
 export type Transfer = {

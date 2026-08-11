@@ -3,13 +3,27 @@ import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { Account, CategoryGroup, Transaction, Transfer } from "../api/types";
+import type {
+  Account,
+  CategoryGroup,
+  Payee,
+  Transaction,
+  TransactionListResponse,
+  Transfer,
+} from "../api/types";
 import {
   EditTransactionModal,
   type TransactionEdit,
 } from "../components/EditTransactionModal";
 import { LinkTransferModal } from "../components/LinkTransferModal";
 import { ScopeChip } from "../components/ScopeChip";
+import {
+  emptySplitLine,
+  parseSplitLines,
+  splitRemainingCents,
+  SplitEditor,
+  type SplitLineInput,
+} from "../components/SplitEditor";
 import { partitionSuggested } from "../lib/categorySuggestions";
 import { todayISO } from "../lib/dates";
 import { formatCents, parseAmountToCents } from "../lib/money";
@@ -34,15 +48,25 @@ export function AccountDetailPage() {
   });
   const account = accountsQuery.data?.find((a) => a.id === accountId);
 
-  const txnsQuery = useQuery<Transaction[]>({
+  // No pagination UI on this page (unlike /transactions) — the API's max
+  // page size stands in for "all of this account's history" so it doesn't
+  // silently truncate past the default page size.
+  const txnsQuery = useQuery<TransactionListResponse>({
     queryKey: ["transactions", accountId],
-    queryFn: () => api<Transaction[]>(`/api/transactions?account_id=${accountId}`),
+    queryFn: () =>
+      api<TransactionListResponse>(`/api/transactions?account_id=${accountId}&limit=500`),
     enabled: Number.isFinite(accountId),
   });
+  const txns = txnsQuery.data?.items ?? [];
 
   const groupsQuery = useQuery<CategoryGroup[]>({
     queryKey: ["category-groups"],
     queryFn: () => api<CategoryGroup[]>("/api/category-groups"),
+  });
+
+  const payeesQuery = useQuery<Payee[]>({
+    queryKey: ["payees"],
+    queryFn: () => api<Payee[]>("/api/payees"),
   });
 
   // Categories visible in the dropdown are only those whose group scope
@@ -63,6 +87,11 @@ export function AccountDetailPage() {
   // Whether the user has picked a category themselves this entry, so a
   // suggestion arriving afterward never overrides a deliberate choice.
   const [categoryTouched, setCategoryTouched] = useState(false);
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitLines, setSplitLines] = useState<SplitLineInput[]>(() => [
+    emptySplitLine(),
+    emptySplitLine(),
+  ]);
   const [formError, setFormError] = useState<string | null>(null);
   const [editingCategoryTxnId, setEditingCategoryTxnId] = useState<number | null>(null);
   // The existing row being linked to a transfer, and the account holding its
@@ -109,12 +138,10 @@ export function AccountDetailPage() {
   }, [suggestedCategoryIds, categoryTouched]);
 
   const editingTransaction =
-    editingTxnId === null
-      ? undefined
-      : txnsQuery.data?.find((t) => t.id === editingTxnId);
+    editingTxnId === null ? undefined : txns.find((t) => t.id === editingTxnId);
 
   const linkingTransaction =
-    linking === null ? undefined : txnsQuery.data?.find((t) => t.id === linking.txnId);
+    linking === null ? undefined : txns.find((t) => t.id === linking.txnId);
   const linkingAccount = linking === null ? undefined : accountById.get(linking.accountId);
 
   function peerAccountOf(txn: Transaction): Account | undefined {
@@ -128,6 +155,7 @@ export function AccountDetailPage() {
     void qc.invalidateQueries({ queryKey: ["transactions"] });
     void qc.invalidateQueries({ queryKey: ["accounts"] });
     void qc.invalidateQueries({ queryKey: ["budget"] });
+    void qc.invalidateQueries({ queryKey: ["payees"] });
   }
 
   const createTxn = useMutation({
@@ -138,6 +166,7 @@ export function AccountDetailPage() {
       payee: string;
       memo: string;
       amount_cents: number;
+      splits?: { category_id: number | null; amount_cents: number; memo: string }[];
     }) => api<Transaction>("/api/transactions", { method: "POST", body }),
     onSuccess: () => {
       resetForm();
@@ -226,6 +255,8 @@ export function AccountDetailPage() {
     setAmount("");
     setCategoryId("");
     setCategoryTouched(false);
+    setSplitMode(false);
+    setSplitLines([emptySplitLine(), emptySplitLine()]);
   }
 
   function onBalanceSubmit(e: React.FormEvent) {
@@ -245,6 +276,28 @@ export function AccountDetailPage() {
     const cents = parseAmountToCents(amount);
     if (cents === null) {
       setFormError("Enter a valid amount (use '-' for outflow).");
+      return;
+    }
+
+    if (splitMode) {
+      const splits = parseSplitLines(splitLines);
+      if (splits === null || splits.length < 2) {
+        setFormError("Enter a valid amount for every split line (at least two).");
+        return;
+      }
+      if (splitRemainingCents(amount, splitLines) !== 0) {
+        setFormError("Split lines must add up to the transaction amount.");
+        return;
+      }
+      createTxn.mutate({
+        account_id: accountId,
+        category_id: null,
+        date,
+        payee,
+        memo,
+        amount_cents: cents,
+        splits,
+      });
       return;
     }
 
@@ -368,51 +421,75 @@ export function AccountDetailPage() {
             value={payee}
             onChange={(e) => setPayee(e.target.value)}
             placeholder="e.g. Supermarket"
+            list="payee-options"
             className="w-full border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2"
           />
+          <datalist id="payee-options">
+            {(payeesQuery.data ?? []).map((p) => (
+              <option key={p.id} value={p.name} />
+            ))}
+          </datalist>
         </div>
-        <div className="space-y-1 md:col-span-2">
-          <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Category</label>
-          <div className="relative">
-            <select
-              value={categoryId}
-              onChange={(e) => {
-                setCategoryTouched(true);
-                setCategoryId(e.target.value);
-              }}
-              className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
+        <div className={`space-y-1 ${splitMode ? "md:col-span-5" : "md:col-span-2"}`}>
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Category</label>
+            <button
+              type="button"
+              onClick={() => setSplitMode((m) => !m)}
+              className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
             >
-              <option value="">— Unassigned (inflow) —</option>
-              {suggestedCategories.length > 0 && (
-                <optgroup label="Suggested">
-                  {suggestedCategories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.groupName} › {c.name}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              {otherCategories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.groupName} › {c.name}
-                </option>
-              ))}
-              {transferTargets.length > 0 && (
-                <optgroup label="Transfer">
-                  {transferTargets.map((a) => (
-                    <option key={a.id} value={`${TRANSFER_OPTION_PREFIX}${a.id}`}>
-                      Transfer : {a.name}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
-            <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
-              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 6l4 4 4-4" />
-              </svg>
-            </div>
+              {splitMode ? "Use single category" : "Split into multiple categories"}
+            </button>
           </div>
+          {splitMode ? (
+            <SplitEditor
+              categories={eligibleCategories}
+              totalAmountText={amount}
+              lines={splitLines}
+              onChange={setSplitLines}
+            />
+          ) : (
+            <div className="relative">
+              <select
+                value={categoryId}
+                onChange={(e) => {
+                  setCategoryTouched(true);
+                  setCategoryId(e.target.value);
+                }}
+                className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
+              >
+                <option value="">— Unassigned (inflow) —</option>
+                {suggestedCategories.length > 0 && (
+                  <optgroup label="Suggested">
+                    {suggestedCategories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.groupName} › {c.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {otherCategories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.groupName} › {c.name}
+                  </option>
+                ))}
+                {transferTargets.length > 0 && (
+                  <optgroup label="Transfer">
+                    {transferTargets.map((a) => (
+                      <option key={a.id} value={`${TRANSFER_OPTION_PREFIX}${a.id}`}>
+                        Transfer : {a.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </div>
+            </div>
+          )}
         </div>
         <div className="space-y-1 md:col-span-1">
           <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Amount</label>
@@ -456,10 +533,10 @@ export function AccountDetailPage() {
 
       <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl overflow-hidden">
         {txnsQuery.isLoading && <div className="p-5 text-stone-500 dark:text-stone-400">Loading…</div>}
-        {txnsQuery.data && txnsQuery.data.length === 0 && (
+        {!txnsQuery.isLoading && txns.length === 0 && (
           <div className="p-5 text-stone-500 dark:text-stone-400">No transactions yet.</div>
         )}
-        {txnsQuery.data && txnsQuery.data.length > 0 && (
+        {txns.length > 0 && (
           <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-xs uppercase text-stone-500 dark:text-stone-400">
@@ -473,7 +550,7 @@ export function AccountDetailPage() {
               </tr>
             </thead>
             <tbody>
-              {txnsQuery.data.map((t) => {
+              {txns.map((t) => {
                 const cat = flatCategories.find((c) => c.id === t.category_id);
                 const peerAccount = peerAccountOf(t);
                 return (
@@ -485,6 +562,17 @@ export function AccountDetailPage() {
                         <span className="text-stone-600 dark:text-stone-300">
                           Transfer : {peerAccount?.name ?? "another account"}
                         </span>
+                      ) : t.splits.length > 0 ? (
+                        <button
+                          className="text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded px-1 py-0.5 text-left w-full"
+                          onClick={() => {
+                            setEditError(null);
+                            setEditingTxnId(t.id);
+                          }}
+                          title="Edit splits"
+                        >
+                          Split ({t.splits.length})
+                        </button>
                       ) : editingCategoryTxnId === t.id ? (
                         <div className="relative">
                           <select

@@ -2,10 +2,18 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { Account, Transaction } from "../api/types";
+import type { Account, Payee, Transaction } from "../api/types";
 import { partitionSuggested } from "../lib/categorySuggestions";
 import { parseAmountToCents } from "../lib/money";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
+import {
+  emptySplitLine,
+  parseSplitLines,
+  splitRemainingCents,
+  SplitEditor,
+  type ParsedSplitLine,
+  type SplitLineInput,
+} from "./SplitEditor";
 
 export type TransactionEdit = {
   date: string;
@@ -13,6 +21,9 @@ export type TransactionEdit = {
   memo: string;
   amount_cents: number;
   category_id: number | null;
+  // [] clears any existing splits; non-empty replaces them. Always sent —
+  // this modal submits its entire state on every save.
+  splits: ParsedSplitLine[];
 };
 
 export type CategoryChoice = { id: number; name: string; groupName: string };
@@ -50,8 +61,16 @@ export function EditTransactionModal({
   // Whether the user has picked a category themselves since opening the
   // modal, so a suggestion arriving afterward never overrides that choice.
   const [categoryTouched, setCategoryTouched] = useState(false);
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitLines, setSplitLines] = useState<SplitLineInput[]>([]);
 
   const isTransfer = transaction.transfer_peer_id !== null;
+
+  const payeesQuery = useQuery<Payee[]>({
+    queryKey: ["payees"],
+    queryFn: () => api<Payee[]>("/api/payees"),
+    enabled: isOpen,
+  });
 
   useEffect(() => {
     if (!isOpen) return;
@@ -62,6 +81,19 @@ export function EditTransactionModal({
     setCategoryId(transaction.category_id === null ? "" : String(transaction.category_id));
     setAmountError(null);
     setCategoryTouched(false);
+    if (transaction.splits.length > 0) {
+      setSplitMode(true);
+      setSplitLines(
+        transaction.splits.map((s) => ({
+          category_id: s.category_id,
+          amountText: (s.amount_cents / 100).toFixed(2),
+          memo: s.memo,
+        })),
+      );
+    } else {
+      setSplitMode(false);
+      setSplitLines([emptySplitLine(), emptySplitLine()]);
+    }
   }, [isOpen, transaction]);
 
   // Only suggest once the payee is actually edited away from its saved value —
@@ -102,6 +134,20 @@ export function EditTransactionModal({
       setAmountError("Enter a valid amount (use '-' for outflow).");
       return;
     }
+    if (splitMode) {
+      const splits = parseSplitLines(splitLines);
+      if (splits === null || splits.length < 2) {
+        setAmountError("Enter a valid amount for every split line (at least two).");
+        return;
+      }
+      if (splitRemainingCents(amount, splitLines) !== 0) {
+        setAmountError("Split lines must add up to the transaction amount.");
+        return;
+      }
+      setAmountError(null);
+      onSave({ date, payee, memo, amount_cents: cents, category_id: null, splits });
+      return;
+    }
     setAmountError(null);
     onSave({
       date,
@@ -109,6 +155,7 @@ export function EditTransactionModal({
       memo,
       amount_cents: cents,
       category_id: categoryId ? Number(categoryId) : null,
+      splits: [],
     });
   }
 
@@ -159,14 +206,32 @@ export function EditTransactionModal({
               value={payee}
               onChange={(e) => setPayee(e.target.value)}
               disabled={isPending}
+              list="edit-payee-options"
               className="w-full border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
             />
+            <datalist id="edit-payee-options">
+              {(payeesQuery.data ?? []).map((p) => (
+                <option key={p.id} value={p.name} />
+              ))}
+            </datalist>
           </div>
 
           <div className="space-y-1">
-            <label className="text-sm font-medium text-stone-700 dark:text-stone-300">
-              Category
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-stone-700 dark:text-stone-300">
+                Category
+              </label>
+              {!isTransfer && (
+                <button
+                  type="button"
+                  onClick={() => setSplitMode((m) => !m)}
+                  disabled={isPending}
+                  className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50"
+                >
+                  {splitMode ? "Use single category" : "Split into multiple categories"}
+                </button>
+              )}
+            </div>
             {isTransfer ? (
               <div className="w-full border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 rounded-lg px-3 py-2 text-sm text-stone-600 dark:text-stone-400 flex items-center justify-between gap-3">
                 <span>Transfer : {peerAccount?.name ?? "another account"}</span>
@@ -182,6 +247,14 @@ export function EditTransactionModal({
                   </button>
                 )}
               </div>
+            ) : splitMode ? (
+              <SplitEditor
+                categories={categories}
+                totalAmountText={amount}
+                lines={splitLines}
+                onChange={setSplitLines}
+                disabled={isPending}
+              />
             ) : (
               <div className="relative">
                 <select

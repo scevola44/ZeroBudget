@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select, update
 
 from app.deps import CurrentUser, DbSession
-from app.models import Category, CategoryGroup, Transaction
+from app.models import Category, CategoryGroup, Transaction, TransactionSplit
 from app.schemas.category import (
     CategoryCreate,
     CategoryGroupCreate,
@@ -257,6 +257,17 @@ async def delete_category(
             .where(
                 Transaction.user_id == current_user.id,
                 Transaction.category_id == category_id,
+            )
+            .values(category_id=reassign_to)
+        )
+        # Split lines using this category need the same treatment, or they'd
+        # silently fall back to NULL (the FK's ON DELETE SET NULL) instead of
+        # honoring the reassignment the user asked for.
+        await db.execute(
+            update(TransactionSplit)
+            .where(
+                TransactionSplit.user_id == current_user.id,
+                TransactionSplit.category_id == category_id,
             )
             .values(category_id=reassign_to)
         )

@@ -170,7 +170,7 @@ async def test_deleting_a_category_can_rehome_its_transactions(client: AsyncClie
     )
     assert r.status_code == 204, r.text
 
-    rows = (await client.get("/api/transactions", headers=headers)).json()
+    rows = (await client.get("/api/transactions", headers=headers)).json()["items"]
     assert [row["category_id"] for row in rows] == [groceries]
 
 
@@ -197,8 +197,48 @@ async def test_deleting_a_category_without_reassignment_uncategorizes(client: As
     r = await client.delete(f"/api/categories/{dining}", headers=headers)
     assert r.status_code == 204, r.text
 
-    rows = (await client.get("/api/transactions", headers=headers)).json()
+    rows = (await client.get("/api/transactions", headers=headers)).json()["items"]
     assert [row["category_id"] for row in rows] == [None]
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_category_rehomes_split_lines_too(client: AsyncClient):
+    """A split line using the deleted category must follow reassign_to, the
+    same as a plain transaction's category_id — otherwise it silently falls
+    back to NULL via the FK's ON DELETE SET NULL instead of honoring the
+    user's chosen destination."""
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    dining = await create_category(client, headers, group, "Dining")
+    fuel = await create_category(client, headers, group, "Fuel")
+    groceries = await create_category(client, headers, group, "Groceries")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": account,
+            "date": "2026-04-05",
+            "payee": "Trip",
+            "memo": "",
+            "amount_cents": -10_000,
+            "splits": [
+                {"category_id": dining, "amount_cents": -6_000, "memo": ""},
+                {"category_id": fuel, "amount_cents": -4_000, "memo": ""},
+            ],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+
+    r = await client.delete(
+        f"/api/categories/{dining}?reassign_to={groceries}", headers=headers
+    )
+    assert r.status_code == 204, r.text
+
+    rows = (await client.get("/api/transactions", headers=headers)).json()["items"]
+    split_categories = {s["category_id"] for s in rows[0]["splits"]}
+    assert split_categories == {groceries, fuel}
 
 
 @pytest.mark.asyncio
