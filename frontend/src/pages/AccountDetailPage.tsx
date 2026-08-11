@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -10,8 +10,10 @@ import {
 } from "../components/EditTransactionModal";
 import { LinkTransferModal } from "../components/LinkTransferModal";
 import { ScopeChip } from "../components/ScopeChip";
+import { partitionSuggested } from "../lib/categorySuggestions";
 import { todayISO } from "../lib/dates";
 import { formatCents, parseAmountToCents } from "../lib/money";
+import { useDebouncedValue } from "../lib/useDebouncedValue";
 
 // Marks a "Transfer : <account>" choice in the category picker, YNAB-style.
 const TRANSFER_OPTION_PREFIX = "transfer:";
@@ -58,6 +60,9 @@ export function AccountDetailPage() {
   const [memo, setMemo] = useState("");
   const [amount, setAmount] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
+  // Whether the user has picked a category themselves this entry, so a
+  // suggestion arriving afterward never overrides a deliberate choice.
+  const [categoryTouched, setCategoryTouched] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [editingCategoryTxnId, setEditingCategoryTxnId] = useState<number | null>(null);
   // The existing row being linked to a transfer, and the account holding its
@@ -78,6 +83,30 @@ export function AccountDetailPage() {
   const transferTargets = (accountsQuery.data ?? []).filter(
     (a) => a.id !== accountId && !a.closed,
   );
+
+  const debouncedPayee = useDebouncedValue(payee, 300);
+  const suggestionsQuery = useQuery<number[]>({
+    queryKey: ["category-suggestions", accountId, debouncedPayee],
+    queryFn: () =>
+      api<number[]>(
+        `/api/transactions/category-suggestions?account_id=${accountId}&payee=${encodeURIComponent(debouncedPayee)}`,
+      ),
+    enabled: Number.isFinite(accountId) && debouncedPayee.trim().length > 0,
+  });
+  const suggestedCategoryIds = suggestionsQuery.data ?? [];
+  const { suggested: suggestedCategories, rest: otherCategories } = partitionSuggested(
+    eligibleCategories,
+    suggestedCategoryIds,
+  );
+
+  // Track the top suggestion into the field as the payee changes, but stop
+  // the moment the user picks a category themselves — never override a
+  // deliberate choice, including by leaving a stale guess in place once the
+  // payee no longer matches it.
+  useEffect(() => {
+    if (categoryTouched) return;
+    setCategoryId(suggestedCategoryIds.length > 0 ? String(suggestedCategoryIds[0]) : "");
+  }, [suggestedCategoryIds, categoryTouched]);
 
   const editingTransaction =
     editingTxnId === null
@@ -196,6 +225,7 @@ export function AccountDetailPage() {
     setMemo("");
     setAmount("");
     setCategoryId("");
+    setCategoryTouched(false);
   }
 
   function onBalanceSubmit(e: React.FormEvent) {
@@ -346,11 +376,23 @@ export function AccountDetailPage() {
           <div className="relative">
             <select
               value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
+              onChange={(e) => {
+                setCategoryTouched(true);
+                setCategoryId(e.target.value);
+              }}
               className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
             >
               <option value="">— Unassigned (inflow) —</option>
-              {eligibleCategories.map((c) => (
+              {suggestedCategories.length > 0 && (
+                <optgroup label="Suggested">
+                  {suggestedCategories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.groupName} › {c.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {otherCategories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.groupName} › {c.name}
                 </option>

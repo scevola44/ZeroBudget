@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
+import { api } from "../api/client";
 import type { Account, Transaction } from "../api/types";
+import { partitionSuggested } from "../lib/categorySuggestions";
 import { parseAmountToCents } from "../lib/money";
+import { useDebouncedValue } from "../lib/useDebouncedValue";
 
 export type TransactionEdit = {
   date: string;
@@ -43,6 +47,9 @@ export function EditTransactionModal({
   const [amount, setAmount] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [amountError, setAmountError] = useState<string | null>(null);
+  // Whether the user has picked a category themselves since opening the
+  // modal, so a suggestion arriving afterward never overrides that choice.
+  const [categoryTouched, setCategoryTouched] = useState(false);
 
   const isTransfer = transaction.transfer_peer_id !== null;
 
@@ -54,7 +61,37 @@ export function EditTransactionModal({
     setAmount((transaction.amount_cents / 100).toFixed(2));
     setCategoryId(transaction.category_id === null ? "" : String(transaction.category_id));
     setAmountError(null);
+    setCategoryTouched(false);
   }, [isOpen, transaction]);
+
+  // Only suggest once the payee is actually edited away from its saved value —
+  // the category already on screen reflects a deliberate prior choice.
+  const debouncedPayee = useDebouncedValue(payee, 300);
+  const suggestionsQuery = useQuery<number[]>({
+    queryKey: ["category-suggestions", transaction.account_id, debouncedPayee],
+    queryFn: () =>
+      api<number[]>(
+        `/api/transactions/category-suggestions?account_id=${transaction.account_id}&payee=${encodeURIComponent(debouncedPayee)}`,
+      ),
+    enabled:
+      isOpen &&
+      !isTransfer &&
+      debouncedPayee.trim().length > 0 &&
+      debouncedPayee !== transaction.payee,
+  });
+  const suggestedCategoryIds = suggestionsQuery.data ?? [];
+  const { suggested: suggestedCategories, rest: otherCategories } = partitionSuggested(
+    categories,
+    suggestedCategoryIds,
+  );
+
+  // Leaves the saved category alone until the payee is actually edited away
+  // from it; from then on, tracks the top suggestion until the user picks a
+  // category themselves.
+  useEffect(() => {
+    if (categoryTouched || debouncedPayee === transaction.payee) return;
+    setCategoryId(suggestedCategoryIds.length > 0 ? String(suggestedCategoryIds[0]) : "");
+  }, [suggestedCategoryIds, categoryTouched, debouncedPayee, transaction.payee]);
 
   if (!isOpen) return null;
 
@@ -149,12 +186,24 @@ export function EditTransactionModal({
               <div className="relative">
                 <select
                   value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value)}
+                  onChange={(e) => {
+                    setCategoryTouched(true);
+                    setCategoryId(e.target.value);
+                  }}
                   disabled={isPending}
                   className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg pl-3 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
                 >
                   <option value="">— Unassigned (inflow) —</option>
-                  {categories.map((c) => (
+                  {suggestedCategories.length > 0 && (
+                    <optgroup label="Suggested">
+                      {suggestedCategories.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.groupName} › {c.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {otherCategories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.groupName} › {c.name}
                     </option>

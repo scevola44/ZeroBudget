@@ -18,6 +18,7 @@ from app.schemas.transaction import (
     TransferSuggestion,
 )
 from app.services.budget_calc import month_start, next_month_start, parse_month
+from app.services.category_suggest import PayeeHistoryRow, suggest_categories
 from app.services.transfer_match import (
     SUGGESTION_DEFAULT_DAYS,
     TRANSFER_MATCH_WINDOW_DAYS,
@@ -119,6 +120,48 @@ async def list_transactions(
     rows = (await db.execute(stmt)).scalars().all()
     peer_accounts = await load_peer_account_ids(db, rows)
     return [_to_response(r, peer_accounts) for r in rows]
+
+
+@router.get("/category-suggestions", response_model=list[int])
+async def suggest_transaction_categories(
+    db: DbSession,
+    current_user: CurrentUser,
+    payee: str = Query(...),
+    account_id: int = Query(...),
+) -> list[int]:
+    """Category ids to propose for ``payee``, best guess first.
+
+    History spans every account the user owns — a payee is the same
+    real-world entity no matter which account paid it — but is narrowed to
+    categories whose group scope matches ``account_id``'s scope, since a
+    mismatched-scope category would be rejected by ``_enforce_scope_match``
+    anyway.
+    """
+    account = await _owned_account(db, current_user.id, account_id)
+    if not payee.strip():
+        return []
+
+    cats_result = await db.execute(
+        select(Category.id, CategoryGroup.scope)
+        .join(CategoryGroup, Category.group_id == CategoryGroup.id)
+        .where(Category.user_id == current_user.id)
+    )
+    scope_by_category_id = dict(cats_result.all())
+
+    history_result = await db.execute(
+        select(Transaction.id, Transaction.payee, Transaction.category_id, Transaction.date)
+        .where(
+            Transaction.user_id == current_user.id,
+            Transaction.category_id.is_not(None),
+        )
+    )
+    rows = [
+        PayeeHistoryRow(id=row.id, payee=row.payee, category_id=row.category_id, date=row.date)
+        for row in history_result.all()
+        if scope_by_category_id.get(row.category_id) == account.scope
+    ]
+
+    return suggest_categories(payee, rows)
 
 
 @router.post("/import-ynab", response_model=TransactionImportResponse)
