@@ -382,16 +382,39 @@ async def link_transfer(
     db: DbSession,
     current_user: CurrentUser,
 ) -> TransferResponse:
-    """Mark two transactions that already exist as the two legs of one transfer.
+    """Mark ``txn_id`` as one leg of a transfer, with the other leg either
+    already existing or created here.
 
     This is the imported case. A bank sync fetches each account separately, so a
     real transfer lands as two unrelated rows; ``create_transfer`` is no help
-    because it makes *new* legs, and deleting the imported rows to retype them
+    because it makes *two new* legs, and deleting the imported row to retype it
     by hand throws away the bank's own reference and invites the next sync to
-    re-import them.
+    re-import it. ``peer_transaction_id`` links to that other imported row when
+    it exists. ``to_account_id`` covers the account that will never have one —
+    an account with no bank connection has nothing for a sync to write there,
+    so the missing leg is created instead of searched for.
     """
     txn = await _owned_transaction(db, current_user.id, txn_id)
-    peer = await _owned_transaction(db, current_user.id, payload.peer_transaction_id)
+    if (payload.peer_transaction_id is None) == (payload.to_account_id is None):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide exactly one of peer_transaction_id or to_account_id.",
+        )
+    if payload.peer_transaction_id is not None:
+        peer = await _owned_transaction(db, current_user.id, payload.peer_transaction_id)
+    else:
+        target_account = await _owned_account(db, current_user.id, payload.to_account_id)
+        peer = Transaction(
+            user_id=current_user.id,
+            account_id=target_account.id,
+            category_id=None,
+            date=txn.date,
+            payee=txn.payee,
+            memo=txn.memo,
+            amount_cents=-txn.amount_cents,
+        )
+        db.add(peer)
+        await db.flush()
     _reject_unlinkable_pair(txn, peer)
 
     # A transfer isn't spending, so neither leg keeps a category — the invariant

@@ -53,7 +53,10 @@ class TransferResponse(BaseModel):
 
 
 class TransferLinkRequest(BaseModel):
-    peer_transaction_id: int
+    # Exactly one of these: link to a row that already exists, or create the
+    # missing leg in an account that has nothing to link to (see link_transfer).
+    peer_transaction_id: int | None = None
+    to_account_id: int | None = None
 
 
 class TransferCandidate(BaseModel):

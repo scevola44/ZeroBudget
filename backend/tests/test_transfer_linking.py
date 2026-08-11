@@ -369,6 +369,113 @@ async def test_a_linked_pair_stops_being_suggested(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_linking_to_an_account_creates_the_missing_leg(client: AsyncClient):
+    # Stands in for a manual savings account: a bank sync never writes anything
+    # there, so there's nothing for transfer-candidates to ever find.
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    group = await create_group(client, headers, "Bills")
+    category = await create_category(client, headers, group, "Rent")
+    outflow = await _add_transaction(
+        client,
+        headers,
+        checking,
+        -TRANSFER_CENTS,
+        date="2026-04-05",
+        payee="To savings",
+        category_id=category,
+    )
+
+    r = await client.post(
+        f"/api/transactions/{outflow}/transfer-link",
+        json={"to_account_id": savings},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+
+    body = r.json()
+    inflow = body["to_transaction"]["id"]
+    assert body["from_transaction"]["id"] == outflow
+    by_id = await _rows_by_id(client, headers)
+    assert by_id[outflow]["transfer_peer_id"] == inflow
+    assert by_id[outflow]["category_id"] is None
+    assert by_id[inflow]["account_id"] == savings
+    assert by_id[inflow]["amount_cents"] == TRANSFER_CENTS
+    assert by_id[inflow]["date"] == "2026-04-05"
+    assert by_id[inflow]["payee"] == "To savings"
+    assert by_id[inflow]["category_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_linking_to_an_account_works_even_when_that_account_is_synced(
+    client: AsyncClient,
+):
+    # Creating the missing leg isn't restricted to unsynced targets — it's just
+    # that unsynced targets are the case with no other way forward.
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    joint = await create_account(client, headers, "Joint")
+    outflow = await _add_transaction(client, headers, checking, -TRANSFER_CENTS)
+
+    r = await client.post(
+        f"/api/transactions/{outflow}/transfer-link",
+        json={"to_account_id": joint},
+        headers=headers,
+    )
+
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_linking_with_neither_field_is_rejected(client: AsyncClient):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    outflow = await _add_transaction(client, headers, checking, -TRANSFER_CENTS)
+
+    r = await client.post(
+        f"/api/transactions/{outflow}/transfer-link", json={}, headers=headers
+    )
+
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_linking_with_both_fields_is_rejected(client: AsyncClient):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    outflow = await _add_transaction(client, headers, checking, -TRANSFER_CENTS)
+    inflow = await _add_transaction(client, headers, savings, TRANSFER_CENTS)
+
+    r = await client.post(
+        f"/api/transactions/{outflow}/transfer-link",
+        json={"peer_transaction_id": inflow, "to_account_id": savings},
+        headers=headers,
+    )
+
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_creating_a_leg_in_another_users_account_is_rejected(client: AsyncClient):
+    owner = await register_user(client, email="owner@example.com")
+    checking = await create_account(client, owner, "Checking")
+    outflow = await _add_transaction(client, owner, checking, -TRANSFER_CENTS)
+
+    stranger = await register_user(client, email="stranger@example.com")
+    their_savings = await create_account(client, stranger, "Savings")
+
+    r = await client.post(
+        f"/api/transactions/{outflow}/transfer-link",
+        json={"to_account_id": their_savings},
+        headers=owner,
+    )
+
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_suggestions_ignore_another_users_transactions(client: AsyncClient):
     stranger = await register_user(client, email="stranger@example.com")
     their_checking = await create_account(client, stranger, "Checking")
