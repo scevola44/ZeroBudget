@@ -82,6 +82,9 @@ export function Layout({ children }: { children: ReactNode }) {
           >
             Log out
           </button>
+          <div className="text-xs text-stone-400 dark:text-stone-500 mt-3 text-center">
+            v{__APP_VERSION__}
+          </div>
         </div>
       </aside>
 
