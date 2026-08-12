@@ -208,6 +208,22 @@ async def test_categorizing_a_transfer_leg_is_rejected(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_marking_a_transfer_leg_ready_to_assign_is_rejected(client: AsyncClient):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    body = await _transfer(client, headers, checking, savings)
+
+    r = await client.patch(
+        f"/api/transactions/{body['from_transaction']['id']}",
+        json={"is_ready_to_assign": True},
+        headers=headers,
+    )
+    assert r.status_code == 422, r.text
+    assert "transfer" in r.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
 async def test_deleting_one_leg_removes_the_pair(client: AsyncClient):
     headers = await register_user(client)
     checking = await create_account(client, headers, "Checking")

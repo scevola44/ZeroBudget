@@ -168,9 +168,11 @@ export function LinkTransferModal({
             </ul>
           )}
 
-          {candidates.some((c) => c.transaction.category_id !== null) && (
+          {candidates.some(
+            (c) => c.transaction.category_id !== null || c.transaction.is_ready_to_assign,
+          ) && (
             <p className="text-xs text-stone-500 dark:text-stone-400">
-              Linking clears any category on both rows — a transfer isn't spending.
+              Linking clears any category or Ready to Assign flag on both rows — a transfer isn't spending.
             </p>
           )}
 

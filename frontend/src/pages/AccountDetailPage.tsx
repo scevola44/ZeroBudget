@@ -13,6 +13,11 @@ import { ScopeChip } from "../components/ScopeChip";
 import { partitionSuggested } from "../lib/categorySuggestions";
 import { todayISO } from "../lib/dates";
 import { formatCents, parseAmountToCents } from "../lib/money";
+import {
+  READY_TO_ASSIGN_OPTION_VALUE,
+  categorySelectValue,
+  parseCategorySelectValue,
+} from "../lib/readyToAssignOption";
 import { TRANSFER_OPTION_PREFIX, transferTargetId } from "../lib/transferOption";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
 
@@ -127,6 +132,7 @@ export function AccountDetailPage() {
     mutationFn: (body: {
       account_id: number;
       category_id: number | null;
+      is_ready_to_assign: boolean;
       date: string;
       payee: string;
       memo: string;
@@ -187,10 +193,18 @@ export function AccountDetailPage() {
   });
 
   const updateCategory = useMutation({
-    mutationFn: ({ txnId, categoryId: catId }: { txnId: number; categoryId: number | null }) =>
+    mutationFn: ({
+      txnId,
+      categoryId: catId,
+      isReadyToAssign,
+    }: {
+      txnId: number;
+      categoryId: number | null;
+      isReadyToAssign: boolean;
+    }) =>
       api<Transaction>(`/api/transactions/${txnId}`, {
         method: "PATCH",
-        body: { category_id: catId },
+        body: { category_id: catId, is_ready_to_assign: isReadyToAssign },
       }),
     onSuccess: () => {
       invalidateAfterChange();
@@ -262,7 +276,7 @@ export function AccountDetailPage() {
 
     createTxn.mutate({
       account_id: accountId,
-      category_id: categoryId ? Number(categoryId) : null,
+      ...parseCategorySelectValue(categoryId),
       date,
       payee,
       memo,
@@ -376,6 +390,7 @@ export function AccountDetailPage() {
               className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
             >
               <option value="">— Unassigned (inflow) —</option>
+              <option value={READY_TO_ASSIGN_OPTION_VALUE}>Ready to Assign</option>
               {suggestedCategories.length > 0 && (
                 <optgroup label="Suggested">
                   {suggestedCategories.map((c) => (
@@ -482,7 +497,7 @@ export function AccountDetailPage() {
                         <div className="relative">
                           <select
                             autoFocus
-                            defaultValue={t.category_id ?? ""}
+                            defaultValue={categorySelectValue(t.category_id, t.is_ready_to_assign)}
                             onChange={(e) => {
                               setRowActionError(null);
                               const targetAccountId = transferTargetId(e.target.value);
@@ -491,14 +506,21 @@ export function AccountDetailPage() {
                                 setEditingCategoryTxnId(null);
                                 return;
                               }
-                              const newId = e.target.value === "" ? null : Number(e.target.value);
-                              updateCategory.mutate({ txnId: t.id, categoryId: newId });
+                              const { category_id, is_ready_to_assign } = parseCategorySelectValue(
+                                e.target.value,
+                              );
+                              updateCategory.mutate({
+                                txnId: t.id,
+                                categoryId: category_id,
+                                isReadyToAssign: is_ready_to_assign,
+                              });
                             }}
                             onBlur={() => setEditingCategoryTxnId(null)}
                             onKeyDown={(e) => { if (e.key === "Escape") setEditingCategoryTxnId(null); }}
                             className="h-9 w-full appearance-none border border-indigo-300 dark:border-indigo-500 bg-white dark:bg-stone-900 rounded-md pl-2 pr-6 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                           >
                             <option value="">— Unassigned —</option>
+                            <option value={READY_TO_ASSIGN_OPTION_VALUE}>Ready to Assign</option>
                             {eligibleCategories.map((c) => (
                               <option key={c.id} value={c.id}>
                                 {c.groupName} › {c.name}
@@ -528,7 +550,13 @@ export function AccountDetailPage() {
                           className="text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded px-1 py-0.5 text-left w-full"
                           onClick={() => setEditingCategoryTxnId(t.id)}
                         >
-                          {cat ? `${cat.groupName} › ${cat.name}` : <span className="text-stone-400 dark:text-stone-500">Unassigned</span>}
+                          {cat ? (
+                            `${cat.groupName} › ${cat.name}`
+                          ) : t.is_ready_to_assign ? (
+                            <span className="text-stone-400 dark:text-stone-500">Ready to Assign</span>
+                          ) : (
+                            <span className="text-stone-400 dark:text-stone-500">Unassigned</span>
+                          )}
                         </button>
                       )}
                     </td>

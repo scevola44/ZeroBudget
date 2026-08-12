@@ -6,12 +6,21 @@ from httpx import AsyncClient
 from tests.conftest import create_account, create_category, create_group, register_user
 
 
-async def _add_inflow(client: AsyncClient, headers: dict, account_id: int, amount: int, date: str):
+async def _add_inflow(
+    client: AsyncClient,
+    headers: dict,
+    account_id: int,
+    amount: int,
+    date: str,
+    *,
+    is_ready_to_assign: bool = False,
+):
     r = await client.post(
         "/api/transactions",
         json={
             "account_id": account_id,
             "category_id": None,
+            "is_ready_to_assign": is_ready_to_assign,
             "date": date,
             "payee": "",
             "memo": "",
@@ -81,6 +90,20 @@ async def test_empty_budget_has_zero_ready_to_assign(client: AsyncClient):
     assert body["month"] == "2026-04"
     assert body["personal_ready_to_assign_cents"] == 0
     assert body["groups"] == []
+
+
+@pytest.mark.asyncio
+async def test_ready_to_assign_flagged_inflow_contributes_like_a_plain_one(client: AsyncClient):
+    """is_ready_to_assign is a display/filter signal only — it must not change
+    the Ready to Assign figure itself, which is keyed on category_id alone."""
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+
+    await _add_inflow(client, headers, account, 50_000, "2026-04-01")
+    await _add_inflow(client, headers, account, 30_000, "2026-04-02", is_ready_to_assign=True)
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    assert body["personal_ready_to_assign_cents"] == 80_000
 
 
 @pytest.mark.asyncio
