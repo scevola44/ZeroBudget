@@ -258,6 +258,44 @@ async def test_callback_accepts_xxx_currency_account_with_eur_balance(client):
     assert fake.get_balances_calls == ["uid_xxx", "uid_xxx"]
 
 
+async def test_callback_accepts_xxx_currency_account_with_eur_and_usd_same_type_eur_first(
+    client,
+):
+    """PayPal-style multi-currency wallets can report two balances of the same
+    balance_type, one per currency; the EUR one must win regardless of order."""
+    fake = FakeBankingClient(
+        session=_session_body(accounts=[XXX_ACCOUNT]),
+        balances=[
+            {"balance_type": "XPCD", "balance_amount": {"amount": "12.34", "currency": "EUR"}},
+            {"balance_type": "XPCD", "balance_amount": {"amount": "99.00", "currency": "USD"}},
+        ],
+    )
+    _install_fake(fake)
+    headers = await register_user(client)
+
+    body = await _connect(client, headers, fake)
+    assert body["skipped_accounts"] == []
+    assert len(body["account_ids"]) == 1
+
+
+async def test_callback_accepts_xxx_currency_account_with_eur_and_usd_same_type_eur_last(
+    client,
+):
+    fake = FakeBankingClient(
+        session=_session_body(accounts=[XXX_ACCOUNT]),
+        balances=[
+            {"balance_type": "XPCD", "balance_amount": {"amount": "99.00", "currency": "USD"}},
+            {"balance_type": "XPCD", "balance_amount": {"amount": "12.34", "currency": "EUR"}},
+        ],
+    )
+    _install_fake(fake)
+    headers = await register_user(client)
+
+    body = await _connect(client, headers, fake)
+    assert body["skipped_accounts"] == []
+    assert len(body["account_ids"]) == 1
+
+
 async def test_callback_rejects_xxx_currency_account_with_non_eur_balance(client):
     fake = FakeBankingClient(
         session=_session_body(accounts=[XXX_ACCOUNT]),

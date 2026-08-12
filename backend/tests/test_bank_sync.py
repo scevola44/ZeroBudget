@@ -21,7 +21,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base
 from app.models import Account, BankConnection, SyncRun, Transaction, User
-from app.services.bank_sync import run_global_sync, sync_connection
+from app.services.bank_sync import run_global_sync, select_balance, sync_connection
 from app.services.banking_client import BankingError
 from app.services.encryption import encrypt
 from app.services.sync_quota import latest_run, quota_remaining, runs_today
@@ -364,6 +364,52 @@ async def test_opening_balance_fetch_failure_does_not_fail_sync(db_session):
     assert connection.last_error_code is None  # transaction sync still succeeded
     rows = (await db_session.execute(Transaction.__table__.select())).fetchall()
     assert len(rows) == 1
+
+
+def test_select_balance_prefers_eur_among_same_type_eur_first():
+    # PayPal-style wallets report one balance per currency at the same
+    # balance_type -- EUR must win regardless of list order.
+    balances = [
+        _balance("100.00", balance_type="XPCD", currency="EUR"),
+        _balance("50.00", balance_type="XPCD", currency="USD"),
+    ]
+    result = select_balance(balances)
+    assert result is not None
+    assert result["balance_amount"]["currency"] == "EUR"
+    assert result["balance_amount"]["amount"] == "100.00"
+
+
+def test_select_balance_prefers_eur_among_same_type_eur_last():
+    balances = [
+        _balance("50.00", balance_type="XPCD", currency="USD"),
+        _balance("100.00", balance_type="XPCD", currency="EUR"),
+    ]
+    result = select_balance(balances)
+    assert result is not None
+    assert result["balance_amount"]["currency"] == "EUR"
+    assert result["balance_amount"]["amount"] == "100.00"
+
+
+@pytest.mark.asyncio
+async def test_opening_balance_prefers_eur_among_same_type(db_session):
+    _, connection, _ = await _seed(db_session)
+    client = FakeBankingClient(
+        balances_by_uid={
+            "uid_1": [
+                _balance("50.00", balance_type="XPCD", currency="USD"),
+                _balance("1000.00", balance_type="XPCD", currency="EUR"),
+            ]
+        },
+    )
+
+    await sync_connection(db_session, connection, client)
+
+    row = (
+        await db_session.execute(
+            select(Transaction).where(Transaction.payee == "Opening Balance")
+        )
+    ).scalar_one()
+    assert row.amount_cents == 100_000
 
 
 @pytest.mark.asyncio
