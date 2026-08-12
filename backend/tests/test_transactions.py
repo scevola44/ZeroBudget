@@ -15,12 +15,14 @@ async def _add_txn(
     amount: int,
     category_id: int | None = None,
     payee: str = "",
+    is_ready_to_assign: bool = False,
 ) -> int:
     r = await client.post(
         "/api/transactions",
         json={
             "account_id": account_id,
             "category_id": category_id,
+            "is_ready_to_assign": is_ready_to_assign,
             "date": date,
             "payee": payee,
             "memo": "",
@@ -239,6 +241,151 @@ async def test_category_suggestions_exclude_mismatched_scope_categories(client: 
     r = await client.get(
         "/api/transactions/category-suggestions",
         params={"account_id": shared_account, "payee": "Store From Home"},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+@pytest.mark.asyncio
+async def test_create_ready_to_assign_transaction(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    txn_id = await _add_txn(
+        client, headers, account_id=a, date="2026-04-01", amount=50000,
+        is_ready_to_assign=True,
+    )
+    r = await client.get("/api/transactions", headers=headers)
+    txn = next(t for t in r.json() if t["id"] == txn_id)
+    assert txn["category_id"] is None
+    assert txn["is_ready_to_assign"] is True
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_category_and_ready_to_assign_together(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    cat = await create_category(client, headers, g)
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "category_id": cat,
+            "is_ready_to_assign": True,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": 1000,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_can_set_ready_to_assign(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    txn_id = await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=50000)
+
+    r = await client.patch(
+        f"/api/transactions/{txn_id}",
+        json={"is_ready_to_assign": True},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["is_ready_to_assign"] is True
+
+
+@pytest.mark.asyncio
+async def test_update_can_clear_ready_to_assign(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    txn_id = await _add_txn(
+        client, headers, account_id=a, date="2026-04-01", amount=50000,
+        is_ready_to_assign=True,
+    )
+
+    r = await client.patch(
+        f"/api/transactions/{txn_id}",
+        json={"is_ready_to_assign": False},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["is_ready_to_assign"] is False
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_category_and_ready_to_assign_in_same_payload(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    cat = await create_category(client, headers, g)
+    txn_id = await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=50000)
+
+    r = await client.patch(
+        f"/api/transactions/{txn_id}",
+        json={"category_id": cat, "is_ready_to_assign": True},
+        headers=headers,
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_ready_to_assign_when_category_already_set(client: AsyncClient):
+    """A single-field PATCH must still be checked against the row's existing
+    state, not just against the rest of its own payload."""
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    cat = await create_category(client, headers, g)
+    txn_id = await _add_txn(
+        client, headers, account_id=a, date="2026-04-01", amount=50000, category_id=cat,
+    )
+
+    r = await client.patch(
+        f"/api/transactions/{txn_id}",
+        json={"is_ready_to_assign": True},
+        headers=headers,
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_category_when_ready_to_assign_already_set(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    cat = await create_category(client, headers, g)
+    txn_id = await _add_txn(
+        client, headers, account_id=a, date="2026-04-01", amount=50000,
+        is_ready_to_assign=True,
+    )
+
+    r = await client.patch(
+        f"/api/transactions/{txn_id}",
+        json={"category_id": cat},
+        headers=headers,
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_ready_to_assign_rows_excluded_from_category_suggestion_history(client: AsyncClient):
+    headers = await register_user(client)
+    a1 = await create_account(client, headers, "Checking")
+    a2 = await create_account(client, headers, "Savings")
+
+    await _add_txn(
+        client, headers, account_id=a1, date="2026-04-01", amount=50000,
+        is_ready_to_assign=True, payee="Employer Inc",
+    )
+
+    r = await client.get(
+        "/api/transactions/category-suggestions",
+        params={"account_id": a2, "payee": "Employer Inc"},
         headers=headers,
     )
     assert r.status_code == 200

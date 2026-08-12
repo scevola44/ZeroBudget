@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class TransactionCreate(BaseModel):
     account_id: int
     category_id: int | None = None
+    is_ready_to_assign: bool = False
     date: DateType
     payee: str = Field(default="", max_length=255)
     memo: str = Field(default="", max_length=500)
@@ -15,6 +16,7 @@ class TransactionCreate(BaseModel):
 class TransactionUpdate(BaseModel):
     account_id: int | None = None
     category_id: int | None = None
+    is_ready_to_assign: bool | None = None
     date: DateType | None = None
     payee: str | None = Field(default=None, max_length=255)
     memo: str | None = Field(default=None, max_length=500)
@@ -27,6 +29,7 @@ class TransactionResponse(BaseModel):
     id: int
     account_id: int
     category_id: int | None
+    is_ready_to_assign: bool
     date: DateType
     payee: str
     memo: str

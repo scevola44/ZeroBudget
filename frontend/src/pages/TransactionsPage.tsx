@@ -116,7 +116,9 @@ export function TransactionsPage() {
   const filteredTxns = (txnsQuery.data ?? []).filter((t) => {
     if (selectedAccountIds.size > 0 && !selectedAccountIds.has(t.account_id)) return false;
     if (selectedCategoryId === "null") {
-      if (t.category_id !== null || t.transfer_peer_id !== null) return false;
+      if (t.category_id !== null || t.transfer_peer_id !== null || t.is_ready_to_assign) return false;
+    } else if (selectedCategoryId === "rta") {
+      if (!t.is_ready_to_assign) return false;
     } else if (selectedCategoryId !== "") {
       if (t.category_id !== Number(selectedCategoryId)) return false;
     }
@@ -191,6 +193,7 @@ export function TransactionsPage() {
               >
                 <option value="">All categories</option>
                 <option value="null">Unassigned</option>
+                <option value="rta">Ready to Assign</option>
                 {flatCategories.map((c) => (
                   <option key={c.id} value={String(c.id)}>
                     {c.groupName} › {c.name}
@@ -275,6 +278,8 @@ export function TransactionsPage() {
                           </span>
                         ) : cat ? (
                           `${cat.groupName} › ${cat.name}`
+                        ) : t.is_ready_to_assign ? (
+                          <span className="text-stone-400 dark:text-stone-500">Ready to Assign</span>
                         ) : (
                           <span className="text-stone-400 dark:text-stone-500">Unassigned</span>
                         )}

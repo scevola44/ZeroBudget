@@ -23,6 +23,7 @@ async def _add_transaction(
     date: str = "2026-04-02",
     payee: str = "Own transfer",
     category_id: int | None = None,
+    is_ready_to_assign: bool = False,
 ) -> int:
     """Stand in for a bank-synced row: the API shape is identical."""
     r = await client.post(
@@ -30,6 +31,7 @@ async def _add_transaction(
         json={
             "account_id": account_id,
             "category_id": category_id,
+            "is_ready_to_assign": is_ready_to_assign,
             "date": date,
             "payee": payee,
             "memo": "",
@@ -128,6 +130,22 @@ async def test_linking_clears_a_category_the_user_had_set(client: AsyncClient):
 
     by_id = await _rows_by_id(client, headers)
     assert by_id[outflow]["category_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_linking_clears_a_ready_to_assign_flag_the_user_had_set(client: AsyncClient):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    outflow = await _add_transaction(
+        client, headers, checking, -TRANSFER_CENTS, is_ready_to_assign=True
+    )
+    inflow = await _add_transaction(client, headers, savings, TRANSFER_CENTS)
+
+    assert (await _link(client, headers, outflow, inflow)).status_code == 200
+
+    by_id = await _rows_by_id(client, headers)
+    assert by_id[outflow]["is_ready_to_assign"] is False
 
 
 @pytest.mark.asyncio

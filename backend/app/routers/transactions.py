@@ -469,9 +469,12 @@ async def link_transfer(
     # A transfer isn't spending, so neither leg keeps a category — the invariant
     # create_transfer starts from and update_transaction defends. Clearing one
     # here is the honest completion of "this was never an expense", which is
-    # what the user just said.
+    # what the user just said. Same for is_ready_to_assign: a transfer leg
+    # can't carry it either.
     txn.category_id = None
+    txn.is_ready_to_assign = False
     peer.category_id = None
+    peer.is_ready_to_assign = False
     txn.transfer_peer_id = peer.id
     peer.transfer_peer_id = txn.id
     await db.commit()
@@ -514,6 +517,11 @@ async def unlink_transfer(
 async def create_transaction(
     payload: TransactionCreate, db: DbSession, current_user: CurrentUser
 ) -> TransactionResponse:
+    if payload.category_id is not None and payload.is_ready_to_assign:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A transaction cannot be both categorized and marked Ready to Assign.",
+        )
     await _owned_account(db, current_user.id, payload.account_id)
     if payload.category_id is not None:
         await _owned_category(db, current_user.id, payload.category_id)
@@ -524,6 +532,7 @@ async def create_transaction(
         user_id=current_user.id,
         account_id=payload.account_id,
         category_id=payload.category_id,
+        is_ready_to_assign=payload.is_ready_to_assign,
         date=payload.date,
         payee=payload.payee,
         memo=payload.memo,
@@ -554,6 +563,11 @@ async def update_transaction(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="A transfer leg cannot be categorized. Delete the transfer instead.",
         )
+    if peer is not None and payload.is_ready_to_assign:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A transfer leg cannot be marked Ready to Assign. Delete the transfer instead.",
+        )
 
     if payload.account_id is not None:
         await _owned_account(db, current_user.id, payload.account_id)
@@ -567,6 +581,17 @@ async def update_transaction(
         if payload.category_id is not None:
             await _owned_category(db, current_user.id, payload.category_id)
         txn.category_id = payload.category_id
+    if payload.is_ready_to_assign is not None:
+        txn.is_ready_to_assign = payload.is_ready_to_assign
+    # Catches cross-field conflicts a single-field PATCH can't see on its own:
+    # setting is_ready_to_assign on a row that already has a category, or
+    # setting a category on a row that's already flagged. No implicit
+    # auto-clearing either way — the caller must state its full intent.
+    if txn.category_id is not None and txn.is_ready_to_assign:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A transaction cannot be both categorized and marked Ready to Assign.",
+        )
     # Re-check scope match against the merged (account_id, category_id) pair.
     await _enforce_scope_match(db, current_user.id, txn.account_id, txn.category_id)
     if payload.date is not None:

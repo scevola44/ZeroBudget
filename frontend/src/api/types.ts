@@ -57,6 +57,10 @@ export type Transaction = {
   id: number;
   account_id: number;
   category_id: number | null;
+  // Deliberately uncategorized: its purpose is only to move Ready to Assign
+  // (a balance reconcile, a paycheck), not to await a category. Never true
+  // together with a non-null category_id.
+  is_ready_to_assign: boolean;
   date: string;
   payee: string;
   memo: string;

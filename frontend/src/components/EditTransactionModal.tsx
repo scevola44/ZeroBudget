@@ -5,6 +5,11 @@ import { api } from "../api/client";
 import type { Account, Transaction } from "../api/types";
 import { partitionSuggested } from "../lib/categorySuggestions";
 import { parseAmountToCents } from "../lib/money";
+import {
+  READY_TO_ASSIGN_OPTION_VALUE,
+  categorySelectValue,
+  parseCategorySelectValue,
+} from "../lib/readyToAssignOption";
 import { TRANSFER_OPTION_PREFIX, transferTargetId } from "../lib/transferOption";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
 
@@ -14,6 +19,7 @@ export type TransactionEdit = {
   memo: string;
   amount_cents: number;
   category_id: number | null;
+  is_ready_to_assign: boolean;
 };
 
 export type CategoryChoice = { id: number; name: string; groupName: string };
@@ -66,7 +72,7 @@ export function EditTransactionModal({
     setPayee(transaction.payee);
     setMemo(transaction.memo);
     setAmount((transaction.amount_cents / 100).toFixed(2));
-    setCategoryId(transaction.category_id === null ? "" : String(transaction.category_id));
+    setCategoryId(categorySelectValue(transaction.category_id, transaction.is_ready_to_assign));
     setAmountError(null);
     setCategoryTouched(false);
   }, [isOpen, transaction]);
@@ -115,7 +121,7 @@ export function EditTransactionModal({
       payee,
       memo,
       amount_cents: cents,
-      category_id: categoryId ? Number(categoryId) : null,
+      ...parseCategorySelectValue(categoryId),
     });
   }
 
@@ -206,6 +212,7 @@ export function EditTransactionModal({
                   className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg pl-3 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
                 >
                   <option value="">— Unassigned (inflow) —</option>
+                  <option value={READY_TO_ASSIGN_OPTION_VALUE}>Ready to Assign</option>
                   {suggestedCategories.length > 0 && (
                     <optgroup label="Suggested">
                       {suggestedCategories.map((c) => (

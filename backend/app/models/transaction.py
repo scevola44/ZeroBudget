@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -21,6 +21,14 @@ class Transaction(Base):
     category_id: Mapped[int | None] = mapped_column(
         ForeignKey("categories.id", ondelete="SET NULL"), index=True, nullable=True
     )
+    # True marks an uncategorized row as *deliberately* uncategorized — its
+    # whole purpose is to move Ready to Assign (a balance reconcile, a
+    # paycheck) rather than needing the user's attention. Never set alongside
+    # category_id (see routers.transactions). Invisible to budget math: it
+    # never reaches TxnRow, so feeds_ready_to_assign treats a flagged row
+    # exactly like any other uncategorized inflow — this only changes what the
+    # "Unassigned" filter shows.
+    is_ready_to_assign: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     payee: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     memo: Mapped[str] = mapped_column(String(500), nullable=False, default="")
