@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.deps import CurrentUser, DbSession
 from app.models import Account, Category, CategoryGroup, Transaction
 from app.schemas.transaction import (
+    PayeeTransferSuggestion,
     TransactionCreate,
     TransactionImportRequest,
     TransactionImportResponse,
@@ -22,9 +23,11 @@ from app.services.category_suggest import PayeeHistoryRow, suggest_categories
 from app.services.transfer_match import (
     SUGGESTION_DEFAULT_DAYS,
     TRANSFER_MATCH_WINDOW_DAYS,
+    AccountRef,
     MatchRow,
     find_candidates,
     suggest_pairs,
+    suggest_payee_matched_transfers,
 )
 from app.services.txn_rows import load_peer_account_ids
 
@@ -339,6 +342,52 @@ async def list_transfer_suggestions(
             inflow=_to_response(by_id[pair.inflow_id], NO_PEER_ACCOUNTS),
         )
         for pair in pairs
+    ]
+
+
+@router.get("/transfer-payee-suggestions", response_model=list[PayeeTransferSuggestion])
+async def list_transfer_payee_suggestions(
+    db: DbSession,
+    current_user: CurrentUser,
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+) -> list[PayeeTransferSuggestion]:
+    """Rows whose payee names an account with nothing synced into it.
+
+    A bank sync can only write both legs of a transfer when both accounts are
+    connected — an unsynced account will never get its half, so
+    ``transfer-suggestions`` (amount+date pairing) has nothing to find there.
+    When the payee itself names that account, that's confirmation enough to
+    offer creating the missing leg directly, one click, never automatically.
+    """
+    resolved_end = end_date or date.today()
+    resolved_start = start_date or resolved_end - timedelta(days=SUGGESTION_DEFAULT_DAYS)
+    rows = await _linkable_rows_between(db, current_user.id, resolved_start, resolved_end)
+    by_id = {row.id: row for row in rows}
+    match_rows = [_to_match_row(row) for row in rows]
+
+    accounts_result = await db.execute(
+        select(Account).where(Account.user_id == current_user.id, Account.closed.is_(False))
+    )
+    accounts = [
+        AccountRef(id=a.id, name=a.name, is_unsynced=a.bank_connection_id is None)
+        for a in accounts_result.scalars().all()
+    ]
+    account_names = {a.id: a.name for a in accounts}
+
+    claimed_ids = {
+        row_id
+        for pair in suggest_pairs(match_rows)
+        for row_id in (pair.outflow_id, pair.inflow_id)
+    }
+    suggestions = suggest_payee_matched_transfers(match_rows, accounts, claimed_ids)
+    return [
+        PayeeTransferSuggestion(
+            transaction=_to_response(by_id[s.transaction_id], NO_PEER_ACCOUNTS),
+            to_account_id=s.to_account_id,
+            to_account_name=account_names[s.to_account_id],
+        )
+        for s in suggestions
     ]
 
 

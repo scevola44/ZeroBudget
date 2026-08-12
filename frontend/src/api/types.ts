@@ -86,6 +86,14 @@ export type TransferSuggestion = {
   inflow: Transaction;
 };
 
+// A row whose payee names another (unsynced) account of the user's. Always a
+// suggestion — confirming it creates the missing leg there.
+export type PayeeTransferSuggestion = {
+  transaction: Transaction;
+  to_account_id: number;
+  to_account_name: string;
+};
+
 export type BudgetCategoryRow = {
   id: number;
   name: string;

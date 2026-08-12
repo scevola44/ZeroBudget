@@ -18,12 +18,20 @@ pair silently invents or destroys money.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 
 from app.services.synthetic_payees import SYNTHETIC_PAYEES
+
+# Bank-generated payees for a transfer are typically "To <account>" or
+# "From <account>" (sometimes "Transfer to/from <account>"). Stripped before
+# comparing against an account name so only the name itself has to match.
+_DIRECTIONAL_PREFIXES = re.compile(
+    r"^(transfer\s+)?(to|from)\s+", re.IGNORECASE
+)
 
 # How far apart two legs may be dated and still be one transfer. Money leaving
 # one bank on Friday can land at another the following Monday, so same-day is
@@ -51,6 +59,21 @@ class MatchRow:
 class SuggestedPair:
     outflow_id: int
     inflow_id: int
+
+
+@dataclass(frozen=True)
+class AccountRef:
+    id: int
+    name: str
+    # True when nothing is ever synced into this account, i.e. no bank sync
+    # will independently write the other leg here.
+    is_unsynced: bool
+
+
+@dataclass(frozen=True)
+class PayeeMatchedTransfer:
+    transaction_id: int
+    to_account_id: int
 
 
 def is_linkable(row: MatchRow) -> bool:
@@ -140,4 +163,53 @@ def suggest_pairs(rows: Sequence[MatchRow]) -> list[SuggestedPair]:
             continue
         claimed.update((outflow.id, inflow.id))
         suggestions.append(SuggestedPair(outflow_id=outflow.id, inflow_id=inflow.id))
+    return suggestions
+
+
+def _normalized_for_account_match(text: str) -> str:
+    """Fold a payee or account name down to the form compared for equality.
+
+    Deliberately narrow: this only strips a fixed set of directional prefixes
+    and surrounding whitespace/punctuation, then casefolds. No fuzzy or
+    substring matching — a wrong guess here silently turns real spending (or a
+    real transfer to somewhere else) into a transfer, which invents or hides
+    money the same way a bad amount/date pairing would.
+    """
+    stripped = _DIRECTIONAL_PREFIXES.sub("", text.strip())
+    return stripped.strip(" \t:-").casefold()
+
+
+def payee_names_account(payee: str, account_name: str) -> bool:
+    """Whether ``payee`` reads as "(Transfer) To/From <account_name>"."""
+    if not payee.strip() or not account_name.strip():
+        return False
+    return _normalized_for_account_match(payee) == account_name.strip().casefold()
+
+
+def suggest_payee_matched_transfers(
+    rows: Sequence[MatchRow],
+    accounts: Sequence[AccountRef],
+    claimed_ids: Iterable[int] = (),
+) -> list[PayeeMatchedTransfer]:
+    """Rows whose payee names an unsynced account of the user's, unlinked side.
+
+    Restricted to unsynced target accounts: a synced account's other leg will
+    arrive on its own from the next bank sync, so creating it here too would
+    leave a duplicate, orphaned row behind. ``claimed_ids`` excludes rows
+    ``suggest_pairs`` already offered, so the two suggestion lists never
+    overlap.
+    """
+    already_claimed = set(claimed_ids)
+    suggestions: list[PayeeMatchedTransfer] = []
+    for row in rows:
+        if not is_linkable(row) or row.category_id is not None or row.id in already_claimed:
+            continue
+        for account in accounts:
+            if not account.is_unsynced or account.id == row.account_id:
+                continue
+            if payee_names_account(row.payee, account.name):
+                suggestions.append(
+                    PayeeMatchedTransfer(transaction_id=row.id, to_account_id=account.id)
+                )
+                break
     return suggestions
