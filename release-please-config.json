@@ -5,6 +5,9 @@
   "prerelease-type": "beta",
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": false,
+  "packages": {
+    ".": {}
+  },
   "extra-files": [
     {
       "type": "generic",
