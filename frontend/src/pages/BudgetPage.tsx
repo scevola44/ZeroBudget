@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type { BudgetCategoryRow, BudgetGroupRow, BudgetMonth, Scope } from "../api/types";
 import { scopeLabel } from "../api/types";
+import { UnassignedTransactionsIsland } from "../components/UnassignedTransactionsIsland";
 import { currentMonth, monthLabel, shiftMonth } from "../lib/dates";
 import { formatGoal, monthlyGoalCents } from "../lib/goal";
 import { formatCents, parseAmountToCents } from "../lib/money";
@@ -140,6 +141,8 @@ export function BudgetPage() {
           </button>
         </div>
       </header>
+
+      <UnassignedTransactionsIsland />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <ReadyToAssignPill scope="personal" cents={personalReady} neededCents={personalNeededCents} />
