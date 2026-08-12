@@ -37,8 +37,8 @@ from app.schemas.banking import (
     SkippedAccount,
     SyncStatusResponse,
 )
-from app.services.bank_amount import NonEurCurrencyError, ensure_eur
-from app.services.bank_sync import SyncSummary, run_global_sync, sync_connection
+from app.services.bank_amount import NonEurCurrencyError, ensure_eur, is_unknown_currency
+from app.services.bank_sync import SyncSummary, run_global_sync, select_balance, sync_connection
 from app.services.banking_client import BankingClient, BankingError, get_banking_client
 from app.services.encryption import decrypt, encrypt
 from app.services.sync_quota import latest_run, quota_remaining, runs_today
@@ -204,18 +204,6 @@ async def complete_connection(
         raise _map_banking_error(exc) from exc
 
     raw_accounts: list[dict[str, Any]] = session.get("accounts") or []
-    # Temporary diagnostic: logged unconditionally (not just on rejection) so an
-    # empty `accounts` list from Enable Banking — a distinct failure mode from a
-    # bad currency value — is visible instead of producing silent logs.
-    logger.warning(
-        "Enable Banking session accounts: aspsp=%r count=%d accounts=%r",
-        auth_request.aspsp_name,
-        len(raw_accounts),
-        [
-            {"uid": a.get("uid"), "currency": a.get("currency"), "product": a.get("product")}
-            for a in raw_accounts
-        ],
-    )
     eur_accounts: list[dict[str, Any]] = []
     skipped: list[SkippedAccount] = []
     for raw in raw_accounts:
@@ -223,10 +211,42 @@ async def complete_connection(
         try:
             ensure_eur(currency)
         except NonEurCurrencyError:
+            reason = f"currency {currency!r} is not EUR"
+            # Enable Banking's account-list currency can't always be trusted for
+            # multi-currency wallets (e.g. PayPal reports "XXX", ISO 4217's
+            # "no currency" sentinel, at this endpoint even when its balance
+            # is EUR). When the signal is unknown rather than a confident
+            # non-EUR value, check the balance before giving up on the account.
+            if is_unknown_currency(currency):
+                uid = raw.get("uid")
+                balance_currency: str | None = None
+                if uid:
+                    try:
+                        balances = await banking.get_balances(uid)
+                    except BankingError:
+                        balances = []
+                    balance = select_balance(balances)
+                    if balance is not None:
+                        balance_currency = (balance.get("balance_amount") or {}).get("currency")
+                        try:
+                            ensure_eur(balance_currency)
+                        except NonEurCurrencyError:
+                            pass
+                        else:
+                            eur_accounts.append(raw)
+                            continue
+                reason = f"{reason} (balance check found {balance_currency!r})"
+            logger.warning(
+                "Enable Banking account rejected: aspsp=%r uid=%r currency=%r product=%r",
+                auth_request.aspsp_name,
+                raw.get("uid"),
+                currency,
+                raw.get("product"),
+            )
             skipped.append(
                 SkippedAccount(
                     name=_account_display_name(raw, auth_request.aspsp_name),
-                    reason=f"currency {currency!r} is not EUR",
+                    reason=reason,
                 )
             )
             continue

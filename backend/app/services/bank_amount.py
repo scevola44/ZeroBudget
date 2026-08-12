@@ -37,6 +37,19 @@ def ensure_eur(currency: str | None) -> None:
         raise NonEurCurrencyError(currency)
 
 
+def is_unknown_currency(currency: str | None) -> bool:
+    """True if Enable Banking couldn't determine a currency (None, empty, or "XXX").
+
+    "XXX" is the ISO 4217 sentinel for "no currency" — multi-currency
+    wallets (e.g. PayPal) surfaced through Enable Banking's account-list
+    endpoint report it there even when the account's balances/transactions
+    carry a real currency. Distinct from ``ensure_eur``: this answers
+    "is a balance-level currency lookup worth attempting?", not "is this
+    currency valid?".
+    """
+    return currency is None or currency.strip().upper() in ("", "XXX")
+
+
 def bank_amount_to_cents(
     amount: str,
     currency: str | None,
