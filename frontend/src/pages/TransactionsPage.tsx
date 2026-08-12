@@ -30,7 +30,7 @@ export function TransactionsPage() {
   const [startDate, setStartDate] = useState(() => monthStart(currentMonth()));
   const [endDate, setEndDate] = useState(() => monthEnd(currentMonth()));
   const [selectedAccountIds, setSelectedAccountIds] = useState(() => new Set<number>());
-  const [selectedCategoryId, setSelectedCategoryId] = useState("");
+  const [selectedCategoryId, setSelectedCategoryId] = useState("null");
   const [importOpen, setImportOpen] = useState(false);
   const [editingTxnId, setEditingTxnId] = useState<number | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
