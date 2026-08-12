@@ -20,12 +20,20 @@ walk reproduces ``budget_calc``'s rollover semantics, and
 ``test_insights_calc.py`` pins the two against each other month by month — those
 reconciliation tests are load-bearing, not extra coverage.
 
-Transfers between two accounts in the **same** scope are the pool's own money
-changing hands: both legs are skipped, so neither reads as income nor as
-uncategorized spending. Cross-scope legs genuinely move money between pools and
-stay visible. That is the same split ``budget_calc.feeds_ready_to_assign``
-applies to Ready to Assign, and the two must not drift — see
-``_is_internal_transfer``.
+Unassigned (``category_id IS NULL``) outgoing money never counts as spending,
+regardless of whether it is a transfer, which scope it crosses, or just a
+purchase nobody has categorized yet — the user would rather it disappear from
+"Spent" than have it mislabeled as an expense. Unassigned incoming money is
+the opposite: it is income (``_is_income``), the sole source of Ready to
+Assign, unless it is a same-scope transfer leg recycling the pool's own money
+back to itself — that split still matters and mirrors
+``budget_calc.feeds_ready_to_assign``; see ``_is_internal_transfer``.
+
+TODO: this blanket exclusion leans on the assumption that most unassigned
+outflow is really transfers. ``services/transfer_match.py`` has a matching
+TODO for a persisted lookup/linking table to identify transfer pairs more
+reliably than today's stateless heuristic — that would let this exclusion
+become precise instead of blanket.
 """
 
 from __future__ import annotations
@@ -110,9 +118,11 @@ def _is_income(txn: TxnRow) -> bool:
 
 def _is_internal_transfer(txn: TxnRow) -> bool:
     """A transfer whose two legs sit in the same scope — money moving between
-    the user's own accounts inside one pool. It is neither income nor spending,
-    so both legs are excluded from every figure on this page. Cross-scope legs
-    are real movements between pools and are left in, matching
+    the user's own accounts inside one pool. Relevant only to the income side:
+    without this check a same-scope transfer's inflow leg would misread as
+    income. The outflow leg needs no such check — all unassigned outflow is
+    already excluded from spending regardless of scope. Cross-scope legs are
+    real movements between pools, so the inflow leg is left in, matching
     ``budget_calc.feeds_ready_to_assign``.
     """
     return txn.transfer_peer_scope == txn.scope
@@ -146,14 +156,10 @@ class CategorySpending:
 class ScopeSpending:
     scope: str
     by_category: dict[int, CategorySpending]
-    uncategorized_spent_cents: int
 
     @property
     def total_spent_cents(self) -> int:
-        return (
-            sum(spend.spent_cents for spend in self.by_category.values())
-            + self.uncategorized_spent_cents
-        )
+        return sum(spend.spent_cents for spend in self.by_category.values())
 
 
 def compute_spending_breakdown(
@@ -173,21 +179,17 @@ def compute_spending_breakdown(
     """
     spent: dict[tuple[str, int], int] = {}
     refunded: dict[tuple[str, int], int] = {}
-    uncategorized: dict[str, int] = {scope: 0 for scope in scopes}
 
     for txn in transactions:
-        if not period.contains(txn.date) or _is_internal_transfer(txn):
-            continue
-        if txn.category_id is None and not txn.on_budget:
-            # Uncategorized off-budget (savings) activity never entered the
-            # budget, so it is neither income nor uncategorized spending.
-            continue
-        scope = _scope_of(txn, category_scope)
-        if scope not in uncategorized:
+        if not period.contains(txn.date):
             continue
         if txn.category_id is None:
-            if txn.amount_cents < 0:
-                uncategorized[scope] -= txn.amount_cents
+            # Unassigned money never appears in the spending breakdown:
+            # outflow never counts as an expense, and inflow is income
+            # (handled in flow_by_month), not spend.
+            continue
+        scope = _scope_of(txn, category_scope)
+        if scope not in scopes:
             continue
         key = (scope, txn.category_id)
         if txn.amount_cents < 0:
@@ -209,7 +211,6 @@ def compute_spending_breakdown(
                 )
                 for category_id in category_ids
             },
-            uncategorized_spent_cents=uncategorized[scope],
         )
     return breakdown
 
@@ -223,8 +224,11 @@ class MonthFlow:
 
     @property
     def net_cents(self) -> int:
-        """Income plus refunds minus spending — the scope's net cash flow, and
-        the honest answer to "did I stay out of debt"."""
+        """Income plus refunds minus spending. This is the scope's true cash
+        flow only once every euro is either categorized or counted as income —
+        unassigned outgoing money is never spending (see the module
+        docstring), so real money leaving the account uncategorized will not
+        show up here either."""
         return self.income_cents + self.refund_cents - self.spent_cents
 
 
@@ -251,9 +255,11 @@ def flow_by_month(
     for txn in transactions:
         if _scope_of(txn, category_scope) != scope or _is_internal_transfer(txn):
             continue
-        if txn.category_id is None and not txn.on_budget:
-            # Excluded entirely, not reclassified as spending — see the
-            # identical guard in ``compute_spending_breakdown``.
+        if txn.category_id is None and (txn.amount_cents < 0 or not txn.on_budget):
+            # Unassigned outflow never counts as spending (see the identical
+            # guard in compute_spending_breakdown), and unassigned off-budget
+            # inflow never reached Ready to Assign, so neither is reclassified
+            # here — both are excluded entirely.
             continue
         bucket = month_start(txn.date)
         if bucket not in income:

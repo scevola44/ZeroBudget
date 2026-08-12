@@ -249,7 +249,6 @@ def _scope_breakdown(
     return ScopeBreakdown(
         scope=spending.scope,
         total_spent_cents=spending.total_spent_cents,
-        uncategorized_spent_cents=spending.uncategorized_spent_cents,
         groups=sorted(
             (
                 GroupSpendingRow(

@@ -161,7 +161,7 @@ def test_a_refund_only_month_has_zero_spending_never_negative():
     assert spending["personal"].total_spent_cents == 0
 
 
-def test_uncategorized_outflow_counts_towards_the_scope_but_no_category():
+def test_uncategorized_outflow_never_counts_as_spending():
     period = _range(_month(2026, 4), _month(2026, 4))
     transactions = [
         _txn(category_id=GROCERIES, date=date(2026, 4, 5), amount_cents=-40_000),
@@ -172,9 +172,8 @@ def test_uncategorized_outflow_counts_towards_the_scope_but_no_category():
         transactions, period, {GROCERIES: "personal"}, SCOPES
     )
 
-    assert spending["personal"].uncategorized_spent_cents == 5_000
     assert set(spending["personal"].by_category) == {GROCERIES}
-    assert spending["personal"].total_spent_cents == 45_000
+    assert spending["personal"].total_spent_cents == 40_000
 
 
 def test_uncategorized_inflow_is_income_and_never_spending():
@@ -185,7 +184,6 @@ def test_uncategorized_inflow_is_income_and_never_spending():
 
     spending = compute_spending_breakdown(transactions, period, {}, SCOPES)
 
-    assert spending["personal"].uncategorized_spent_cents == 0
     assert spending["personal"].total_spent_cents == 0
 
 
@@ -234,7 +232,6 @@ def test_uncategorized_off_budget_outflow_is_excluded_from_spending_breakdown():
 
     spending = compute_spending_breakdown(transactions, period, {}, SCOPES)
 
-    assert spending["personal"].uncategorized_spent_cents == 0
     assert spending["personal"].total_spent_cents == 0
 
 
@@ -246,7 +243,6 @@ def test_uncategorized_off_budget_inflow_is_not_income():
 
     spending = compute_spending_breakdown(transactions, period, {}, SCOPES)
 
-    assert spending["personal"].uncategorized_spent_cents == 0
     assert spending["personal"].total_spent_cents == 0
 
 
@@ -310,21 +306,39 @@ def test_every_month_gets_a_row_even_with_no_activity():
 
 
 def test_net_flow_equals_the_sum_of_every_amount_in_the_scope():
-    """The identity that makes "am I staying out of debt" honest."""
+    """The identity holds when every euro is either income or categorized
+    spending. Unassigned outgoing money breaks it by design — see
+    test_uncategorized_outflow_is_excluded_from_net_flow."""
     period = _range(_month(2026, 4), _month(2026, 4))
     transactions = [
         _txn(category_id=None, date=date(2026, 4, 1), amount_cents=250_000),
         _txn(category_id=GROCERIES, date=date(2026, 4, 5), amount_cents=-40_000),
         _txn(category_id=GROCERIES, date=date(2026, 4, 9), amount_cents=3_000),
-        _txn(category_id=None, date=date(2026, 4, 12), amount_cents=-5_000),
     ]
 
     flow = flow_by_month(transactions, period, "personal", {GROCERIES: "personal"})[0]
 
     assert flow.income_cents == 250_000
-    assert flow.spent_cents == 45_000
+    assert flow.spent_cents == 40_000
     assert flow.refund_cents == 3_000
     assert flow.net_cents == sum(txn.amount_cents for txn in transactions)
+
+
+def test_uncategorized_outflow_is_excluded_from_net_flow():
+    """Unassigned outgoing money never counts as spending, so it never
+    reduces net cash flow either — real money can leave the account without
+    net_cents reflecting it. That's the accepted cost of never treating
+    uncategorized outflow as an expense."""
+    period = _range(_month(2026, 4), _month(2026, 4))
+    transactions = [
+        _txn(category_id=GROCERIES, date=date(2026, 4, 5), amount_cents=-40_000),
+        _txn(category_id=None, date=date(2026, 4, 6), amount_cents=-5_000),
+    ]
+
+    flow = flow_by_month(transactions, period, "personal", {GROCERIES: "personal"})[0]
+
+    assert flow.spent_cents == 40_000
+    assert flow.income_cents == 0
 
 
 def test_flows_are_isolated_per_scope():
