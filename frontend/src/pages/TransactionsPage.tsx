@@ -116,7 +116,7 @@ export function TransactionsPage() {
   const filteredTxns = (txnsQuery.data ?? []).filter((t) => {
     if (selectedAccountIds.size > 0 && !selectedAccountIds.has(t.account_id)) return false;
     if (selectedCategoryId === "null") {
-      if (t.category_id !== null) return false;
+      if (t.category_id !== null || t.transfer_peer_id !== null) return false;
     } else if (selectedCategoryId !== "") {
       if (t.category_id !== Number(selectedCategoryId)) return false;
     }
