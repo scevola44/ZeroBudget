@@ -28,6 +28,12 @@ the opposite: it is income (``_is_income``), the sole source of Ready to
 Assign, unless it is a same-scope transfer leg recycling the pool's own money
 back to itself — that split still matters and mirrors
 ``budget_calc.feeds_ready_to_assign``; see ``_is_internal_transfer``.
+
+TODO: this blanket exclusion leans on the assumption that most unassigned
+outflow is really transfers. ``services/transfer_match.py`` has a matching
+TODO for a persisted lookup/linking table to identify transfer pairs more
+reliably than today's stateless heuristic — that would let this exclusion
+become precise instead of blanket.
 """
 
 from __future__ import annotations

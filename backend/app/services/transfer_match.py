@@ -3,7 +3,9 @@
 A bank sync fetches each account independently, so it has no idea that the
 -500 leaving checking and the +500 landing in savings are one movement of money.
 It writes two unlinked, uncategorized transactions, and until they are linked
-they read as real income and real spending everywhere on Insights.
+the inflow leg reads as real income on Insights (the outflow leg no longer
+reads as spending either way — unassigned outflow is never spending, linked
+or not).
 
 This module is the single place that decides which rows *could* be halves of the
 same transfer, so the "link these two" picker and the post-sync suggestion list
@@ -14,6 +16,14 @@ split.
 Matching is deliberately strict. Linking is destructive to the budget: both legs
 drop out of Ready to Assign on the assumption that they cancel out, so a false
 pair silently invents or destroys money.
+
+TODO: the matching above is computed statelessly, fresh from ``transactions``
+on every call — nothing about a candidate match is persisted until the user
+confirms a link. The owner would like a real lookup/linking table to connect
+transfer pairs more durably instead of (or alongside) this point-in-time
+heuristic. Note this would revisit the explicit decision in ROADMAP.md
+(Phase 6, "Import matching / approval") against a staging table, made to avoid
+a second source of truth for ``budget_calc``'s inputs.
 """
 
 from __future__ import annotations

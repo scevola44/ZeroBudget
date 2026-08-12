@@ -438,6 +438,15 @@ still counts as that scope's income, same as any other unassigned inflow.
 
    Still open: matching synced rows against *manual* entries the user typed
    ahead of the sync (the double-counting half of this item).
+
+   **[owner decision] TODO**: replace (or supplement) the stateless
+   `transfer_match.py` heuristic with a real lookup/linking table that
+   connects transfer pairs more durably, instead of recomputing candidates
+   fresh on every call. Raised after Phase 5's Insights change made *all*
+   unassigned outflow invisible on the assumption it's mostly transfers — a
+   more reliable matcher would let that exclusion be precise instead of
+   blanket. Adopting this means revisiting the **[decision]** above against a
+   staging table.
 3. ~~Plaid webhooks~~ **Done differently**: Plaid was replaced by Enable
    Banking (PSD2, redirect consent), which has no webhook/delta API. Instead
    of webhooks, automatic sync is an in-process scheduler (`SYNC_MODE=auto`)
