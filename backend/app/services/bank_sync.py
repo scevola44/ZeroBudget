@@ -126,9 +126,27 @@ def _as_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
+def _is_eur_balance(balance: dict[str, Any]) -> bool:
+    currency = (balance.get("balance_amount") or {}).get("currency")
+    return bool(currency) and currency.strip().upper() == "EUR"
+
+
 def select_balance(balances: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Pick one balance entry per ``_BALANCE_TYPE_PREFERENCE``, else the first available."""
-    by_type = {b.get("balance_type"): b for b in balances}
+    """Pick one balance entry per ``_BALANCE_TYPE_PREFERENCE``, else the first available.
+
+    Multi-currency wallets (e.g. PayPal) can report several balance entries
+    sharing the same ``balance_type`` -- one per currency held. ZeroBudget is
+    EUR-only, so once a EUR entry has been selected for a given type it is
+    never displaced by a later non-EUR entry of that same type; a non-EUR
+    entry is only ever displaced by a EUR one.
+    """
+    by_type: dict[str | None, dict[str, Any]] = {}
+    for b in balances:
+        balance_type = b.get("balance_type")
+        current = by_type.get(balance_type)
+        if current is not None and _is_eur_balance(current) and not _is_eur_balance(b):
+            continue
+        by_type[balance_type] = b
     for balance_type in _BALANCE_TYPE_PREFERENCE:
         if balance_type in by_type:
             return by_type[balance_type]

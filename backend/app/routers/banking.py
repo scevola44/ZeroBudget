@@ -212,6 +212,7 @@ async def complete_connection(
             ensure_eur(currency)
         except NonEurCurrencyError:
             reason = f"currency {currency!r} is not EUR"
+            balance_currency: str | None = None
             # Enable Banking's account-list currency can't always be trusted for
             # multi-currency wallets (e.g. PayPal reports "XXX", ISO 4217's
             # "no currency" sentinel, at this endpoint even when its balance
@@ -219,7 +220,6 @@ async def complete_connection(
             # non-EUR value, check the balance before giving up on the account.
             if is_unknown_currency(currency):
                 uid = raw.get("uid")
-                balance_currency: str | None = None
                 if uid:
                     try:
                         balances = await banking.get_balances(uid)
@@ -259,10 +259,12 @@ async def complete_connection(
                             continue
                 reason = f"{reason} (balance check found {balance_currency!r})"
             logger.warning(
-                "Enable Banking account rejected: aspsp=%r uid=%r currency=%r product=%r",
+                "Enable Banking account rejected: aspsp=%r uid=%r currency=%r "
+                "balance_currency=%r product=%r",
                 auth_request.aspsp_name,
                 raw.get("uid"),
                 currency,
+                balance_currency,
                 raw.get("product"),
             )
             skipped.append(
