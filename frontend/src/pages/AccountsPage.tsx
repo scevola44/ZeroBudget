@@ -1,13 +1,23 @@
-import { useCallback, useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { usePlaidLink } from "react-plaid-link";
 
 import { api, ApiError } from "../api/client";
-import { plaidApi } from "../api/plaid";
-import type { ExchangeResponse, SyncResponse } from "../api/plaid";
-import type { Account } from "../api/types";
+import { bankingApi } from "../api/banking";
+import type { Aspsp, BankConnection, SyncStatus } from "../api/banking";
+import { MANUAL_ACCOUNT_TYPES, type Account, type Scope } from "../api/types";
+import { EditAccountModal, type AccountEdit } from "../components/EditAccountModal";
+import { ScopeChip } from "../components/ScopeChip";
 import { formatCents } from "../lib/money";
+
+const CONSENT_EXPIRY_WARNING_DAYS = 7;
+
+function connectionNeedsReauth(connection: BankConnection): boolean {
+  if (connection.last_error_code === "SESSION_EXPIRED") return true;
+  if (!connection.valid_until) return false;
+  const expiresInMs = new Date(connection.valid_until).getTime() - Date.now();
+  return expiresInMs < CONSENT_EXPIRY_WARNING_DAYS * 24 * 60 * 60 * 1000;
+}
 
 export function AccountsPage() {
   const qc = useQueryClient();
@@ -15,14 +25,22 @@ export function AccountsPage() {
     queryKey: ["accounts"],
     queryFn: () => api<Account[]>("/api/accounts"),
   });
+  const connectionsQuery = useQuery<BankConnection[]>({
+    queryKey: ["bank-connections"],
+    queryFn: bankingApi.listConnections,
+  });
 
   const [name, setName] = useState("");
   const [type, setType] = useState("checking");
+  const [scope, setScope] = useState<Scope>("personal");
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [showClosed, setShowClosed] = useState(false);
 
   const createMutation = useMutation({
-    mutationFn: (body: { name: string; type: string }) =>
+    mutationFn: (body: { name: string; type: string; scope: Scope }) =>
       api<Account>("/api/accounts", { method: "POST", body }),
     onSuccess: () => {
       setName("");
@@ -30,21 +48,37 @@ export function AccountsPage() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: (vars: { accountId: number; edit: AccountEdit }) =>
+      api<Account>(`/api/accounts/${vars.accountId}`, {
+        method: "PATCH",
+        body: vars.edit,
+      }),
+    onSuccess: () => {
+      setEditingAccountId(null);
+      setEditError(null);
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+    onError: (err) => setEditError(err instanceof Error ? err.message : "Update failed"),
+  });
+
+  const openAccounts = (accountsQuery.data ?? []).filter((a) => !a.closed);
+  const closedAccounts = (accountsQuery.data ?? []).filter((a) => a.closed);
+  const visibleAccounts = showClosed
+    ? [...openAccounts, ...closedAccounts]
+    : openAccounts;
+
+  const connectionsNeedingReauth = (connectionsQuery.data ?? []).filter(connectionNeedsReauth);
+
   return (
     <div className="max-w-3xl space-y-6">
       <h1 className="text-2xl font-semibold">Accounts</h1>
 
-      <PlaidLinkCard
-        onLinked={(summary) => {
-          const skipped = summary.skipped_accounts.length;
-          setFeedback(
-            `Linked ${summary.account_ids.length} account(s) · imported ${summary.sync.added} transaction(s)` +
-              (skipped ? ` · skipped ${skipped} non-EUR account(s)` : "")
-          );
+      <BankLinkCard
+        onFeedback={(message) => {
+          setFeedback(message);
           setError(null);
-          void qc.invalidateQueries({ queryKey: ["accounts"] });
-          void qc.invalidateQueries({ queryKey: ["transactions"] });
-          void qc.invalidateQueries({ queryKey: ["budget"] });
         }}
         onError={(message) => {
           setError(message);
@@ -52,11 +86,23 @@ export function AccountsPage() {
         }}
       />
 
+      {connectionsNeedingReauth.map((connection) => (
+        <ReauthBanner
+          key={connection.id}
+          connection={connection}
+          scope={
+            (accountsQuery.data ?? []).find((a) => a.bank_connection_id === connection.id)
+              ?.scope ?? "personal"
+          }
+          onError={setError}
+        />
+      ))}
+
       <form
         className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 flex flex-col sm:flex-row gap-3 sm:items-end"
         onSubmit={(e) => {
           e.preventDefault();
-          if (name.trim()) createMutation.mutate({ name: name.trim(), type });
+          if (name.trim()) createMutation.mutate({ name: name.trim(), type, scope });
         }}
       >
         <div className="flex-1 space-y-1">
@@ -71,15 +117,42 @@ export function AccountsPage() {
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Type</label>
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value)}
-            className="border border-stone-300 dark:border-stone-600 rounded-lg px-3 py-2 bg-white dark:bg-stone-900"
-          >
-            <option value="checking">Checking</option>
-            <option value="savings">Savings</option>
-            <option value="cash">Cash</option>
-          </select>
+          <div className="relative">
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
+            >
+              {MANUAL_ACCOUNT_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div className="space-y-1">
+          <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Scope</label>
+          <div className="relative">
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value as Scope)}
+              className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
+            >
+              <option value="personal">Personal</option>
+              <option value="shared">Family</option>
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 6l4 4 4-4" />
+              </svg>
+            </div>
+          </div>
         </div>
         <button
           type="submit"
@@ -104,7 +177,7 @@ export function AccountsPage() {
       <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl overflow-hidden">
         {accountsQuery.isLoading && <div className="p-5 text-stone-500 dark:text-stone-400">Loading…</div>}
         {accountsQuery.data && accountsQuery.data.length === 0 && (
-          <div className="p-5 text-stone-500 dark:text-stone-400">No accounts yet. Add one above or link a bank.</div>
+          <div className="p-5 text-stone-500 dark:text-stone-400">No accounts yet. Add one above or connect a bank.</div>
         )}
         {accountsQuery.data && accountsQuery.data.length > 0 && (
           <div className="overflow-x-auto">
@@ -119,18 +192,16 @@ export function AccountsPage() {
               </tr>
             </thead>
             <tbody>
-              {accountsQuery.data.map((a) => (
+              {visibleAccounts.map((a) => (
                 <AccountRow
                   key={a.id}
                   account={a}
-                  onSynced={(summary) => {
-                    setFeedback(
-                      `Synced · +${summary.added} added, ${summary.modified} updated, ${summary.removed} removed`
-                    );
-                    setError(null);
+                  onEdit={() => {
+                    setEditError(null);
+                    setEditingAccountId(a.id);
                   }}
                   onUnlinked={() => {
-                    setFeedback("Bank unlinked.");
+                    setFeedback("Bank disconnected.");
                     setError(null);
                   }}
                   onError={(message) => {
@@ -143,56 +214,95 @@ export function AccountsPage() {
           </table>
           </div>
         )}
+        {closedAccounts.length > 0 && (
+          <div className="border-t border-stone-100 dark:border-stone-800 px-5 py-3">
+            <button
+              onClick={() => setShowClosed((v) => !v)}
+              className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+            >
+              {showClosed
+                ? "Hide closed accounts"
+                : `Show closed accounts (${closedAccounts.length})`}
+            </button>
+          </div>
+        )}
       </div>
+
+      {editingAccountId !== null && accountsQuery.data && (
+        <EditAccountModal
+          account={accountsQuery.data.find((a) => a.id === editingAccountId)!}
+          isOpen={true}
+          onClose={() => {
+            setEditingAccountId(null);
+            setEditError(null);
+          }}
+          onSave={(edit) => {
+            updateMutation.mutate({ accountId: editingAccountId, edit });
+          }}
+          isPending={updateMutation.isPending}
+          error={editError}
+        />
+      )}
     </div>
   );
 }
 
 function AccountRow({
   account,
-  onSynced,
+  onEdit,
   onUnlinked,
   onError,
 }: {
   account: Account;
-  onSynced: (summary: SyncResponse) => void;
+  onEdit: () => void;
   onUnlinked: () => void;
   onError: (message: string) => void;
 }) {
   const qc = useQueryClient();
 
-  const syncMutation = useMutation({
-    mutationFn: (itemId: number) => plaidApi.syncItem(itemId),
-    onSuccess: (summary) => {
-      onSynced(summary);
-      void qc.invalidateQueries({ queryKey: ["accounts"] });
-      void qc.invalidateQueries({ queryKey: ["transactions"] });
-      void qc.invalidateQueries({ queryKey: ["budget"] });
-    },
-    onError: (err) => onError(err instanceof Error ? err.message : "Sync failed"),
-  });
-
   const unlinkMutation = useMutation({
-    mutationFn: (itemId: number) => plaidApi.unlinkItem(itemId),
+    mutationFn: (connectionId: number) => bankingApi.unlinkConnection(connectionId),
     onSuccess: () => {
       onUnlinked();
       void qc.invalidateQueries({ queryKey: ["accounts"] });
       void qc.invalidateQueries({ queryKey: ["transactions"] });
       void qc.invalidateQueries({ queryKey: ["budget"] });
+      void qc.invalidateQueries({ queryKey: ["bank-connections"] });
     },
-    onError: (err) => onError(err instanceof Error ? err.message : "Unlink failed"),
+    onError: (err) => onError(err instanceof Error ? err.message : "Disconnect failed"),
   });
 
-  const isLinked = account.plaid_item_id !== null;
+  // The server refuses to delete an account that has transactions — closing is
+  // the way to retire those. Its message is what the user sees.
+  const deleteMutation = useMutation({
+    mutationFn: () => api(`/api/accounts/${account.id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+    onError: (err) => onError(err instanceof Error ? err.message : "Delete failed"),
+  });
 
   return (
-    <tr className="border-t border-stone-100 dark:border-stone-800">
+    <tr
+      className={`border-t border-stone-100 dark:border-stone-800 ${
+        account.closed ? "opacity-60" : ""
+      }`}
+    >
       <td className="px-5 py-3">
-        <Link to={`/accounts/${account.id}`} className="text-indigo-600 dark:text-indigo-400 hover:underline">
-          {account.name}
-        </Link>
-        {account.plaid_mask && (
-          <span className="ml-2 text-xs text-stone-400 dark:text-stone-500">••{account.plaid_mask}</span>
+        <div className="flex items-center gap-2">
+          <Link to={`/accounts/${account.id}`} className="text-indigo-600 dark:text-indigo-400 hover:underline">
+            {account.name}
+          </Link>
+          <ScopeChip scope={account.scope} />
+          {account.closed && (
+            <span className="text-xs rounded-full px-2 py-0.5 bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400">
+              Closed
+            </span>
+          )}
+        </div>
+        {account.bank_account_mask && (
+          <span className="text-xs text-stone-400 dark:text-stone-500">••{account.bank_account_mask}</span>
         )}
       </td>
       <td className="hidden sm:table-cell px-5 py-3 capitalize text-stone-600 dark:text-stone-400">{account.type}</td>
@@ -201,101 +311,300 @@ function AccountRow({
       </td>
       <td className="px-5 py-3 text-right tabular-nums">{formatCents(account.balance_cents)}</td>
       <td className="px-5 py-3 text-right space-x-2">
-        {isLinked && account.plaid_item_id !== null && (
-          <>
-            <button
-              onClick={() => syncMutation.mutate(account.plaid_item_id!)}
-              disabled={syncMutation.isPending}
-              className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline disabled:text-stone-400 dark:disabled:text-stone-500 px-2 py-1"
-            >
-              {syncMutation.isPending ? "Syncing…" : "Sync"}
-            </button>
-            <button
-              onClick={() => {
-                if (confirm("Unlink this bank? Its accounts and imported transactions will be deleted.")) {
-                  unlinkMutation.mutate(account.plaid_item_id!);
-                }
-              }}
-              disabled={unlinkMutation.isPending}
-              className="text-xs text-red-600 dark:text-red-400 hover:underline disabled:text-stone-400 dark:disabled:text-stone-500 px-2 py-1"
-            >
-              Unlink
-            </button>
-          </>
+        <button
+          onClick={onEdit}
+          className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline px-2 py-1"
+        >
+          Edit
+        </button>
+        {account.bank_connection_id !== null ? (
+          <button
+            onClick={() => {
+              if (confirm("Disconnect this bank? Its accounts and imported transactions will be deleted.")) {
+                unlinkMutation.mutate(account.bank_connection_id!);
+              }
+            }}
+            disabled={unlinkMutation.isPending}
+            className="text-xs text-red-600 dark:text-red-400 hover:underline disabled:text-stone-400 dark:disabled:text-stone-500 px-2 py-1"
+          >
+            Disconnect
+          </button>
+        ) : (
+          <button
+            onClick={() => deleteMutation.mutate()}
+            disabled={deleteMutation.isPending}
+            className="text-xs text-red-600 dark:text-red-400 hover:underline disabled:text-stone-400 dark:disabled:text-stone-500 px-2 py-1"
+          >
+            Delete
+          </button>
         )}
       </td>
     </tr>
   );
 }
 
-function PlaidLinkCard({
-  onLinked,
+function ReauthBanner({
+  connection,
+  scope,
   onError,
 }: {
-  onLinked: (summary: ExchangeResponse) => void;
+  connection: BankConnection;
+  scope: Scope;
   onError: (message: string) => void;
 }) {
-  const [linkToken, setLinkToken] = useState<string | null>(null);
-  const [isRequesting, setIsRequesting] = useState(false);
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
-  const onSuccess = useCallback(
-    async (public_token: string) => {
-      try {
-        const resp = await plaidApi.exchangePublicToken(public_token);
-        onLinked(resp);
-      } catch (err) {
-        onError(err instanceof Error ? err.message : "Failed to link bank");
-      } finally {
-        setLinkToken(null);
-      }
-    },
-    [onLinked, onError]
-  );
-
-  const { open, ready } = usePlaidLink({
-    token: linkToken,
-    onSuccess,
-    onExit: () => setLinkToken(null),
-  });
-
-  const handleClick = async () => {
-    setIsRequesting(true);
+  const reconnect = async () => {
+    setIsRedirecting(true);
     try {
-      const { link_token } = await plaidApi.createLinkToken();
-      setLinkToken(link_token);
+      const { authorization_url } = await bankingApi.connect(
+        connection.aspsp_name,
+        connection.aspsp_country,
+        scope
+      );
+      window.location.href = authorization_url;
     } catch (err) {
-      if (err instanceof ApiError && err.status === 503) {
-        onError("Plaid is not configured on the server. Set PLAID_CLIENT_ID / PLAID_SECRET to enable bank linking.");
-      } else {
-        onError(err instanceof Error ? err.message : "Could not start bank link");
-      }
-    } finally {
-      setIsRequesting(false);
+      setIsRedirecting(false);
+      onError(err instanceof Error ? err.message : "Could not start bank re-authorization");
     }
   };
 
-  // Auto-open Plaid Link once the token is set and the SDK is ready.
-  useEffect(() => {
-    if (linkToken && ready) {
-      open();
+  const expired = connection.last_error_code === "SESSION_EXPIRED";
+  return (
+    <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-xl px-4 py-3 text-sm flex items-center justify-between gap-4">
+      <span>
+        {expired
+          ? `Access to ${connection.aspsp_name} has expired.`
+          : `Access to ${connection.aspsp_name} expires soon.`}{" "}
+        Re-authorize at your bank to keep syncing. Note: this creates a new connection — disconnect
+        the old one afterwards.
+      </span>
+      <button
+        onClick={() => void reconnect()}
+        disabled={isRedirecting}
+        className="shrink-0 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-400 text-white font-medium rounded-lg px-3 py-1.5 text-xs"
+      >
+        {isRedirecting ? "Redirecting…" : "Reconnect"}
+      </button>
+    </div>
+  );
+}
+
+function BankLinkCard({
+  onFeedback,
+  onError,
+}: {
+  onFeedback: (message: string) => void;
+  onError: (message: string) => void;
+}) {
+  const qc = useQueryClient();
+  const [isPicking, setIsPicking] = useState(false);
+  const [country, setCountry] = useState("");
+  const [aspspName, setAspspName] = useState("");
+  const [linkScope, setLinkScope] = useState<Scope>("personal");
+  const [isRedirecting, setIsRedirecting] = useState(false);
+
+  const statusQuery = useQuery<SyncStatus>({
+    queryKey: ["sync-status"],
+    queryFn: bankingApi.syncStatus,
+  });
+  const aspspsQuery = useQuery<Aspsp[]>({
+    queryKey: ["aspsps"],
+    queryFn: bankingApi.listAspsps,
+    enabled: isPicking,
+    staleTime: 24 * 60 * 60 * 1000,
+    retry: false,
+  });
+
+  const countries = useMemo(
+    () => [...new Set((aspspsQuery.data ?? []).map((a) => a.country))].sort(),
+    [aspspsQuery.data]
+  );
+  const banks = useMemo(
+    () => (aspspsQuery.data ?? []).filter((a) => a.country === country),
+    [aspspsQuery.data, country]
+  );
+
+  const syncMutation = useMutation({
+    mutationFn: bankingApi.syncNow,
+    onSuccess: (result) => {
+      const added = result.connections.reduce((sum, c) => sum + c.added, 0);
+      const modified = result.connections.reduce((sum, c) => sum + c.modified, 0);
+      const failed = result.connections.filter((c) => c.error_code !== null);
+      let message = `Synced · +${added} added, ${modified} updated · ${result.quota.remaining_today} sync(s) left today`;
+      if (failed.length > 0) {
+        message += ` · failed: ${failed.map((c) => c.aspsp_name).join(", ")}`;
+      }
+      onFeedback(message);
+      void qc.invalidateQueries({ queryKey: ["accounts"] });
+      void qc.invalidateQueries({ queryKey: ["transactions"] });
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+      void qc.invalidateQueries({ queryKey: ["bank-connections"] });
+      void qc.invalidateQueries({ queryKey: ["sync-status"] });
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 429) {
+        onError(err.message);
+      } else {
+        onError(err instanceof Error ? err.message : "Sync failed");
+      }
+      void qc.invalidateQueries({ queryKey: ["sync-status"] });
+    },
+  });
+
+  const startConnect = async () => {
+    if (!aspspName || !country) return;
+    setIsRedirecting(true);
+    try {
+      const { authorization_url } = await bankingApi.connect(aspspName, country, linkScope);
+      window.location.href = authorization_url;
+    } catch (err) {
+      setIsRedirecting(false);
+      if (err instanceof ApiError && err.status === 503) {
+        onError(
+          "Enable Banking is not configured on the server. Set ENABLE_BANKING_APP_ID / ENABLE_BANKING_PRIVATE_KEY to enable bank connections."
+        );
+      } else {
+        onError(err instanceof Error ? err.message : "Could not start bank connection");
+      }
     }
-  }, [linkToken, ready, open]);
+  };
+
+  const status = statusQuery.data;
+  const quotaExhausted = status !== undefined && status.remaining_today <= 0;
 
   return (
-    <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 flex items-center justify-between gap-4">
-      <div>
-        <div className="font-medium">Link a bank account</div>
-        <div className="text-sm text-stone-500 dark:text-stone-400">
-          Import transactions automatically via Plaid. EUR accounts only.
+    <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="font-medium">Connect a bank</div>
+          <div className="text-sm text-stone-500 dark:text-stone-400">
+            Import transactions via Enable Banking (PSD2). EUR accounts only.
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {status && (
+            <button
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending || quotaExhausted}
+              title={
+                status.mode === "auto"
+                  ? "Automatic sync is on; manual runs share the same daily limit."
+                  : undefined
+              }
+              className="border border-indigo-600 dark:border-indigo-400 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 disabled:border-stone-300 disabled:text-stone-400 dark:disabled:border-stone-600 dark:disabled:text-stone-500 font-medium rounded-lg px-4 py-2"
+            >
+              {syncMutation.isPending
+                ? "Syncing…"
+                : quotaExhausted
+                  ? "Daily limit reached"
+                  : `Sync now (${status.remaining_today} left today)`}
+            </button>
+          )}
+          <button
+            onClick={() => setIsPicking((v) => !v)}
+            className="bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-medium rounded-lg px-4 py-2"
+          >
+            {isPicking ? "Cancel" : "Connect bank"}
+          </button>
         </div>
       </div>
-      <button
-        onClick={handleClick}
-        disabled={isRequesting || Boolean(linkToken)}
-        className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-medium rounded-lg px-4 py-2"
-      >
-        {isRequesting ? "Loading…" : linkToken ? "Opening…" : "Link bank account"}
-      </button>
+
+      {status?.mode === "auto" && (
+        <div className="text-xs text-stone-500 dark:text-stone-400">
+          Automatic sync: up to {status.max_per_day}×/day
+          {status.next_auto_sync_at &&
+            ` · next around ${new Date(status.next_auto_sync_at).toLocaleTimeString()}`}
+        </div>
+      )}
+
+      {isPicking && (
+        <div className="flex flex-col sm:flex-row gap-3 sm:items-end border-t border-stone-100 dark:border-stone-800 pt-4">
+          {aspspsQuery.isLoading && (
+            <div className="text-sm text-stone-500 dark:text-stone-400">Loading banks…</div>
+          )}
+          {aspspsQuery.isError && (
+            <div className="text-sm text-red-600 dark:text-red-400">
+              {aspspsQuery.error instanceof ApiError && aspspsQuery.error.status === 503
+                ? "Enable Banking is not configured on the server."
+                : "Could not load the bank list."}
+            </div>
+          )}
+          {aspspsQuery.data && (
+            <>
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Country</label>
+                <div className="relative">
+                  <select
+                    value={country}
+                    onChange={(e) => {
+                      setCountry(e.target.value);
+                      setAspspName("");
+                    }}
+                    className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
+                  >
+                    <option value="">Select…</option>
+                    {countries.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+                    <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 6l4 4 4-4" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+              <div className="flex-1 space-y-1">
+                <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Bank</label>
+                <div className="relative">
+                  <select
+                    value={aspspName}
+                    onChange={(e) => setAspspName(e.target.value)}
+                    disabled={!country}
+                    className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900 disabled:text-stone-400 dark:disabled:text-stone-500"
+                  >
+                    <option value="">{country ? "Select…" : "Pick a country first"}</option>
+                    {banks.map((b) => (
+                      <option key={b.name} value={b.name}>{b.name}</option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+                    <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 6l4 4 4-4" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Scope</label>
+                <div className="relative">
+                  <select
+                    value={linkScope}
+                    onChange={(e) => setLinkScope(e.target.value as Scope)}
+                    className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
+                  >
+                    <option value="personal">Personal</option>
+                    <option value="shared">Family</option>
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
+                    <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 6l4 4 4-4" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => void startConnect()}
+                disabled={!aspspName || isRedirecting}
+                className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-medium rounded-lg px-4 py-2"
+              >
+                {isRedirecting ? "Redirecting…" : "Continue to bank"}
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

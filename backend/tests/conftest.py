@@ -12,7 +12,10 @@ import os
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["JWT_SECRET"] = "test-secret-long-enough-for-hs256-key-32bytes"
 # Stable Fernet key so tests can round-trip encrypted values across sessions.
-os.environ["PLAID_ENCRYPTION_KEY"] = "UTxtCGAy-teDR0N8K2tUap0l6aguAg1OtH_rDulrel0="
+os.environ["BANK_ENCRYPTION_KEY"] = "UTxtCGAy-teDR0N8K2tUap0l6aguAg1OtH_rDulrel0="
+# Banking router tests exercise the connect flow with a fake client; the
+# redirect URL just has to be present.
+os.environ["ENABLE_BANKING_REDIRECT_URL"] = "http://test/banking/callback"
 
 from collections.abc import AsyncIterator  # noqa: E402
 
@@ -73,27 +76,57 @@ async def register_user(
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
-async def create_account(client: AsyncClient, headers: dict[str, str], name: str = "Checking") -> int:
+async def create_account(
+    client: AsyncClient,
+    headers: dict[str, str],
+    name: str = "Checking",
+    *,
+    scope: str = "personal",
+    type: str = "checking",
+) -> int:
     r = await client.post(
-        "/api/accounts", json={"name": name, "type": "checking"}, headers=headers
+        "/api/accounts",
+        json={"name": name, "type": type, "scope": scope},
+        headers=headers,
     )
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
 
-async def create_group(client: AsyncClient, headers: dict[str, str], name: str = "Bills") -> int:
-    r = await client.post("/api/category-groups", json={"name": name}, headers=headers)
+async def create_group(
+    client: AsyncClient,
+    headers: dict[str, str],
+    name: str = "Bills",
+    *,
+    scope: str = "personal",
+) -> int:
+    r = await client.post(
+        "/api/category-groups",
+        json={"name": name, "scope": scope},
+        headers=headers,
+    )
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
 
 async def create_category(
-    client: AsyncClient, headers: dict[str, str], group_id: int, name: str = "Rent"
+    client: AsyncClient,
+    headers: dict[str, str],
+    group_id: int,
+    name: str = "Rent",
+    *,
+    goal_kind: str = "monthly",
+    goal_amount_cents: int = 10_000,
+    goal_target_month: str | None = None,
 ) -> int:
-    r = await client.post(
-        "/api/categories",
-        json={"group_id": group_id, "name": name},
-        headers=headers,
-    )
+    body: dict = {
+        "group_id": group_id,
+        "name": name,
+        "goal_kind": goal_kind,
+        "goal_amount_cents": goal_amount_cents,
+    }
+    if goal_target_month is not None:
+        body["goal_target_month"] = goal_target_month
+    r = await client.post("/api/categories", json=body, headers=headers)
     assert r.status_code == 201, r.text
     return r.json()["id"]

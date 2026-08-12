@@ -6,14 +6,21 @@ import { RequireAuth } from "./auth/RequireAuth";
 import { Layout } from "./components/Layout";
 import { AccountDetailPage } from "./pages/AccountDetailPage";
 import { AccountsPage } from "./pages/AccountsPage";
+import { BankingCallbackPage } from "./pages/BankingCallbackPage";
 import { BudgetPage } from "./pages/BudgetPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
+import { InsightsPage } from "./pages/InsightsPage";
+import { TransactionsPage } from "./pages/TransactionsPage";
+import { PrivacyPage } from "./legal/PrivacyPage";
+import { TermsPage } from "./legal/TermsPage";
 
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
       <Route
         path="/"
         element={
@@ -45,6 +52,16 @@ export default function App() {
         }
       />
       <Route
+        path="/banking/callback"
+        element={
+          <RequireAuth>
+            <Layout>
+              <BankingCallbackPage />
+            </Layout>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/accounts/:id"
         element={
           <RequireAuth>
@@ -60,6 +77,26 @@ export default function App() {
           <RequireAuth>
             <Layout>
               <CategoriesPage />
+            </Layout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/transactions"
+        element={
+          <RequireAuth>
+            <Layout>
+              <TransactionsPage />
+            </Layout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/insights"
+        element={
+          <RequireAuth>
+            <Layout>
+              <InsightsPage />
             </Layout>
           </RequireAuth>
         }

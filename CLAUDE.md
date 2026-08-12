@@ -20,3 +20,10 @@
 - **Match the conventions of the file you're editing** — formatting, naming, imports, patterns. Consistency beats personal preference.
 - **Tests describe behavior, not implementation.** Assert on observable outcomes, not on internals the caller doesn't care about.
 - **Type everything the language lets you type.** Full type hints in Python, no implicit `any` in TypeScript.
+
+# Git & branching
+
+- **Target PRs at `develop`, not `main`.** `develop` is the integration/beta branch; `main` only receives promotion PRs from `develop`.
+- **PR titles must be valid Conventional Commits** (e.g. `fix: ...`, `feat: ...`, `feat!: ...` or a `BREAKING CHANGE:` footer for a breaking change). `PR Title Lint` (`.github/workflows/pr-title-lint.yml`) enforces this. Since PRs are squash-merged with the PR title as the commit message, this title is what `release-please` reads to decide the next version bump — there are no more `bump:major`/`bump:minor`/`bump:patch` labels.
+- **Never name your own branches with the `release-please--branches--*` prefix.** That's reserved for the `Release Please` workflow's own PR branches on `develop` and `main`.
+- Versioning, tagging, `CHANGELOG.md`, and GitHub Releases (prerelease on `develop`, stable on `main`) are handled entirely by `release-please` (`.github/workflows/release-please.yml`) — merging its Release PR *is* the release. Everyday branch names (`feature/...`, `fix/...`, etc.) are otherwise unconstrained.

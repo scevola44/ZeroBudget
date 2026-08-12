@@ -42,6 +42,65 @@ async def test_update_renames_account(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_update_changes_scope(client: AsyncClient):
+    headers = await register_user(client)
+    account_id = await create_account(client, headers, scope="personal")
+
+    r = await client.patch(
+        f"/api/accounts/{account_id}",
+        json={"scope": "shared"},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["scope"] == "shared"
+
+
+@pytest.mark.asyncio
+async def test_update_scope_blocked_with_categorized_transactions(client: AsyncClient):
+    headers = await register_user(client)
+    account_id = await create_account(client, headers, scope="personal")
+    group_id = (
+        await client.post(
+            "/api/category-groups",
+            json={"name": "Bills", "scope": "personal"},
+            headers=headers,
+        )
+    ).json()["id"]
+    category_id = (
+        await client.post(
+            "/api/categories",
+            json={
+                "group_id": group_id,
+                "name": "Rent",
+                "goal_kind": "monthly",
+                "goal_amount_cents": 10_000,
+            },
+            headers=headers,
+        )
+    ).json()["id"]
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": account_id,
+            "category_id": category_id,
+            "date": "2026-04-01",
+            "payee": "Landlord",
+            "memo": "",
+            "amount_cents": -10_000,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201
+
+    r = await client.patch(
+        f"/api/accounts/{account_id}",
+        json={"scope": "shared"},
+        headers=headers,
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_update_unknown_account_is_404(client: AsyncClient):
     headers = await register_user(client)
     r = await client.patch(
@@ -109,3 +168,149 @@ async def test_balance_reflects_transactions(client: AsyncClient):
 
     accounts = (await client.get("/api/accounts", headers=headers)).json()
     assert accounts[0]["balance_cents"] == 80_000
+
+
+@pytest.mark.asyncio
+async def test_set_balance_creates_adjustment_transaction(client: AsyncClient):
+    headers = await register_user(client)
+    account_id = await create_account(client, headers)
+
+    r = await client.post(
+        f"/api/accounts/{account_id}/balance",
+        json={"balance_cents": 50_000},
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["balance_cents"] == 50_000
+
+    txns = (
+        await client.get(f"/api/transactions?account_id={account_id}", headers=headers)
+    ).json()
+    assert len(txns) == 1
+    assert txns[0]["payee"] == "Balance Adjustment"
+    assert txns[0]["amount_cents"] == 50_000
+    assert txns[0]["category_id"] is None
+
+    accounts = (await client.get("/api/accounts", headers=headers)).json()
+    assert accounts[0]["balance_cents"] == 50_000
+
+
+@pytest.mark.asyncio
+async def test_set_balance_is_noop_when_already_matching(client: AsyncClient):
+    headers = await register_user(client)
+    account_id = await create_account(client, headers)
+
+    r = await client.post(
+        f"/api/accounts/{account_id}/balance",
+        json={"balance_cents": 0},
+        headers=headers,
+    )
+    assert r.status_code == 200
+
+    txns = (
+        await client.get(f"/api/transactions?account_id={account_id}", headers=headers)
+    ).json()
+    assert txns == []
+
+
+@pytest.mark.asyncio
+async def test_set_balance_unknown_account_is_404(client: AsyncClient):
+    headers = await register_user(client)
+    r = await client.post(
+        "/api/accounts/9999/balance", json={"balance_cents": 100}, headers=headers
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cannot_set_balance_on_other_users_account(client: AsyncClient):
+    alice = await register_user(client, "alice@example.com")
+    bob = await register_user(client, "bob@example.com")
+    account_id = await create_account(client, alice, "Alice account")
+
+    r = await client.post(
+        f"/api/accounts/{account_id}/balance", json={"balance_cents": 100}, headers=bob
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_an_account_can_be_closed_and_reopened(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers, "Old Savings")
+
+    r = await client.patch(
+        f"/api/accounts/{account}", json={"closed": True}, headers=headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["closed"] is True
+
+    r = await client.patch(
+        f"/api/accounts/{account}", json={"closed": False}, headers=headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["closed"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_closed_account_keeps_its_transactions_and_balance(client: AsyncClient):
+    """Closing retires an account without rewriting history — the whole reason
+    it exists rather than deleting."""
+    headers = await register_user(client)
+    account = await create_account(client, headers, "Old Savings")
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": account,
+            "category_id": None,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": 25_000,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+
+    await client.patch(f"/api/accounts/{account}", json={"closed": True}, headers=headers)
+
+    rows = (await client.get("/api/accounts", headers=headers)).json()
+    closed_row = next(row for row in rows if row["id"] == account)
+    assert closed_row["closed"] is True
+    assert closed_row["balance_cents"] == 25_000
+
+
+@pytest.mark.asyncio
+async def test_deleting_an_account_with_transactions_is_refused(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": account,
+            "category_id": None,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": 1_000,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+
+    r = await client.delete(f"/api/accounts/{account}", headers=headers)
+    assert r.status_code == 400, r.text
+    assert "close" in r.json()["detail"].lower()
+
+    rows = (await client.get("/api/accounts", headers=headers)).json()
+    assert [row["id"] for row in rows] == [account]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_account_can_still_be_deleted(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+
+    r = await client.delete(f"/api/accounts/{account}", headers=headers)
+    assert r.status_code == 204, r.text
+    assert (await client.get("/api/accounts", headers=headers)).json() == []

@@ -2,11 +2,32 @@ import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { BudgetCategoryRow, BudgetMonth } from "../api/types";
+import type { BudgetCategoryRow, BudgetGroupRow, BudgetMonth, Scope } from "../api/types";
+import { scopeLabel } from "../api/types";
 import { currentMonth, monthLabel, shiftMonth } from "../lib/dates";
+import { formatGoal, monthlyGoalCents } from "../lib/goal";
 import { formatCents, parseAmountToCents } from "../lib/money";
 
 const COLLAPSED_GROUPS_STORAGE_KEY = "budget:collapsed-groups";
+
+// Shared column width/padding so the group header, category rows, and totals
+// row all line up on desktop — matched by the categories table's colgroup
+// (see TABLE_VALUE_COL_WIDTH below). Only enforced from `md:` up: below
+// that, the header/totals rows fall back to gap-based flex spacing, exactly
+// like before this column model existed — mobile only ever shows two of the
+// four columns, so nothing to misalign there.
+const VALUE_COL_WIDTH = "md:w-36"; // Goals / Assigned / Activity / Available
+const VALUE_COL_PADDING = "md:px-5";
+
+// The categories table stays table-fixed at every width (not just `md:`) so
+// the name column can never push Assigned/Activity/Available past the
+// card's `overflow-hidden` edge — auto layout has no guaranteed-space
+// contract between columns, which is what let the Available pill get
+// clipped below `md`. These reserve just enough room for the pill/values on
+// a phone; the header/totals rows (flex, not table) don't need this since
+// their value area is already `shrink-0` and never the one that overflows.
+const TABLE_VALUE_COL_WIDTH = "w-28 md:w-36";
+const TABLE_VALUE_COL_PADDING = "px-2 md:px-5";
 
 function loadCollapsedGroups(): Set<number> {
   try {
@@ -31,6 +52,22 @@ function availablePillClass(assignedCents: number, balanceCents: number): string
     return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200";
   }
   return "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200";
+}
+
+function readyToAssignBoxClass(readyCents: number, neededCents: number): string {
+  if (readyCents < 0) return "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100";
+  if (neededCents > 0 && readyCents < neededCents)
+    return "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100";
+  if (readyCents > 0)
+    return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100";
+  return "bg-stone-200 text-stone-900 dark:bg-stone-800 dark:text-stone-100";
+}
+
+function scopeHeaderClass(assignedCents: number, goalCents: number): string {
+  if (goalCents <= 0) return "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300";
+  if (assignedCents >= goalCents)
+    return "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100";
+  return "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100";
 }
 
 export function BudgetPage() {
@@ -70,13 +107,18 @@ export function BudgetPage() {
     },
   });
 
-  const ready = budgetQuery.data?.ready_to_assign_cents ?? 0;
-  const readyColor =
-    ready > 0
-      ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100"
-      : ready < 0
-        ? "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100"
-        : "bg-stone-200 text-stone-900 dark:bg-stone-800 dark:text-stone-100";
+  const personalReady = budgetQuery.data?.personal_ready_to_assign_cents ?? 0;
+  const sharedReady = budgetQuery.data?.shared_ready_to_assign_cents ?? 0;
+  const personalGroups: BudgetGroupRow[] =
+    budgetQuery.data?.groups.filter((g) => g.scope === "personal") ?? [];
+  const sharedGroups: BudgetGroupRow[] =
+    budgetQuery.data?.groups.filter((g) => g.scope === "shared") ?? [];
+  const personalNeededCents = personalGroups
+    .flatMap((g) => g.categories)
+    .reduce((s, c) => s + (c.needed_this_month_cents ?? 0), 0);
+  const sharedNeededCents = sharedGroups
+    .flatMap((g) => g.categories)
+    .reduce((s, c) => s + (c.needed_this_month_cents ?? 0), 0);
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -99,9 +141,9 @@ export function BudgetPage() {
         </div>
       </header>
 
-      <div className={`rounded-2xl p-5 ${readyColor}`}>
-        <div className="text-xs uppercase tracking-wide opacity-70">Ready to Assign</div>
-        <div className="text-3xl font-semibold tabular-nums">{formatCents(ready)}</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <ReadyToAssignPill scope="personal" cents={personalReady} neededCents={personalNeededCents} />
+        <ReadyToAssignPill scope="shared" cents={sharedReady} neededCents={sharedNeededCents} />
       </div>
 
       {budgetQuery.isLoading && (
@@ -121,71 +163,243 @@ export function BudgetPage() {
         </div>
       )}
 
-      {budgetQuery.data?.groups.map((group) => {
-        const isCollapsed = collapsedGroups.has(group.id);
-        return (
-          <section
-            key={group.id}
-            className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl overflow-hidden"
-          >
-            <button
-              type="button"
-              onClick={() => toggleGroup(group.id)}
-              aria-expanded={!isCollapsed}
-              className="w-full flex items-center gap-2 px-5 py-3 bg-stone-50 dark:bg-stone-800 border-b border-stone-200 dark:border-stone-700 text-sm font-semibold text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-700/60 text-left"
-            >
-              <svg
-                className={`w-4 h-4 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
+      <ScopeSection
+        scope="personal"
+        groups={personalGroups}
+        collapsedGroups={collapsedGroups}
+        toggleGroup={toggleGroup}
+        onAssign={(categoryId, cents) =>
+          assignMutation.mutate({ categoryId, cents })
+        }
+      />
+      <ScopeSection
+        scope="shared"
+        groups={sharedGroups}
+        collapsedGroups={collapsedGroups}
+        toggleGroup={toggleGroup}
+        onAssign={(categoryId, cents) =>
+          assignMutation.mutate({ categoryId, cents })
+        }
+      />
+    </div>
+  );
+}
+
+function ReadyToAssignPill({
+  scope,
+  cents,
+  neededCents,
+}: {
+  scope: Scope;
+  cents: number;
+  neededCents: number;
+}) {
+  return (
+    <div className={`rounded-2xl p-5 ${readyToAssignBoxClass(cents, neededCents)}`}>
+      <div className="text-xs uppercase tracking-wide opacity-70">
+        Ready to Assign — {scopeLabel(scope)}
+      </div>
+      <div className="text-3xl font-semibold tabular-nums">{formatCents(cents)}</div>
+      <div className="text-xs mt-1 opacity-80 tabular-nums">Needed: {formatCents(neededCents)}</div>
+    </div>
+  );
+}
+
+function ScopeSection({
+  scope,
+  groups,
+  collapsedGroups,
+  toggleGroup,
+  onAssign,
+}: {
+  scope: Scope;
+  groups: BudgetGroupRow[];
+  collapsedGroups: Set<number>;
+  toggleGroup: (groupId: number) => void;
+  onAssign: (categoryId: number, cents: number) => void;
+}) {
+  const allCategories = groups.flatMap((g) => g.categories);
+  const totalGoalCents = allCategories.reduce((s, c) => s + monthlyGoalCents(c), 0);
+  const totalAssignedCents = allCategories.reduce((s, c) => s + c.assigned_cents, 0);
+  const totalActivityCents = allCategories.reduce((s, c) => s + c.activity_cents, 0);
+  const totalAvailableCents = allCategories.reduce((s, c) => s + c.balance_cents, 0);
+
+  return (
+    <section className="space-y-3">
+      <div
+        className={`flex items-center justify-between rounded-xl px-4 py-2 ${scopeHeaderClass(totalAssignedCents, totalGoalCents)}`}
+      >
+        <h2 className="text-sm font-semibold uppercase tracking-wide">{scopeLabel(scope)}</h2>
+        <span className="text-xs font-medium tabular-nums">
+          Needed {formatCents(totalGoalCents)}/mo
+        </span>
+      </div>
+      {groups.length === 0 ? (
+        <div className="bg-white dark:bg-stone-900 border border-dashed border-stone-300 dark:border-stone-700 rounded-2xl p-6 text-center text-sm text-stone-500 dark:text-stone-400">
+          No {scopeLabel(scope).toLowerCase()} category groups yet. Add one on the{" "}
+          <a className="text-indigo-600 dark:text-indigo-400 hover:underline" href="/categories">
+            Categories
+          </a>{" "}
+          page.
+        </div>
+      ) : (
+        <>
+          {groups.map((group) => {
+            const isCollapsed = collapsedGroups.has(group.id);
+            const groupMonthlyGoalCents = group.categories.reduce((s, c) => s + monthlyGoalCents(c), 0);
+            const groupActivityCents = group.categories.reduce((s, c) => s + c.activity_cents, 0);
+            return (
+              <div
+                key={group.id}
+                className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl overflow-hidden"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 9l-7 7-7-7"
-                />
-              </svg>
-              <span>{group.name}</span>
-            </button>
-            {!isCollapsed && (
-              group.categories.length === 0 ? (
-                <div className="px-5 py-4 text-sm text-stone-500 dark:text-stone-400">
-                  No categories in this group.
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="text-xs uppercase text-stone-500 dark:text-stone-400">
-                      <tr>
-                        <th className="text-left px-5 py-2">Category</th>
-                        <th className="text-right px-5 py-2 w-32 md:w-40">Assigned</th>
-                        <th className="hidden landscape:table-cell md:table-cell text-right px-5 py-2 w-36">
-                          Activity
-                        </th>
-                        <th className="text-right px-5 py-2 w-36">Available</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.categories.map((cat) => (
-                        <CategoryRow
-                          key={cat.id}
-                          cat={cat}
-                          onAssign={(cents) =>
-                            assignMutation.mutate({ categoryId: cat.id, cents })
-                          }
-                        />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )
-            )}
-          </section>
-        );
-      })}
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.id)}
+                  aria-expanded={!isCollapsed}
+                  className="w-full flex items-center gap-2 px-5 md:pl-5 md:pr-0 py-3 bg-stone-50 dark:bg-stone-800 border-b border-stone-200 dark:border-stone-700 text-sm font-semibold text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-700/60 text-left"
+                >
+                  <svg
+                    className={`w-4 h-4 shrink-0 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 9l-7 7-7-7"
+                    />
+                  </svg>
+                  <span className="flex-1 min-w-0">
+                    <span className="block truncate">{group.name}</span>
+                    <span className="block md:hidden truncate text-xs font-normal text-stone-400 dark:text-stone-500 tabular-nums">
+                      {formatCents(groupMonthlyGoalCents)}/mo
+                    </span>
+                  </span>
+                  <div className="flex gap-6 md:gap-0 shrink-0">
+                    <div className={`hidden md:block text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
+                      <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+                        Goals/mo
+                      </div>
+                      <div className="tabular-nums">
+                        {formatCents(groupMonthlyGoalCents)}
+                      </div>
+                    </div>
+                    <div className={`text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
+                      <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+                        Assigned
+                      </div>
+                      <div className="tabular-nums">
+                        {formatCents(
+                          group.categories.reduce((s, c) => s + c.assigned_cents, 0),
+                        )}
+                      </div>
+                    </div>
+                    <div
+                      className={`hidden landscape:block md:block text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}
+                    >
+                      <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+                        Activity
+                      </div>
+                      <div className="tabular-nums">{formatCents(groupActivityCents)}</div>
+                    </div>
+                    <div className={`text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
+                      <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+                        Available
+                      </div>
+                      <div className="tabular-nums">
+                        {formatCents(
+                          group.categories.reduce((s, c) => s + c.balance_cents, 0),
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+                {!isCollapsed &&
+                  (group.categories.length === 0 ? (
+                    <div className="px-5 py-4 text-sm text-stone-500 dark:text-stone-400">
+                      No categories in this group.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm table-fixed">
+                        <colgroup>
+                          <col />
+                          <col className={`hidden md:table-column ${VALUE_COL_WIDTH}`} />
+                          <col className={TABLE_VALUE_COL_WIDTH} />
+                          <col className={`hidden landscape:table-column md:table-column ${TABLE_VALUE_COL_WIDTH}`} />
+                          <col className={TABLE_VALUE_COL_WIDTH} />
+                        </colgroup>
+                        <tbody>
+                          {group.categories.map((cat) => (
+                            <CategoryRow
+                              key={cat.id}
+                              cat={cat}
+                              onAssign={(cents) => onAssign(cat.id, cents)}
+                            />
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+              </div>
+            );
+          })}
+          <SectionTotalsRow
+            totalGoalCents={totalGoalCents}
+            totalAssignedCents={totalAssignedCents}
+            totalActivityCents={totalActivityCents}
+            totalAvailableCents={totalAvailableCents}
+          />
+        </>
+      )}
+    </section>
+  );
+}
+
+function SectionTotalsRow({
+  totalGoalCents,
+  totalAssignedCents,
+  totalActivityCents,
+  totalAvailableCents,
+}: {
+  totalGoalCents: number;
+  totalAssignedCents: number;
+  totalActivityCents: number;
+  totalAvailableCents: number;
+}) {
+  return (
+    <div className="flex items-center gap-2 px-5 md:pl-5 md:pr-0 py-3 border-t-2 border-stone-300 dark:border-stone-600 text-sm font-semibold text-stone-700 dark:text-stone-200">
+      <span className="flex-1 min-w-0">Total</span>
+      <div className="flex gap-6 md:gap-0 shrink-0">
+        <div className={`hidden md:block text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
+          <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+            Goals/mo
+          </div>
+          <div className="tabular-nums">{formatCents(totalGoalCents)}</div>
+        </div>
+        <div className={`text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
+          <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+            Assigned
+          </div>
+          <div className="tabular-nums">{formatCents(totalAssignedCents)}</div>
+        </div>
+        <div className={`hidden landscape:block md:block text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
+          <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+            Activity
+          </div>
+          <div className="tabular-nums">{formatCents(totalActivityCents)}</div>
+        </div>
+        <div className={`text-right ${VALUE_COL_PADDING} ${VALUE_COL_WIDTH}`}>
+          <div className="text-xs font-normal text-stone-500 dark:text-stone-400 uppercase tracking-wide leading-none mb-0.5">
+            Available
+          </div>
+          <div className="tabular-nums">{formatCents(totalAvailableCents)}</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -208,10 +422,39 @@ function CategoryRow({
     setEditing(false);
   }
 
+  const needed = cat.needed_this_month_cents;
+  const fallbackAssign = monthlyGoalCents(cat);
   return (
     <tr className="border-t border-stone-100 dark:border-stone-800">
-      <td className="px-5 py-2">{cat.name}</td>
-      <td className="px-5 py-2 text-right tabular-nums">
+      <td className="px-5 py-2">
+        <div>{cat.name}</div>
+        <div className="text-xs text-stone-500 dark:text-stone-400 flex items-center gap-2 flex-wrap">
+          <span>{formatGoal(cat)}</span>
+          {needed !== null && needed > 0 ? (
+            <button
+              type="button"
+              onClick={() => onAssign(cat.assigned_cents + needed)}
+              className="inline-block px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-200 text-[10px] font-semibold tabular-nums hover:bg-indigo-200 dark:hover:bg-indigo-800/60 cursor-pointer"
+              aria-label={`Assign ${formatCents(needed)} to reach this month's goal`}
+            >
+              Need {formatCents(needed)}
+            </button>
+          ) : (
+            fallbackAssign > 0 && (
+              <button
+                type="button"
+                onClick={() => onAssign(cat.assigned_cents + fallbackAssign)}
+                className="inline-block px-1.5 py-0.5 rounded bg-stone-200 text-stone-700 dark:bg-stone-800 dark:text-stone-300 text-[10px] font-semibold tabular-nums hover:bg-stone-300 dark:hover:bg-stone-700 cursor-pointer"
+                aria-label={`Assign this month's budget of ${formatCents(fallbackAssign)}`}
+              >
+                Assign {formatCents(fallbackAssign)}
+              </button>
+            )
+          )}
+        </div>
+      </td>
+      <td className="hidden md:table-cell" aria-hidden="true" />
+      <td className={`${TABLE_VALUE_COL_PADDING} py-2 text-right tabular-nums whitespace-nowrap`}>
         {editing ? (
           <input
             autoFocus
@@ -222,13 +465,14 @@ function CategoryRow({
               if (e.key === "Enter") commit();
               if (e.key === "Escape") setEditing(false);
             }}
-            className="w-28 text-right border border-indigo-300 dark:border-indigo-500 bg-transparent dark:bg-stone-900 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            inputMode="decimal"
+            className="w-20 md:w-28 text-right border border-indigo-300 dark:border-indigo-500 bg-transparent dark:bg-stone-900 rounded-md px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         ) : (
           <button
             className="hover:bg-stone-100 dark:hover:bg-stone-800 rounded px-2 py-0.5"
             onClick={() => {
-              setDraft((cat.assigned_cents / 100).toFixed(2));
+              setDraft("");
               setEditing(true);
             }}
           >
@@ -236,10 +480,12 @@ function CategoryRow({
           </button>
         )}
       </td>
-      <td className="hidden landscape:table-cell md:table-cell px-5 py-2 text-right tabular-nums text-stone-600 dark:text-stone-400">
+      <td
+        className={`hidden landscape:table-cell md:table-cell ${TABLE_VALUE_COL_PADDING} py-2 text-right tabular-nums whitespace-nowrap text-stone-600 dark:text-stone-400`}
+      >
         {formatCents(cat.activity_cents)}
       </td>
-      <td className="px-5 py-2 text-right">
+      <td className={`${TABLE_VALUE_COL_PADDING} py-2 text-right whitespace-nowrap`}>
         <span
           className={`inline-block px-2.5 py-1 rounded-full text-xs font-semibold tabular-nums ${availablePillClass(cat.assigned_cents, cat.balance_cents)}`}
         >

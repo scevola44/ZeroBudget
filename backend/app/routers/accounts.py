@@ -1,9 +1,12 @@
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select
 
 from app.deps import CurrentUser, DbSession
-from app.models import Account, PlaidItem, Transaction
-from app.schemas.account import AccountCreate, AccountResponse, AccountUpdate
+from app.models import Account, BankConnection, Transaction
+from app.schemas.account import AccountBalanceUpdate, AccountCreate, AccountResponse, AccountUpdate
+from app.services.synthetic_payees import BALANCE_ADJUSTMENT_PAYEE
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
@@ -15,6 +18,22 @@ async def _get_owned(db, user_id: int, account_id: int) -> Account:
     return account
 
 
+async def _account_total(db, account_id: int) -> int:
+    total = await db.scalar(
+        select(func.coalesce(func.sum(Transaction.amount_cents), 0)).where(
+            Transaction.account_id == account_id
+        )
+    )
+    return int(total or 0)
+
+
+async def _institution_name(db, account: Account) -> str | None:
+    if account.bank_connection_id is None:
+        return None
+    connection = await db.get(BankConnection, account.bank_connection_id)
+    return connection.aspsp_name if connection is not None else None
+
+
 def _to_response(
     account: Account, balance_cents: int, institution_name: str | None = None
 ) -> AccountResponse:
@@ -22,9 +41,11 @@ def _to_response(
         id=account.id,
         name=account.name,
         type=account.type,
+        scope=account.scope,
         balance_cents=balance_cents,
-        plaid_item_id=account.plaid_item_id,
-        plaid_mask=account.plaid_mask,
+        closed=account.closed,
+        bank_connection_id=account.bank_connection_id,
+        bank_account_mask=account.bank_account_mask,
         institution_name=institution_name,
     )
 
@@ -43,31 +64,35 @@ async def list_accounts(db: DbSession, current_user: CurrentUser) -> list[Accoun
     )
     accounts = (await db.execute(accounts_stmt)).scalars().all()
 
-    item_ids = {a.plaid_item_id for a in accounts if a.plaid_item_id is not None}
-    items_by_id: dict[int, PlaidItem] = {}
-    if item_ids:
-        items_by_id = {
-            i.id: i
-            for i in (
-                await db.execute(select(PlaidItem).where(PlaidItem.id.in_(item_ids)))
+    connection_ids = {a.bank_connection_id for a in accounts if a.bank_connection_id is not None}
+    connections_by_id: dict[int, BankConnection] = {}
+    if connection_ids:
+        connections_by_id = {
+            c.id: c
+            for c in (
+                await db.execute(
+                    select(BankConnection).where(BankConnection.id.in_(connection_ids))
+                )
             ).scalars().all()
         }
 
     responses: list[AccountResponse] = []
     for a in accounts:
         institution_name = None
-        if a.plaid_item_id is not None:
-            item = items_by_id.get(a.plaid_item_id)
-            if item is not None:
-                institution_name = item.institution_name
+        if a.bank_connection_id is not None:
+            connection = connections_by_id.get(a.bank_connection_id)
+            if connection is not None:
+                institution_name = connection.aspsp_name
         responses.append(
             AccountResponse(
                 id=a.id,
                 name=a.name,
                 type=a.type,
+                scope=a.scope,
                 balance_cents=totals.get(a.id, 0),
-                plaid_item_id=a.plaid_item_id,
-                plaid_mask=a.plaid_mask,
+                closed=a.closed,
+                bank_connection_id=a.bank_connection_id,
+                bank_account_mask=a.bank_account_mask,
                 institution_name=institution_name,
             )
         )
@@ -78,7 +103,12 @@ async def list_accounts(db: DbSession, current_user: CurrentUser) -> list[Accoun
 async def create_account(
     payload: AccountCreate, db: DbSession, current_user: CurrentUser
 ) -> AccountResponse:
-    account = Account(user_id=current_user.id, name=payload.name, type=payload.type)
+    account = Account(
+        user_id=current_user.id,
+        name=payload.name,
+        type=payload.type,
+        scope=payload.scope,
+    )
     db.add(account)
     await db.commit()
     await db.refresh(account)
@@ -97,36 +127,96 @@ async def update_account(
         account.name = payload.name
     if payload.type is not None:
         # Manual users can change type freely; linked accounts shouldn't
-        # have their Plaid-derived type overwritten.
-        if account.plaid_item_id is not None:
+        # have their bank-derived type overwritten.
+        if account.bank_connection_id is not None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Linked account type is managed by Plaid and cannot be changed.",
+                detail="Linked account type is managed by the bank and cannot be changed.",
             )
         account.type = payload.type
+    if payload.scope is not None and payload.scope != account.scope:
+        # Categorized transactions on this account would land in the wrong
+        # scope pool after the change (a personal-group category attached to
+        # a now-shared account, or vice versa). Require the user to
+        # uncategorize them first. Uncategorized inflows shift cleanly.
+        categorized = await db.scalar(
+            select(Transaction.id)
+            .where(
+                Transaction.account_id == account.id,
+                Transaction.category_id.is_not(None),
+            )
+            .limit(1)
+        )
+        if categorized is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Cannot change scope on an account with categorized "
+                    "transactions. Uncategorize them first."
+                ),
+            )
+        account.scope = payload.scope
+    if payload.closed is not None:
+        account.closed = payload.closed
     await db.commit()
     await db.refresh(account)
 
-    total = await db.scalar(
-        select(func.coalesce(func.sum(Transaction.amount_cents), 0)).where(
-            Transaction.account_id == account.id
+    total = await _account_total(db, account.id)
+    institution_name = await _institution_name(db, account)
+    return _to_response(account, total, institution_name)
+
+
+@router.post("/{account_id}/balance", response_model=AccountResponse)
+async def set_account_balance(
+    account_id: int,
+    payload: AccountBalanceUpdate,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> AccountResponse:
+    """Reconcile the derived balance to a user-supplied figure.
+
+    Balances are never stored directly — this inserts a single uncategorized
+    transaction for the delta, the same mechanism a manual account's balance
+    is normally set by. Works for linked accounts too: an account can drift
+    from the bank between syncs and may need a manual nudge.
+    """
+    account = await _get_owned(db, current_user.id, account_id)
+    current_total = await _account_total(db, account.id)
+    delta = payload.balance_cents - current_total
+    if delta != 0:
+        db.add(
+            Transaction(
+                user_id=current_user.id,
+                account_id=account.id,
+                date=date.today(),
+                payee=BALANCE_ADJUSTMENT_PAYEE,
+                memo="Manual balance correction",
+                amount_cents=delta,
+            )
         )
-    )
-    institution_name: str | None = None
-    if account.plaid_item_id is not None:
-        item = await db.get(PlaidItem, account.plaid_item_id)
-        if item is not None:
-            institution_name = item.institution_name
-    return _to_response(account, int(total or 0), institution_name)
+        await db.commit()
+
+    institution_name = await _institution_name(db, account)
+    return _to_response(account, payload.balance_cents, institution_name)
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_account(account_id: int, db: DbSession, current_user: CurrentUser) -> None:
     account = await _get_owned(db, current_user.id, account_id)
-    if account.plaid_item_id is not None:
+    if account.bank_connection_id is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Linked accounts must be unlinked via /api/plaid/items/{id}.",
+            detail="Linked accounts must be unlinked via /api/banking/connections/{id}.",
+        )
+    # Deleting cascades to the account's transactions, silently rewriting every
+    # budget month they appear in. Closing keeps the history and hides the row.
+    has_transactions = await db.scalar(
+        select(Transaction.id).where(Transaction.account_id == account.id).limit(1)
+    )
+    if has_transactions is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This account has transactions. Close it instead of deleting it.",
         )
     await db.delete(account)
     await db.commit()

@@ -1,25 +1,36 @@
 # Self-hosted deploy — Proxmox LXC
 
 This folder is everything you need to run ZeroBudget on a self-hosted LXC
-container and keep it automatically up to date with the `develop` branch —
-without exposing the LXC to the internet or running any tunnel.
+container and keep it automatically up to date — without exposing the LXC to
+the internet or running any tunnel.
+
+## Image tags
+
+| Branch    | Tag      | Meaning                                  |
+|-----------|----------|------------------------------------------|
+| `main`    | `latest` | Stable releases                          |
+| `develop` | `beta`   | Latest development build (rolling)       |
+| any       | `sha-*`  | Immutable per-commit snapshot            |
+
+Both tags are produced by the same GitHub Actions `deploy` job, triggered on
+every merge to `main` or `develop` respectively.
 
 ## How it works
 
 ```
  ┌─────────────────────────┐    merge to develop    ┌───────────────────────┐
  │ GitHub Actions (ci.yml) │  ───────────────────▶  │ ghcr.io/scevola44/    │
- │  backend + frontend +   │   build & push         │ zerobudget:develop    │
+ │  backend + frontend +   │   build & push         │ zerobudget:beta       │
  │  deploy jobs            │                        │ (+ sha-<short> tag)   │
- └─────────────────────────┘                        └─────────┬─────────────┘
-                                                              │ poll every 5m
-                                                              ▼
-                                              ┌────────────────────────────┐
-                                              │ Proxmox LXC                │
-                                              │  ├── db  (postgres:16)     │
-                                              │  ├── app (GHCR image)      │
-                                              │  └── watchtower            │
-                                              └────────────────────────────┘
+ └─────────┬───────────────┘                        └─────────┬─────────────┘
+           │    merge to main                                 │ poll every 5m
+           │  ───────────────────▶  ghcr.io/scevola44/        ▼
+           │                        zerobudget:latest  ┌────────────────────────────┐
+           │                        (+ sha-<short> tag)│ Proxmox LXC                │
+           └──────────────────────────────────────────▶│  ├── db  (postgres:16)     │
+                                                       │  ├── app (GHCR image)      │
+                                                       │  └── watchtower            │
+                                                       └────────────────────────────┘
 ```
 
 All traffic is **outbound** from the LXC. Nothing inbound from the internet
@@ -73,9 +84,13 @@ cp .env.example .env
 docker compose -f docker-compose.prod.yml --env-file .env up -d
 ```
 
+The default `docker-compose.prod.yml` tracks the `:beta` tag (the `develop`
+branch). To run stable releases instead, change the `app` image tag to
+`:latest` before starting.
+
 First boot will:
 
-1. Pull `postgres:16-alpine` and `ghcr.io/scevola44/zerobudget:develop`.
+1. Pull `postgres:16-alpine` and `ghcr.io/scevola44/zerobudget:beta` (or `:latest`).
 2. Start Postgres and wait for `pg_isready`.
 3. Start the app container, which runs `alembic upgrade head` and then
    `uvicorn app.main:app` on port 8000.
@@ -95,14 +110,16 @@ docker compose logs -f watchtower  # scan cycles, update decisions
 
 1. Open a PR against `develop` on GitHub → `backend` + `frontend` CI jobs run.
 2. Merge the PR → the `deploy` job builds the Docker image and pushes two
-   tags to GHCR: `:develop` (rolling) and `:sha-<shortsha>` (immutable).
+   tags to GHCR: `:beta` (rolling) and `:sha-<shortsha>` (immutable).
 3. Within ~5 minutes (the `--interval=300` in the compose file), Watchtower
-   on the LXC notices that `:develop` now points to a new digest, pulls the
-   new image, stops the `app` container, and starts a new one from the new
-   image. Postgres is left alone because it does **not** carry the
+   on the LXC notices that the tracked tag now points to a new digest, pulls
+   the new image, stops the `app` container, and starts a new one from the
+   new image. Postgres is left alone because it does **not** carry the
    `com.centurylinklabs.watchtower.enable` label.
 4. The new `app` container runs `alembic upgrade head` on startup, so any
    new migrations apply automatically.
+
+The same loop applies to `:latest` when a PR is merged to `main`.
 
 ## Rollback
 
@@ -122,8 +139,8 @@ docker compose -f docker-compose.prod.yml --env-file .env up -d app
 ```
 
 Watchtower will leave the pinned image alone as long as the tag stays the
-same. When you want to resume auto-updates, change the tag back to
-`:develop` and `docker compose up -d app` again.
+same. When you want to resume auto-updates, change the tag back to `:beta`
+(or `:latest`) and `docker compose up -d app` again.
 
 ## Operational notes
 
