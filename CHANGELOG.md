@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.3.0-beta.10...v0.4.0-beta.10) (2026-08-12)
+
+
+### Features
+
+* set default category filter to Unassigned in Transactions page ([#114](https://github.com/scevola44/ZeroBudget/issues/114)) ([8189f89](https://github.com/scevola44/ZeroBudget/commit/8189f89c46ae665d992fb3b40d4bf5a06d4accd2))
+
+
+### Bug Fixes
+
+* never count unassigned outgoing money as an Insights expense ([#116](https://github.com/scevola44/ZeroBudget/issues/116)) ([792f7b1](https://github.com/scevola44/ZeroBudget/commit/792f7b18cfdf1c00654fb2d0ad04c558f9facb91))
+
 ## [0.3.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.2.0-beta.10...v0.3.0-beta.10) (2026-08-12)
 
 
