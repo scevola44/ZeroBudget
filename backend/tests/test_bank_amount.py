@@ -7,6 +7,7 @@ from app.services.bank_amount import (
     bank_amount_to_cents,
     bank_balance_amount_to_cents,
     ensure_eur,
+    is_unknown_currency,
 )
 
 
@@ -66,3 +67,17 @@ def test_balance_amount_rejects_non_eur():
 def test_balance_amount_rejects_malformed():
     with pytest.raises(ValueError):
         bank_balance_amount_to_cents("ten euros", "EUR")
+
+
+def test_unknown_currency_detects_none_empty_and_xxx():
+    assert is_unknown_currency(None) is True
+    assert is_unknown_currency("") is True
+    assert is_unknown_currency("   ") is True
+    assert is_unknown_currency("XXX") is True
+    assert is_unknown_currency("xxx") is True
+    assert is_unknown_currency(" Xxx ") is True
+
+
+def test_unknown_currency_false_for_real_codes():
+    assert is_unknown_currency("EUR") is False
+    assert is_unknown_currency("USD") is False

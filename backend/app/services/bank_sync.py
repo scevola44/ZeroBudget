@@ -49,7 +49,7 @@ PENDING_STATUS = "PDNG"
 # not current), PRCD (previous period's close), and FWAV (a future date) —
 # those are stale/forward-looking, not "the balance right now". A bank that
 # only returns one of those, or an unlisted type, falls through to the
-# first balance in the list (see ``_select_balance``).
+# first balance in the list (see ``select_balance``).
 _BALANCE_TYPE_PREFERENCE = ("CLBD", "ITBD", "CLAV", "ITAV", "XPCD")
 
 
@@ -126,7 +126,7 @@ def _as_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
-def _select_balance(balances: list[dict[str, Any]]) -> dict[str, Any] | None:
+def select_balance(balances: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Pick one balance entry per ``_BALANCE_TYPE_PREFERENCE``, else the first available."""
     by_type = {b.get("balance_type"): b for b in balances}
     for balance_type in _BALANCE_TYPE_PREFERENCE:
@@ -170,7 +170,7 @@ async def _import_opening_balance(
             account.id,
         )
         return
-    balance = _select_balance(balances)
+    balance = select_balance(balances)
     if balance is None:
         return
     amount_info = balance.get("balance_amount") or {}

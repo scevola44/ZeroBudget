@@ -25,6 +25,12 @@ USD_ACCOUNT = {
     "product": "Dollar Account",
     "account_id": {"iban": "FI2112345600000786"},
 }
+XXX_ACCOUNT = {
+    "uid": "uid_xxx",
+    "currency": "XXX",
+    "product": "PAYPAL_PREMIER_ACCOUNT",
+    "account_id": {"iban": "FI2112345600000787"},
+}
 
 BOOKED_TXN = {
     "entry_reference": "ref-1",
@@ -46,6 +52,7 @@ class FakeBankingClient:
     balances: list[dict[str, Any]] = field(default_factory=list)
     create_session_error: BankingError | None = None
     deleted_sessions: list[str] = field(default_factory=list)
+    get_balances_calls: list[str] = field(default_factory=list)
 
     async def list_aspsps(self, countries: list[str]) -> list[dict[str, Any]]:
         return [a for a in self.aspsps if a["country"] in countries]
@@ -67,6 +74,7 @@ class FakeBankingClient:
         return self.transactions
 
     async def get_balances(self, account_uid: str) -> list[dict[str, Any]]:
+        self.get_balances_calls.append(account_uid)
         return self.balances
 
 
@@ -225,6 +233,73 @@ async def test_callback_rejects_bank_with_no_eur_accounts(client):
     assert r.status_code == 400
     # The orphaned consent was revoked provider-side.
     assert fake.deleted_sessions == ["sess-1"]
+    # USD is a confident non-EUR signal — no need to double-check the balance.
+    assert fake.get_balances_calls == []
+
+
+async def test_callback_accepts_xxx_currency_account_with_eur_balance(client):
+    """PayPal-style accounts report "XXX" (ISO 4217 "no currency") at the account
+    level even when their balance is EUR — fall back to the balance instead of
+    rejecting outright."""
+    fake = FakeBankingClient(
+        session=_session_body(accounts=[XXX_ACCOUNT]),
+        balances=[
+            {"balance_type": "CLBD", "balance_amount": {"amount": "12.34", "currency": "EUR"}}
+        ],
+    )
+    _install_fake(fake)
+    headers = await register_user(client)
+
+    body = await _connect(client, headers, fake)
+    assert body["skipped_accounts"] == []
+    assert len(body["account_ids"]) == 1
+    # Called once for the connect-time currency fallback, once more for the
+    # opening-balance import during the first sync.
+    assert fake.get_balances_calls == ["uid_xxx", "uid_xxx"]
+
+
+async def test_callback_rejects_xxx_currency_account_with_non_eur_balance(client):
+    fake = FakeBankingClient(
+        session=_session_body(accounts=[XXX_ACCOUNT]),
+        balances=[
+            {"balance_type": "CLBD", "balance_amount": {"amount": "12.34", "currency": "USD"}}
+        ],
+    )
+    _install_fake(fake)
+    headers = await register_user(client)
+
+    r = await client.post(
+        "/api/banking/connections",
+        json={"aspsp_name": "Mock ASPSP", "aspsp_country": "FI"},
+        headers=headers,
+    )
+    state = r.json()["state"]
+    r = await client.post(
+        "/api/banking/connections/callback",
+        json={"code": "auth-code-1", "state": state},
+        headers=headers,
+    )
+    assert r.status_code == 400
+    assert fake.get_balances_calls == ["uid_xxx"]
+
+
+async def test_callback_rejects_xxx_currency_account_with_no_balances(client):
+    fake = FakeBankingClient(session=_session_body(accounts=[XXX_ACCOUNT]), balances=[])
+    _install_fake(fake)
+    headers = await register_user(client)
+
+    r = await client.post(
+        "/api/banking/connections",
+        json={"aspsp_name": "Mock ASPSP", "aspsp_country": "FI"},
+        headers=headers,
+    )
+    state = r.json()["state"]
+    r = await client.post(
+        "/api/banking/connections/callback",
+        json={"code": "auth-code-1", "state": state},
+        headers=headers,
+    )
+    assert r.status_code == 400
 
 
 async def test_manual_sync_and_status(client):
