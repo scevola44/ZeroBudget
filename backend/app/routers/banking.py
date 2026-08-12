@@ -223,8 +223,30 @@ async def complete_connection(
                 if uid:
                     try:
                         balances = await banking.get_balances(uid)
-                    except BankingError:
+                    except BankingError as exc:
                         balances = []
+                        # Temporary diagnostic: surfaces why the balance fallback
+                        # didn't confirm EUR, so a real fix can be scoped precisely
+                        # instead of guessed at.
+                        logger.warning(
+                            "Enable Banking balance fallback failed: aspsp=%r uid=%r error=%r",
+                            auth_request.aspsp_name,
+                            uid,
+                            exc,
+                        )
+                    else:
+                        logger.warning(
+                            "Enable Banking balance fallback: aspsp=%r uid=%r balances=%r",
+                            auth_request.aspsp_name,
+                            uid,
+                            [
+                                {
+                                    "balance_type": b.get("balance_type"),
+                                    "currency": (b.get("balance_amount") or {}).get("currency"),
+                                }
+                                for b in balances
+                            ],
+                        )
                     balance = select_balance(balances)
                     if balance is not None:
                         balance_currency = (balance.get("balance_amount") or {}).get("currency")
