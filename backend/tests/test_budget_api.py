@@ -244,6 +244,56 @@ async def test_monthly_goal_needed_drops_to_zero_when_balance_meets_goal(
 
 
 @pytest.mark.asyncio
+async def test_monthly_goal_needed_ignores_spending_once_goal_is_assigned(client: AsyncClient):
+    """A monthly goal means "assign this much every month" — once the goal
+    amount has been assigned, spending part of it back down must not make the
+    "Need X" suggestion reappear."""
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    cat = await create_category(
+        client,
+        headers,
+        group,
+        name="Groceries",
+        goal_kind="monthly",
+        goal_amount_cents=4_000,
+    )
+    await _add_inflow(client, headers, account, 10_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", cat, 4_000)
+    await _add_outflow(client, headers, account, cat, 1_000, "2026-04-02")
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    row = body["groups"][0]["categories"][0]
+    assert row["needed_this_month_cents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_monthly_goal_needed_covers_overspend_past_the_goal(client: AsyncClient):
+    """Once spending pushes the category into overspending (balance negative),
+    "Need X" should reappear for exactly the overspent amount, even though the
+    goal amount was already fully assigned."""
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    cat = await create_category(
+        client,
+        headers,
+        group,
+        name="Groceries",
+        goal_kind="monthly",
+        goal_amount_cents=4_000,
+    )
+    await _add_inflow(client, headers, account, 10_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", cat, 4_000)
+    await _add_outflow(client, headers, account, cat, 5_000, "2026-04-02")
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    row = body["groups"][0]["categories"][0]
+    assert row["needed_this_month_cents"] == 1_000
+
+
+@pytest.mark.asyncio
 async def test_yearly_goal_needed_decreases_by_assigned_amount_when_balance_negative(
     client: AsyncClient,
 ):
