@@ -1,0 +1,57 @@
+name: Publish Versioned Image
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: publish-versioned-image-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  retag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Resolve source image sha tag
+        id: sha
+        run: echo "short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # ghcr.io logins intermittently time out on GitHub-hosted runners; retry a few times.
+          max_attempts=5
+          retry_wait_seconds=10
+          attempt=1
+          until echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "GHCR login failed after $max_attempts attempts" >&2
+              exit 1
+            fi
+            echo "GHCR login attempt $attempt failed, retrying in ${retry_wait_seconds}s..." >&2
+            sleep "$retry_wait_seconds"
+            attempt=$((attempt + 1))
+          done
+
+      - name: Retag existing image with release version
+        env:
+          IMAGE: ghcr.io/scevola44/zerobudget
+          SHORT_SHA: ${{ steps.sha.outputs.short }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          # The CI workflow already built and pushed :sha-$SHORT_SHA for this exact
+          # commit when it merged. Point the release tag at that same digest instead
+          # of rebuilding, so the versioned tag always matches what was actually tested.
+          docker buildx imagetools create \
+            --tag "$IMAGE:$RELEASE_TAG" \
+            "$IMAGE:sha-$SHORT_SHA"
