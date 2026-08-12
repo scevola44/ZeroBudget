@@ -99,3 +99,7 @@ class TransactionImportRequest(BaseModel):
 
 class TransactionImportResponse(BaseModel):
     imported: int
+
+
+class UnassignedCountResponse(BaseModel):
+    count: int

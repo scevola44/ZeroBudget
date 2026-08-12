@@ -75,6 +75,56 @@ async def test_filter_by_month(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_unassigned_count(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers, "A1")
+    b = await create_account(client, headers, "A2")
+    group = await create_group(client, headers)
+    category = await create_category(client, headers, group)
+
+    # Genuinely unassigned: the only one that should count.
+    await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=-100)
+    # Categorized.
+    await _add_txn(
+        client, headers, account_id=a, date="2026-04-02", amount=-200, category_id=category
+    )
+    # Deliberately uncategorized.
+    await _add_txn(
+        client, headers, account_id=a, date="2026-04-03", amount=500, is_ready_to_assign=True
+    )
+    # A transfer pair: uncategorized on both legs, but never "needs a category".
+    outflow = await _add_txn(client, headers, account_id=a, date="2026-04-04", amount=-300)
+    inflow = await _add_txn(client, headers, account_id=b, date="2026-04-04", amount=300)
+    link = await client.post(
+        f"/api/transactions/{outflow}/transfer-link",
+        json={"peer_transaction_id": inflow},
+        headers=headers,
+    )
+    assert link.status_code == 200, link.text
+
+    r = await client.get("/api/transactions/unassigned-count", headers=headers)
+    assert r.status_code == 200
+    assert r.json() == {"count": 1}
+
+
+@pytest.mark.asyncio
+async def test_unassigned_count_ignores_other_months_and_users(client: AsyncClient):
+    headers = await register_user(client, email="a@example.com")
+    other_headers = await register_user(client, email="b@example.com")
+    a = await create_account(client, headers)
+    other_account = await create_account(client, other_headers)
+
+    # Old, outside any "current month" — still counted, since this is all-time.
+    await _add_txn(client, headers, account_id=a, date="2020-01-01", amount=-100)
+    # Belongs to a different user entirely.
+    await _add_txn(client, other_headers, account_id=other_account, date="2026-04-01", amount=-100)
+
+    r = await client.get("/api/transactions/unassigned-count", headers=headers)
+    assert r.status_code == 200
+    assert r.json() == {"count": 1}
+
+
+@pytest.mark.asyncio
 async def test_create_with_invalid_account_is_rejected(client: AsyncClient):
     headers = await register_user(client)
     r = await client.post(

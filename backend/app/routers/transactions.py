@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.deps import CurrentUser, DbSession
 from app.models import Account, Category, CategoryGroup, Transaction
@@ -17,6 +17,7 @@ from app.schemas.transaction import (
     TransferLinkRequest,
     TransferResponse,
     TransferSuggestion,
+    UnassignedCountResponse,
 )
 from app.services.budget_calc import month_start, next_month_start, parse_month
 from app.services.category_suggest import PayeeHistoryRow, suggest_categories
@@ -123,6 +124,27 @@ async def list_transactions(
     rows = (await db.execute(stmt)).scalars().all()
     peer_accounts = await load_peer_account_ids(db, rows)
     return [_to_response(r, peer_accounts) for r in rows]
+
+
+@router.get("/unassigned-count", response_model=UnassignedCountResponse)
+async def count_unassigned_transactions(
+    db: DbSession,
+    current_user: CurrentUser,
+) -> UnassignedCountResponse:
+    # All-time, unlike list_transactions: a transaction left uncategorized
+    # from a past month should still be flagged today.
+    stmt = (
+        select(func.count())
+        .select_from(Transaction)
+        .where(
+            Transaction.user_id == current_user.id,
+            Transaction.category_id.is_(None),
+            Transaction.transfer_peer_id.is_(None),
+            Transaction.is_ready_to_assign.is_(False),
+        )
+    )
+    count = await db.scalar(stmt) or 0
+    return UnassignedCountResponse(count=count)
 
 
 @router.get("/category-suggestions", response_model=list[int])

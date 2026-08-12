@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import type { Account, CategoryGroup, Transaction } from "../api/types";
@@ -9,6 +10,7 @@ import {
 } from "../components/EditTransactionModal";
 import { LinkTransferModal } from "../components/LinkTransferModal";
 import { TransferSuggestionsBanner } from "../components/TransferSuggestionsBanner";
+import { UnassignedTransactionsIsland } from "../components/UnassignedTransactionsIsland";
 import { currentMonth } from "../lib/dates";
 import { formatCents } from "../lib/money";
 import { YnabTransactionImportModal, type ImportRow } from "./YnabTransactionImportModal";
@@ -24,6 +26,7 @@ function monthEnd(month: string): string {
 }
 
 export function TransactionsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [startDate, setStartDate] = useState(() => monthStart(currentMonth()));
   const [endDate, setEndDate] = useState(() => monthEnd(currentMonth()));
   const [selectedAccountIds, setSelectedAccountIds] = useState(() => new Set<number>());
@@ -39,6 +42,28 @@ export function TransactionsPage() {
   );
   const qc = useQueryClient();
 
+  // Arriving from the unassigned-transactions island's "Review" link. A
+  // plain lazy useState initializer wouldn't catch this when the click
+  // happens from this same page (React Router updates the URL without
+  // remounting), so this reacts to the search param instead. That count is
+  // all-time, so the date range is cleared to open-ended too, or a row from
+  // a past month would be filtered right back out. The param is stripped
+  // once applied so it doesn't re-fight the user's own filter changes.
+  useEffect(() => {
+    if (searchParams.get("filter") !== "unassigned") return;
+    setSelectedCategoryId("null");
+    setStartDate("");
+    setEndDate("");
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("filter");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
+
   const importMutation = useMutation({
     mutationFn: (rows: ImportRow[]) =>
       api<{ imported: number }>("/api/transactions/import-ynab", { method: "POST", body: { rows } }),
@@ -51,8 +76,15 @@ export function TransactionsPage() {
 
   const txnsQuery = useQuery<Transaction[]>({
     queryKey: ["transactions", startDate, endDate],
-    queryFn: () =>
-      api<Transaction[]>(`/api/transactions?start_date=${startDate}&end_date=${endDate}`),
+    queryFn: () => {
+      // Blank means open-ended, not "filter to nothing" — omit rather than
+      // send an empty value FastAPI would fail to parse as a date.
+      const params = new URLSearchParams();
+      if (startDate) params.set("start_date", startDate);
+      if (endDate) params.set("end_date", endDate);
+      const qs = params.toString();
+      return api<Transaction[]>(`/api/transactions${qs ? `?${qs}` : ""}`);
+    },
   });
 
   const accountsQuery = useQuery<Account[]>({
@@ -148,8 +180,9 @@ export function TransactionsPage() {
         </button>
       </div>
 
-      {/* Renders nothing when there is nothing to suggest, so it can't leave a
-          gap in the page's vertical rhythm. */}
+      {/* Both of these render nothing when there's nothing to show, so
+          neither can leave a gap in the page's vertical rhythm. */}
+      <UnassignedTransactionsIsland />
       <TransferSuggestionsBanner
         startDate={startDate}
         endDate={endDate}
