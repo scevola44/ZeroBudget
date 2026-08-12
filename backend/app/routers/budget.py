@@ -15,6 +15,7 @@ from app.schemas.budget import (
 )
 from app.services.budget_calc import (
     AssignmentRow,
+    CategoryBalance,
     compute_category_balances,
     compute_ready_to_assign,
     format_month,
@@ -24,15 +25,23 @@ from app.services.budget_calc import (
 from app.services.txn_rows import build_txn_rows, load_peer_account_ids
 
 
-def _needed_this_month(category: Category, balance_cents: int, month_first: date) -> int | None:
+def _needed_this_month(
+    category: Category, balance: CategoryBalance, month_first: date
+) -> int | None:
     """How much the user should fund this category in ``month_first`` to stay on
     track. ``None`` when no meaningful suggestion exists (target_date already
     in the past)."""
     if category.goal_kind == "monthly":
-        return max(0, category.goal_amount_cents - balance_cents)
+        # A monthly goal means "assign this much every month" — it's not about
+        # keeping the available balance topped up, so in-month spending alone
+        # shouldn't resurrect the suggestion once the goal has been assigned.
+        # It should reappear if spending has overspent the category, though.
+        underfunded = max(0, category.goal_amount_cents - balance.assigned_cents)
+        overspent = max(0, -balance.balance_cents)
+        return max(underfunded, overspent)
     if category.goal_kind == "yearly":
         per_month = category.goal_amount_cents // 12
-        return max(0, per_month - balance_cents)
+        return max(0, per_month - balance.balance_cents)
     if category.goal_kind == "target_date":
         target = category.goal_target_month
         if target is None or target < month_first:
@@ -42,7 +51,7 @@ def _needed_this_month(category: Category, balance_cents: int, month_first: date
             + (target.month - month_first.month)
             + 1
         )
-        remaining = max(0, category.goal_amount_cents - balance_cents)
+        remaining = max(0, category.goal_amount_cents - balance.balance_cents)
         return remaining // months_left if months_left > 0 else remaining
     return None
 
@@ -152,7 +161,7 @@ async def get_budget_month(
                 goal_kind=c.goal_kind,
                 goal_amount_cents=c.goal_amount_cents,
                 goal_target_month=c.goal_target_month,
-                needed_this_month_cents=_needed_this_month(c, b.balance_cents, target_month),
+                needed_this_month_cents=_needed_this_month(c, b, target_month),
             )
         )
 
