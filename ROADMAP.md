@@ -562,8 +562,9 @@ Listed so nobody drifts into them. Revisit only on explicit owner request.
 
 - **Multi-currency** — ZeroBudget is EUR-only by design (hard gates at the
   bank-sync boundary; no currency columns).
-- **Native mobile client** (React Native/Expo) — the responsive web app is
-  the mobile story for now.
+- **Native mobile client scope creep on this backend** — a native iOS client
+  is being planned separately in [`IOS_ROADMAP.md`](./IOS_ROADMAP.md); that
+  document tracks its own phases and does not belong in this file.
 - **Multi-user households / sharing** — the `shared` scope models the joint
   pool for a single login; real multi-login sharing is out of scope.
 - **Loan planner / investment tracking** — `loan` accounts may exist as
