@@ -385,9 +385,12 @@ Reflect tab, scope-aware. Called **Insights**, not Reports: `/insights`,
 Transfers used to be two untagged uncategorized transactions, so the receiving
 leg read as income and the sending leg as uncategorized spending. Legs now
 carry `transfer_peer_id`, and `insights_calc._is_internal_transfer` drops both
-legs of a same-scope transfer from every figure on the page. A **cross-scope**
-transfer still appears — it genuinely moves money between pools — so the
-bucket is labelled "Uncategorized (incl. cross-scope transfers)".
+legs of a same-scope transfer from Ready to Assign and from income. Spending
+goes further still: unassigned (`category_id IS NULL`) outgoing money never
+counts as an expense on this page at all, transfer or not, same-scope or
+cross-scope — there is no "Uncategorized" spending bucket. A cross-scope
+transfer's *inflow* leg genuinely moves money into the receiving pool and
+still counts as that scope's income, same as any other unassigned inflow.
 
 ### Acceptance criteria
 

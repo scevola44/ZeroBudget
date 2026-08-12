@@ -152,7 +152,6 @@ export type GroupSpendingRow = {
 export type ScopeBreakdown = {
   scope: Scope;
   total_spent_cents: number;
-  uncategorized_spent_cents: number;
   groups: GroupSpendingRow[];
   categories: CategorySpendingRow[];
 };

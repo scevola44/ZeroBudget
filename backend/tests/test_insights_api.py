@@ -213,7 +213,7 @@ async def test_rows_carry_category_and_group_names(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_uncategorized_outflow_is_in_the_scope_total_but_in_no_category(
+async def test_uncategorized_outflow_never_counts_as_spending(
     client: AsyncClient,
 ):
     headers = await register_user(client)
@@ -223,8 +223,7 @@ async def test_uncategorized_outflow_is_in_the_scope_total_but_in_no_category(
 
     body = (await _get_insights(client, headers)).json()
 
-    assert body["breakdown"]["personal"]["uncategorized_spent_cents"] == 5_000
-    assert body["breakdown"]["personal"]["total_spent_cents"] == 5_000
+    assert body["breakdown"]["personal"]["total_spent_cents"] == 0
     assert body["breakdown"]["personal"]["categories"] == []
 
 
@@ -395,9 +394,9 @@ async def test_insights_reconciles_with_the_budget_page_for_the_same_month(
         )
         assert breakdown["total_spent_cents"] == sum(
             row["spent_cents"] for row in breakdown["categories"]
-        ) + breakdown["uncategorized_spent_cents"]
+        )
 
-    assert insights["breakdown"]["personal"]["total_spent_cents"] == 55_000
+    assert insights["breakdown"]["personal"]["total_spent_cents"] == 50_000
     assert insights["breakdown"]["shared"]["total_spent_cents"] == 90_000
     assert insights["income_vs_spending"]["personal"]["income_cents"] == 0
 
@@ -430,13 +429,17 @@ async def test_a_same_scope_transfer_is_neither_income_nor_spending(client: Asyn
 
     assert flow["income_cents"] == 250_000
     assert flow["spent_cents"] == 0
-    assert insights["breakdown"]["personal"]["uncategorized_spent_cents"] == 0
+    assert insights["breakdown"]["personal"]["total_spent_cents"] == 0
 
 
 @pytest.mark.asyncio
-async def test_a_cross_scope_transfer_stays_visible_in_both_pools(client: AsyncClient):
+async def test_a_cross_scope_transfer_inflow_leg_still_counts_as_income(
+    client: AsyncClient,
+):
     """Unlike a same-scope move, this one really does leave one pool and enter
-    the other, so each side should still see its half."""
+    the other, so the receiving side should still see it as income. The
+    sending leg is unassigned outgoing money like any other, so it never
+    counts as spending — not even here."""
     headers = await register_user(client)
     personal = await create_account(client, headers, "Personal", scope="personal")
     joint = await create_account(client, headers, "Joint", scope="shared")
@@ -458,7 +461,7 @@ async def test_a_cross_scope_transfer_stays_visible_in_both_pools(client: AsyncC
 
     insights = (await _get_insights(client, headers)).json()
 
-    assert insights["breakdown"]["personal"]["uncategorized_spent_cents"] == 60_000
+    assert insights["breakdown"]["personal"]["total_spent_cents"] == 0
     assert insights["income_vs_spending"]["shared"]["income_cents"] == 60_000
 
 
@@ -476,7 +479,6 @@ async def test_uncategorized_savings_activity_is_excluded_from_income_and_spendi
 
     assert body["income_vs_spending"]["personal"]["income_cents"] == 0
     assert body["income_vs_spending"]["personal"]["spent_cents"] == 0
-    assert body["breakdown"]["personal"]["uncategorized_spent_cents"] == 0
     assert body["breakdown"]["personal"]["total_spent_cents"] == 0
 
 
@@ -547,7 +549,7 @@ async def test_a_linked_pair_split_across_months_is_excluded_from_both(
     march = (await _get_insights(client, headers, "2026-03", "2026-03")).json()
     april = (await _get_insights(client, headers, APRIL, APRIL)).json()
 
-    assert march["breakdown"]["personal"]["uncategorized_spent_cents"] == 0
+    assert march["breakdown"]["personal"]["total_spent_cents"] == 0
     assert march["income_vs_spending"]["personal"]["income_cents"] == 250_000
     assert april["income_vs_spending"]["personal"]["income_cents"] == 0
 
@@ -558,17 +560,18 @@ async def test_a_cross_scope_pair_straddling_the_horizon_keeps_its_visible_leg(
 ):
     """The Insights query is date-windowed, so a pair whose legs sit either side
     of the horizon loads only one of them. Resolving the peer's scope must not
-    depend on the peer being in that window, or this leg is read as a same-scope
-    transfer and silently dropped."""
+    depend on the peer being in that window, or the inflow leg is read as a
+    same-scope transfer and silently dropped from income. (The outflow leg no
+    longer needs this guard: unassigned outflow never counts as spending
+    regardless of how its peer's scope resolves.)"""
     headers = await register_user(client)
     personal = await create_account(client, headers, "Personal", scope="personal")
     joint = await create_account(client, headers, "Joint", scope="shared")
 
-    await _post_transaction(client, headers, personal, 250_000, "2026-03-01")
     outflow = await _post_and_get_id(client, headers, personal, -60_000, "2026-03-31")
     inflow = await _post_and_get_id(client, headers, joint, 60_000, "2026-04-02")
     await _link_transfer(client, headers, outflow, inflow)
 
-    march = (await _get_insights(client, headers, "2026-03", "2026-03")).json()
+    april = (await _get_insights(client, headers, APRIL, APRIL)).json()
 
-    assert march["breakdown"]["personal"]["uncategorized_spent_cents"] == 60_000
+    assert april["income_vs_spending"]["shared"]["income_cents"] == 60_000

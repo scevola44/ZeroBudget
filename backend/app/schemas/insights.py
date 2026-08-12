@@ -45,7 +45,6 @@ class GroupSpendingRow(BaseModel):
 class ScopeBreakdown(BaseModel):
     scope: Scope
     total_spent_cents: int
-    uncategorized_spent_cents: int
     groups: list[GroupSpendingRow]  # descending by spent_cents
     categories: list[CategorySpendingRow]  # descending by spent_cents
 

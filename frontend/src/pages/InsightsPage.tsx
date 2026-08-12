@@ -214,7 +214,6 @@ function ScopeSpendingCard({ breakdown }: { breakdown: ScopeBreakdown }) {
   const spentGroups = breakdown.groups.filter((group) => group.spent_cents > 0);
   const total = breakdown.total_spent_cents;
   const largestCategoryCents = Math.max(
-    breakdown.uncategorized_spent_cents,
     ...breakdown.categories.map((category) => category.spent_cents),
     1,
   );
@@ -242,15 +241,6 @@ function ScopeSpendingCard({ breakdown }: { breakdown: ScopeBreakdown }) {
                   title={`${group.name} · ${formatCents(group.spent_cents)}`}
                 />
               ))}
-              {breakdown.uncategorized_spent_cents > 0 && (
-                <div
-                  className={`${OTHER_SERIES_CLASS} first:rounded-l-full last:rounded-r-full`}
-                  style={{
-                    width: `${percentOf(breakdown.uncategorized_spent_cents, total)}%`,
-                  }}
-                  title={`Uncategorized · ${formatCents(breakdown.uncategorized_spent_cents)}`}
-                />
-              )}
             </div>
             <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
               {spentGroups.map((group, rank) => (
@@ -266,17 +256,6 @@ function ScopeSpendingCard({ breakdown }: { breakdown: ScopeBreakdown }) {
                   )}
                 </li>
               ))}
-              {breakdown.uncategorized_spent_cents > 0 && (
-                <li className="flex items-center gap-2">
-                  <span
-                    className={`inline-block w-2.5 h-2.5 rounded-sm ${OTHER_SERIES_CLASS}`}
-                  />
-                  <span>Uncategorized</span>
-                  <span className={`tabular-nums ${MUTED_CLASS}`}>
-                    {formatCents(breakdown.uncategorized_spent_cents)}
-                  </span>
-                </li>
-              )}
             </ul>
           </div>
 
@@ -291,18 +270,6 @@ function ScopeSpendingCard({ breakdown }: { breakdown: ScopeBreakdown }) {
                 largestCents={largestCategoryCents}
               />
             ))}
-            {breakdown.uncategorized_spent_cents > 0 && (
-              <CategoryBar
-                // Transfers within a scope are excluded from these figures;
-                // one crossing into the other pool still lands here.
-                name="Uncategorized (incl. cross-scope transfers)"
-                spentCents={breakdown.uncategorized_spent_cents}
-                refundCents={0}
-                totalCents={total}
-                largestCents={largestCategoryCents}
-                muted
-              />
-            )}
           </ul>
         </div>
       )}
