@@ -3,6 +3,9 @@
   "release-type": "simple",
   "prerelease": false,
   "release-as": "1.0.0",
+  "packages": {
+    ".": {}
+  },
   "extra-files": [
     {
       "type": "generic",
