@@ -476,6 +476,76 @@ async def test_creating_a_leg_in_another_users_account_is_rejected(client: Async
 
 
 @pytest.mark.asyncio
+async def test_payee_suggestions_offer_creating_the_missing_leg(client: AsyncClient):
+    # Savings is never bank-synced, so nothing was ever going to write its half
+    # of the transfer for the amount+date matcher to find.
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    outflow = await _add_transaction(
+        client, headers, checking, -TRANSFER_CENTS, payee="To Savings"
+    )
+
+    r = await client.get(
+        "/api/transactions/transfer-payee-suggestions"
+        "?start_date=2026-03-01&end_date=2026-04-30",
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["transaction"]["id"] == outflow
+    assert body[0]["to_account_id"] == savings
+    assert body[0]["to_account_name"] == "Savings"
+
+
+@pytest.mark.asyncio
+async def test_payee_suggestions_ignore_a_merchant_that_merely_contains_the_account_name(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    await create_account(client, headers, "Savings")
+    await _add_transaction(
+        client, headers, checking, -1_250, payee="Savings Superstore"
+    )
+
+    r = await client.get(
+        "/api/transactions/transfer-payee-suggestions"
+        "?start_date=2026-03-01&end_date=2026-04-30",
+        headers=headers,
+    )
+
+    assert r.json() == []
+
+
+@pytest.mark.asyncio
+async def test_payee_suggestions_stop_once_the_row_is_linked(client: AsyncClient):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    outflow = await _add_transaction(
+        client, headers, checking, -TRANSFER_CENTS, payee="To Savings"
+    )
+    assert (
+        await client.post(
+            f"/api/transactions/{outflow}/transfer-link",
+            json={"to_account_id": savings},
+            headers=headers,
+        )
+    ).status_code == 200
+
+    r = await client.get(
+        "/api/transactions/transfer-payee-suggestions"
+        "?start_date=2026-03-01&end_date=2026-04-30",
+        headers=headers,
+    )
+
+    assert r.json() == []
+
+
+@pytest.mark.asyncio
 async def test_suggestions_ignore_another_users_transactions(client: AsyncClient):
     stranger = await register_user(client, email="stranger@example.com")
     their_checking = await create_account(client, stranger, "Checking")

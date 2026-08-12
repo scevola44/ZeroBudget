@@ -13,15 +13,8 @@ import { ScopeChip } from "../components/ScopeChip";
 import { partitionSuggested } from "../lib/categorySuggestions";
 import { todayISO } from "../lib/dates";
 import { formatCents, parseAmountToCents } from "../lib/money";
+import { TRANSFER_OPTION_PREFIX, transferTargetId } from "../lib/transferOption";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
-
-// Marks a "Transfer : <account>" choice in the category picker, YNAB-style.
-const TRANSFER_OPTION_PREFIX = "transfer:";
-
-function transferTargetId(categoryChoice: string): number | null {
-  if (!categoryChoice.startsWith(TRANSFER_OPTION_PREFIX)) return null;
-  return Number(categoryChoice.slice(TRANSFER_OPTION_PREFIX.length));
-}
 
 export function AccountDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -597,12 +590,19 @@ export function AccountDetailPage() {
           transaction={editingTransaction}
           categories={eligibleCategories}
           peerAccount={peerAccountOf(editingTransaction) ?? null}
+          transferTargets={transferTargets}
           isOpen={true}
           onClose={() => {
             setEditingTxnId(null);
             setEditError(null);
           }}
           onSave={(edit) => updateTxn.mutate({ txnId: editingTransaction.id, edit })}
+          onPickTransferTarget={(targetAccountId) => {
+            setEditingTxnId(null);
+            setEditError(null);
+            setRowActionError(null);
+            setLinking({ txnId: editingTransaction.id, accountId: targetAccountId });
+          }}
           onUnlinkTransfer={() => {
             setEditingTxnId(null);
             setRowActionError(null);

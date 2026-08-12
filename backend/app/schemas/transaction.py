@@ -72,6 +72,15 @@ class TransferSuggestion(BaseModel):
     inflow: TransactionResponse
 
 
+class PayeeTransferSuggestion(BaseModel):
+    # A transaction whose payee names another of the user's accounts, and that
+    # account has no bank connection — so nothing was ever going to sync the
+    # other leg for suggest_pairs to find.
+    transaction: TransactionResponse
+    to_account_id: int
+    to_account_name: str
+
+
 class TransactionImportRow(BaseModel):
     account_id: int
     category_id: int | None = None

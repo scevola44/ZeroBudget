@@ -7,6 +7,7 @@ import {
   EditTransactionModal,
   type TransactionEdit,
 } from "../components/EditTransactionModal";
+import { LinkTransferModal } from "../components/LinkTransferModal";
 import { TransferSuggestionsBanner } from "../components/TransferSuggestionsBanner";
 import { currentMonth } from "../lib/dates";
 import { formatCents } from "../lib/money";
@@ -30,6 +31,12 @@ export function TransactionsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [editingTxnId, setEditingTxnId] = useState<number | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  // The existing row being linked to a transfer, and the account holding its
+  // other leg — set together when "Transfer : <account>" is picked in the
+  // edit modal.
+  const [linking, setLinking] = useState<{ txnId: number; accountId: number } | null>(
+    null,
+  );
   const qc = useQueryClient();
 
   const importMutation = useMutation({
@@ -122,6 +129,9 @@ export function TransactionsPage() {
     editingTxnId === null
       ? undefined
       : (txnsQuery.data ?? []).find((t) => t.id === editingTxnId);
+  const linkingTransaction =
+    linking === null ? undefined : (txnsQuery.data ?? []).find((t) => t.id === linking.txnId);
+  const linkingAccount = linking === null ? undefined : accountById[linking.accountId];
 
   return (
     <div className="max-w-5xl space-y-6">
@@ -314,15 +324,35 @@ export function TransactionsPage() {
               ? accountById[editingTransaction.transfer_peer_account_id]
               : undefined) ?? null
           }
+          transferTargets={accounts.filter(
+            (a) => a.id !== editingTransaction.account_id && !a.closed,
+          )}
           isOpen={true}
           onClose={() => {
             setEditingTxnId(null);
             setEditError(null);
           }}
           onSave={(edit) => updateTxn.mutate({ txnId: editingTransaction.id, edit })}
+          onPickTransferTarget={(targetAccountId) => {
+            setEditingTxnId(null);
+            setEditError(null);
+            setLinking({ txnId: editingTransaction.id, accountId: targetAccountId });
+          }}
           onUnlinkTransfer={() => unlinkTransfer.mutate(editingTransaction.id)}
           isPending={updateTxn.isPending || unlinkTransfer.isPending}
           error={editError}
+        />
+      )}
+
+      {linkingTransaction && linkingAccount && (
+        <LinkTransferModal
+          transaction={linkingTransaction}
+          targetAccount={linkingAccount}
+          onClose={() => setLinking(null)}
+          onLinked={() => {
+            setLinking(null);
+            invalidateAfterLink();
+          }}
         />
       )}
 

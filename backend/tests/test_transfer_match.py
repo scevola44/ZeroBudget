@@ -10,11 +10,14 @@ from datetime import date, timedelta
 from app.services.synthetic_payees import BALANCE_ADJUSTMENT_PAYEE, OPENING_BALANCE_PAYEE
 from app.services.transfer_match import (
     TRANSFER_MATCH_WINDOW_DAYS,
+    AccountRef,
     MatchRow,
     find_candidates,
     is_linkable,
     is_match,
+    payee_names_account,
     suggest_pairs,
+    suggest_payee_matched_transfers,
 )
 
 CHECKING = 1
@@ -168,3 +171,78 @@ def test_every_suggested_row_appears_in_at_most_one_pair():
 
     assert len(pairs) == 2
     assert sorted(used) == [1, 2, 3, 4]
+
+
+def test_a_payee_naming_the_account_exactly_matches():
+    assert payee_names_account("Savings", "Savings")
+
+
+def test_a_payee_with_a_to_prefix_matches():
+    assert payee_names_account("To Savings", "Savings")
+
+
+def test_a_payee_with_a_from_prefix_matches():
+    assert payee_names_account("From Savings", "Savings")
+
+
+def test_a_payee_with_a_transfer_to_prefix_matches():
+    assert payee_names_account("Transfer to Savings", "Savings")
+
+
+def test_payee_matching_ignores_case_and_surrounding_whitespace():
+    assert payee_names_account("  TO   savings  ", "Savings")
+
+
+def test_a_payee_that_merely_contains_the_account_name_does_not_match():
+    # No fuzzy/substring matching: a real merchant sharing a word with an
+    # account name must never be silently turned into a transfer.
+    assert not payee_names_account("Savings Superstore", "Savings")
+
+
+def test_a_payee_naming_an_unrelated_account_does_not_match():
+    assert not payee_names_account("To Rent", "Savings")
+
+
+def test_an_empty_payee_does_not_match():
+    assert not payee_names_account("", "Savings")
+
+
+def test_payee_matched_transfers_are_suggested_for_unsynced_accounts():
+    rows = [_row(1, CHECKING, -60_000, category_id=None, payee="To Savings")]
+    accounts = [AccountRef(id=SAVINGS, name="Savings", is_unsynced=True)]
+
+    suggestions = suggest_payee_matched_transfers(rows, accounts)
+
+    assert len(suggestions) == 1
+    assert suggestions[0].transaction_id == 1
+    assert suggestions[0].to_account_id == SAVINGS
+
+
+def test_payee_matched_transfers_skip_synced_accounts():
+    # The next bank sync writes the real other leg there on its own; creating
+    # one here too would leave a duplicate, orphaned row behind.
+    rows = [_row(1, CHECKING, -60_000, payee="To Savings")]
+    accounts = [AccountRef(id=SAVINGS, name="Savings", is_unsynced=False)]
+
+    assert suggest_payee_matched_transfers(rows, accounts) == []
+
+
+def test_payee_matched_transfers_skip_categorized_rows():
+    rows = [_row(1, CHECKING, -60_000, category_id=7, payee="To Savings")]
+    accounts = [AccountRef(id=SAVINGS, name="Savings", is_unsynced=True)]
+
+    assert suggest_payee_matched_transfers(rows, accounts) == []
+
+
+def test_payee_matched_transfers_skip_rows_already_claimed_by_amount_matching():
+    rows = [_row(1, CHECKING, -60_000, payee="To Savings")]
+    accounts = [AccountRef(id=SAVINGS, name="Savings", is_unsynced=True)]
+
+    assert suggest_payee_matched_transfers(rows, accounts, claimed_ids={1}) == []
+
+
+def test_payee_matched_transfers_skip_unrelated_payees():
+    rows = [_row(1, CHECKING, -1_250, payee="Coffee")]
+    accounts = [AccountRef(id=SAVINGS, name="Savings", is_unsynced=True)]
+
+    assert suggest_payee_matched_transfers(rows, accounts) == []

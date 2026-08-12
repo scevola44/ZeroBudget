@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { Account, Transaction } from "../api/types";
 import { partitionSuggested } from "../lib/categorySuggestions";
 import { parseAmountToCents } from "../lib/money";
+import { TRANSFER_OPTION_PREFIX, transferTargetId } from "../lib/transferOption";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
 
 export type TransactionEdit = {
@@ -21,9 +22,11 @@ export function EditTransactionModal({
   transaction,
   categories,
   peerAccount,
+  transferTargets,
   isOpen,
   onClose,
   onSave,
+  onPickTransferTarget,
   onUnlinkTransfer,
   isPending,
   error,
@@ -33,9 +36,13 @@ export function EditTransactionModal({
   categories: CategoryChoice[];
   /** The other leg's account, when this transaction is a transfer. */
   peerAccount: Account | null;
+  /** Other accounts this (non-transfer) transaction could be turned into a transfer with. */
+  transferTargets?: Account[];
   isOpen: boolean;
   onClose: () => void;
   onSave: (edit: TransactionEdit) => void;
+  /** Picking "Transfer : <account>" hands off to the link-transfer flow instead of saving here. */
+  onPickTransferTarget?: (accountId: number) => void;
   /** Break the pair, keeping both transactions. Only shown for transfer legs. */
   onUnlinkTransfer?: () => void;
   isPending: boolean;
@@ -187,6 +194,11 @@ export function EditTransactionModal({
                 <select
                   value={categoryId}
                   onChange={(e) => {
+                    const targetAccountId = transferTargetId(e.target.value);
+                    if (targetAccountId !== null) {
+                      onPickTransferTarget?.(targetAccountId);
+                      return;
+                    }
                     setCategoryTouched(true);
                     setCategoryId(e.target.value);
                   }}
@@ -208,6 +220,15 @@ export function EditTransactionModal({
                       {c.groupName} › {c.name}
                     </option>
                   ))}
+                  {transferTargets && transferTargets.length > 0 && (
+                    <optgroup label="Transfer">
+                      {transferTargets.map((a) => (
+                        <option key={a.id} value={`${TRANSFER_OPTION_PREFIX}${a.id}`}>
+                          Transfer : {a.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
                 <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
                   <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
