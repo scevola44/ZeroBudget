@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.2.0-beta.10...v0.3.0-beta.10) (2026-08-12)
+
+
+### Features
+
+* add unassigned-transactions notification island ([#111](https://github.com/scevola44/ZeroBudget/issues/111)) ([ecec92d](https://github.com/scevola44/ZeroBudget/commit/ecec92d759383015b8c8a1114ff54f5430ff4ee9))
+
 ## [0.2.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.1.1-beta.10...v0.2.0-beta.10) (2026-08-12)
 
 
