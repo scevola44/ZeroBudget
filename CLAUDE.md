@@ -23,7 +23,7 @@
 
 # Git & branching
 
-- **Target PRs at `develop`, not `main`.** `Bump Version` (`.github/workflows/bump-version.yml`) only triggers on `pull_request: closed` events whose base branch is `develop`; a PR opened against `main` never fires it and the version won't bump. `main` only receives the automated `chore/release-*` PR from `Prepare Release`.
-- **Never name your own branches with the `chore/bump-version-*`, `chore/release-*`, or `chore/sync-*-to-develop` prefixes.** These are reserved for CI — `Bump Version` and `Prepare Release` create and push branches with those exact names (e.g. `chore/bump-version-1.4.0-beta.1`). A collision makes the workflow's `git checkout -b` or `git push origin` step fail.
-- **Apply at most one `bump:major` / `bump:minor` / `bump:patch` label to the PR** when the change warrants a real version bump. `Bump Version` reads that label to pick the bump type; with no label it just increments the beta counter (e.g. `-beta.1` → `-beta.2`).
-- Everyday branch names (`feature/...`, `fix/...`, etc.) are otherwise unconstrained — the workflow only looks at the PR's base branch and labels, not the head branch name.
+- **Target PRs at `develop`, not `main`.** `develop` is the integration/beta branch; `main` only receives promotion PRs from `develop`.
+- **PR titles must be valid Conventional Commits** (e.g. `fix: ...`, `feat: ...`, `feat!: ...` or a `BREAKING CHANGE:` footer for a breaking change). `PR Title Lint` (`.github/workflows/pr-title-lint.yml`) enforces this. Since PRs are squash-merged with the PR title as the commit message, this title is what `release-please` reads to decide the next version bump — there are no more `bump:major`/`bump:minor`/`bump:patch` labels.
+- **Never name your own branches with the `release-please--branches--*` prefix.** That's reserved for the `Release Please` workflow's own PR branches on `develop` and `main`.
+- Versioning, tagging, `CHANGELOG.md`, and GitHub Releases (prerelease on `develop`, stable on `main`) are handled entirely by `release-please` (`.github/workflows/release-please.yml`) — merging its Release PR *is* the release. Everyday branch names (`feature/...`, `fix/...`, etc.) are otherwise unconstrained.
