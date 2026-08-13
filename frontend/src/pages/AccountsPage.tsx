@@ -376,8 +376,7 @@ function ReauthBanner({
         {expired
           ? `Access to ${connection.aspsp_name} has expired.`
           : `Access to ${connection.aspsp_name} expires soon.`}{" "}
-        Re-authorize at your bank to keep syncing. Note: this creates a new connection — disconnect
-        the old one afterwards.
+        Re-authorize at your bank to keep syncing.
       </span>
       <button
         onClick={() => void reconnect()}

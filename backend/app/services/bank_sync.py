@@ -260,8 +260,14 @@ async def sync_connection(
         )
 
     is_first_sync = connection.last_synced_at is None
-    window_days = settings.sync_first_fetch_days if is_first_sync else settings.sync_fetch_days
-    date_from = date.today() - timedelta(days=window_days)
+    # First sync starts at the current calendar month so a newly linked
+    # account lands in the budget ready to categorize against this month,
+    # instead of dumping months of already-elapsed history on the user.
+    date_from = (
+        date.today().replace(day=1)
+        if is_first_sync
+        else date.today() - timedelta(days=settings.sync_fetch_days)
+    )
 
     account_rows = (
         (
