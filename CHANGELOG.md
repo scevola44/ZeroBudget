@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.5.1-beta.10...v0.6.0-beta.10) (2026-08-13)
+
+
+### Features
+
+* add Today button to Budget page month navigator ([#126](https://github.com/scevola44/ZeroBudget/issues/126)) ([a57c3e7](https://github.com/scevola44/ZeroBudget/commit/a57c3e7fb0ec5ca24d62779a12be2dc4cd67d2b9))
+* redesign mobile Transactions page with tappable cards and quick add ([#125](https://github.com/scevola44/ZeroBudget/issues/125)) ([c74f257](https://github.com/scevola44/ZeroBudget/commit/c74f257660088f77a16b2f529d1a77cea21ebe59))
+* show grouped, color-coded remaining budget in the category picker ([#127](https://github.com/scevola44/ZeroBudget/issues/127)) ([fa0aad6](https://github.com/scevola44/ZeroBudget/commit/fa0aad6a14896d22195c3c1fa1082142f38f875f))
+
+
+### Bug Fixes
+
+* stop iOS date picker from auto-opening in edit transaction modal ([#123](https://github.com/scevola44/ZeroBudget/issues/123)) ([2305276](https://github.com/scevola44/ZeroBudget/commit/23052760532f6f9a66ff176493b0c341da7cb9c0))
+
 ## [0.5.1-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.5.0-beta.10...v0.5.1-beta.10) (2026-08-13)
 
 
