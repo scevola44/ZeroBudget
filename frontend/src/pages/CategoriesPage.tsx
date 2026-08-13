@@ -36,10 +36,11 @@ function SortableGroupHeader({
   onEditClick: () => void;
   onDeleteClick: () => void;
 }) {
-  const { attributes, listeners, isDragging } = useSortable({ id: `group-${group.id}` });
+  const { attributes, listeners, isDragging, setNodeRef } = useSortable({ id: `group-${group.id}` });
 
   return (
     <header
+      ref={setNodeRef}
       {...attributes}
       className={`px-5 py-3 bg-stone-50 dark:bg-stone-800 border-b border-stone-200 dark:border-stone-700 text-sm font-semibold text-stone-700 dark:text-stone-200 flex items-center gap-2 transition-opacity ${
         isDragging ? "opacity-50" : ""
@@ -91,13 +92,13 @@ function SortableCategoryItem({
   onEditCancel: () => void;
   onDeleteClick: () => void;
 }) {
-  const { attributes, listeners, isDragging, transform } = useSortable({
+  const { attributes, listeners, isDragging, transform, transition, setNodeRef } = useSortable({
     id: `category-${category.id}`,
   });
   const style = {
     transform: CSS.Transform.toString(transform),
+    transition: transition ?? "opacity 200ms ease",
     opacity: isDragging ? 0.5 : 1,
-    transition: "opacity 200ms ease",
   };
 
   const needsMonth = editingDraft.kind === "target_date";
@@ -111,6 +112,7 @@ function SortableCategoryItem({
 
   return (
     <li
+      ref={setNodeRef}
       {...attributes}
       style={style}
       className="px-5 py-2 border-t border-stone-100 dark:border-stone-800 first:border-t-0 text-sm flex items-start gap-2"
