@@ -1,6 +1,6 @@
 [project]
 name = "zerobudget-backend"
-version = "0.6.2-beta.10"  # x-release-please-version
+version = "0.7.0-beta.10"  # x-release-please-version
 description = "ZeroBudget FastAPI backend"
 requires-python = ">=3.11"
 dependencies = [
