@@ -51,10 +51,12 @@ class Settings(BaseSettings):
     # in-process scheduler; "manual" leaves runs to the user, same daily cap.
     sync_mode: str = "manual"
     sync_max_per_day: int = 4
-    # Transaction re-fetch windows in days (EB has no delta API; we re-fetch
-    # a window and dedup).
+    # Re-fetch window in days for a non-first sync (EB has no delta API; we
+    # re-fetch a window and dedup). A first sync instead fetches month-to-date
+    # (see ``bank_sync.sync_connection``) so a newly linked account starts
+    # clean at the current budget month rather than importing months of
+    # already-elapsed history to categorize.
     sync_fetch_days: int = 14
-    sync_first_fetch_days: int = 90
 
     @property
     def cors_origin_list(self) -> list[str]:

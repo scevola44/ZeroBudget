@@ -182,6 +182,53 @@ async def test_callback_imports_opening_balance(client):
     assert accounts[0]["balance_cents"] == 100_000
 
 
+async def test_reconnect_reuses_existing_connection_and_accounts(client):
+    """Re-authorizing an already-linked bank (e.g. after SESSION_EXPIRED) must
+    not spin up a parallel connection/accounts — that would replay a full
+    historical sync and a second opening balance on top of what's already
+    there."""
+    fake = FakeBankingClient(
+        session=_session_body(),
+        balances=[
+            {"balance_type": "CLBD", "balance_amount": {"amount": "1000.00", "currency": "EUR"}}
+        ],
+    )
+    _install_fake(fake)
+    headers = await register_user(client)
+    first = await _connect(client, headers, fake)
+    connection_id = first["connection"]["id"]
+    account_id = first["account_ids"][0]
+
+    # Simulate the bank issuing a new account uid for the same IBAN on
+    # re-authorization, which is how Enable Banking's uid can behave across
+    # separate consents.
+    fake.session = _session_body(accounts=[{**EUR_ACCOUNT, "uid": "uid_2"}])
+    second = await _connect(client, headers, fake)
+
+    assert second["connection"]["id"] == connection_id
+    assert second["account_ids"] == [account_id]
+    # Reused connection is not a first sync: no re-widened window, no second
+    # opening balance, and the already-imported transaction dedups cleanly
+    # against the same account id.
+    assert second["sync"]["added"] == 0
+    assert second["sync"]["modified"] == 0
+
+    r = await client.get("/api/banking/connections", headers=headers)
+    assert len(r.json()) == 1
+
+    r = await client.get("/api/accounts", headers=headers)
+    accounts = r.json()
+    assert len(accounts) == 1
+    assert accounts[0]["id"] == account_id
+    # Bank balance (100000) minus the one transaction (-4250); unchanged by
+    # the reconnect, not doubled.
+    assert accounts[0]["balance_cents"] == 100_000
+
+    r = await client.get("/api/transactions", headers=headers)
+    payees = [t["payee"] for t in r.json()]
+    assert payees.count("Opening Balance") == 1
+
+
 async def test_callback_rejects_unknown_state(client):
     _install_fake(FakeBankingClient(session=_session_body()))
     headers = await register_user(client)

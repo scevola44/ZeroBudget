@@ -4,8 +4,8 @@ Endpoints under ``/api/banking``:
 
 - ``GET  /aspsps`` — banks available for linking.
 - ``POST /connections`` — start the redirect-based bank authorization.
-- ``POST /connections/callback`` — complete it: create session, connection,
-  accounts, and run the first sync.
+- ``POST /connections/callback`` — complete it: create (or, on re-auth of an
+  already-linked bank, reuse) the connection and accounts, and sync.
 - ``GET  /connections`` / ``DELETE /connections/{id}`` — list / unlink.
 - ``POST /sync`` — manual global sync run (quota-guarded).
 - ``GET  /sync/status`` — quota + scheduling info for the UI.
@@ -292,19 +292,66 @@ async def complete_connection(
             detail="No EUR-denominated accounts found at this bank. ZeroBudget is EUR-only.",
         )
 
-    connection = BankConnection(
-        user_id=current_user.id,
-        session_id_encrypted=encrypt(session["session_id"]),
-        aspsp_name=auth_request.aspsp_name,
-        aspsp_country=auth_request.aspsp_country,
-        valid_until=_parse_valid_until(session),
+    # Re-authorizing an already-linked bank (e.g. after SESSION_EXPIRED) goes
+    # through this same callback. Reuse the existing connection/accounts
+    # instead of creating parallel ones: a brand-new BankConnection would have
+    # last_synced_at=None, so the next sync would treat it as a first sync
+    # again — re-running the month-to-date-or-fetch-window + opening-balance
+    # logic below against what is actually the same bank data, duplicating
+    # every transaction and adding a second opening balance.
+    connection = (
+        (
+            await db.execute(
+                select(BankConnection).where(
+                    BankConnection.user_id == current_user.id,
+                    BankConnection.aspsp_name == auth_request.aspsp_name,
+                    BankConnection.aspsp_country == auth_request.aspsp_country,
+                )
+            )
+        )
+        .scalars()
+        .first()
     )
-    db.add(connection)
-    await db.flush()
+    if connection is not None:
+        connection.session_id_encrypted = encrypt(session["session_id"])
+        connection.valid_until = _parse_valid_until(session)
+        connection.last_error_code = None
+    else:
+        connection = BankConnection(
+            user_id=current_user.id,
+            session_id_encrypted=encrypt(session["session_id"]),
+            aspsp_name=auth_request.aspsp_name,
+            aspsp_country=auth_request.aspsp_country,
+            valid_until=_parse_valid_until(session),
+        )
+        db.add(connection)
+        await db.flush()
 
-    created_accounts: list[Account] = []
+    linked_accounts: list[Account] = []
     for raw in eur_accounts:
         iban = (raw.get("account_id") or {}).get("iban")
+        mask = iban[-4:] if iban else None
+        existing_account = (
+            (
+                await db.execute(
+                    select(Account).where(
+                        Account.bank_connection_id == connection.id,
+                        Account.bank_account_mask == mask,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+            if mask is not None
+            else None
+        )
+        if existing_account is not None:
+            # Bank-owned identifiers only; name/scope/closed stay as the user
+            # left them.
+            existing_account.bank_account_uid = raw.get("uid")
+            existing_account.bank_product_name = raw.get("product")
+            linked_accounts.append(existing_account)
+            continue
         acc = Account(
             user_id=current_user.id,
             name=_account_display_name(raw, auth_request.aspsp_name),
@@ -312,11 +359,11 @@ async def complete_connection(
             scope=auth_request.scope,
             bank_connection_id=connection.id,
             bank_account_uid=raw.get("uid"),
-            bank_account_mask=iban[-4:] if iban else None,
+            bank_account_mask=mask,
             bank_product_name=raw.get("product"),
         )
         db.add(acc)
-        created_accounts.append(acc)
+        linked_accounts.append(acc)
     await db.delete(auth_request)
     await db.flush()
 
@@ -341,7 +388,7 @@ async def complete_connection(
 
     return CallbackResponse(
         connection=BankConnectionResponse.model_validate(connection),
-        account_ids=[a.id for a in created_accounts],
+        account_ids=[a.id for a in linked_accounts],
         skipped_accounts=skipped,
         sync=_summary_to_result(summary, connection),
     )

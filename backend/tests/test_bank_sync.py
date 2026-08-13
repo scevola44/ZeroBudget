@@ -272,7 +272,7 @@ async def test_client_error_records_error_code(db_session):
 
 
 @pytest.mark.asyncio
-async def test_first_sync_uses_wider_window(db_session):
+async def test_first_sync_uses_month_to_date_window(db_session):
     _, connection, _ = await _seed(db_session)
     client = FakeBankingClient()
 
@@ -281,8 +281,8 @@ async def test_first_sync_uses_wider_window(db_session):
     await sync_connection(db_session, connection, client)
     second_window_start = client.calls[1][1]
 
-    # First sync reaches further back than subsequent ones (90 vs 14 days).
-    assert first_window_start < second_window_start
+    assert first_window_start == date.today().replace(day=1)
+    assert second_window_start == date.today() - timedelta(days=14)
 
 
 @pytest.mark.asyncio
