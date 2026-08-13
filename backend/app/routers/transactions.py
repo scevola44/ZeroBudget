@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.deps import CurrentUser, DbSession
-from app.models import Account, Category, CategoryGroup, Transaction
+from app.models import Account, Category, CategoryGroup, DeletedExternalTransaction, Transaction
 from app.schemas.transaction import (
     PayeeTransferSuggestion,
     TransactionCreate,
@@ -647,6 +647,7 @@ async def delete_transaction(
     txn_id: int, db: DbSession, current_user: CurrentUser
 ) -> None:
     txn = await _owned_transaction(db, current_user.id, txn_id)
+    legs = [txn]
     if txn.transfer_peer_id is not None:
         # Half a transfer is never a meaningful record: drop the pair. Break the
         # links first so neither delete trips the other's foreign key.
@@ -654,7 +655,20 @@ async def delete_transaction(
         txn.transfer_peer_id = None
         if peer is not None:
             peer.transfer_peer_id = None
+            legs.append(peer)
             await db.flush()
-            await db.delete(peer)
-    await db.delete(txn)
+
+    # Tombstone bank-imported rows so the next sync doesn't mistake "the user
+    # deleted this" for "never imported" and bring it right back — see
+    # DeletedExternalTransaction.
+    for leg in legs:
+        if leg.external_transaction_id is not None:
+            db.add(
+                DeletedExternalTransaction(
+                    user_id=current_user.id,
+                    external_transaction_id=leg.external_transaction_id,
+                )
+            )
+    for leg in legs:
+        await db.delete(leg)
     await db.commit()

@@ -116,6 +116,12 @@ export function TransactionsPage() {
     onError: (err) => setEditError(err instanceof Error ? err.message : "Update failed"),
   });
 
+  const deleteTxn = useMutation({
+    mutationFn: (txnId: number) =>
+      api(`/api/transactions/${txnId}`, { method: "DELETE" }),
+    onSuccess: invalidateAfterLink,
+  });
+
   // A transfer touches two accounts, so the broad prefix has to go too.
   function invalidateAfterLink() {
     void qc.invalidateQueries({ queryKey: ["transactions"] });
@@ -329,7 +335,7 @@ export function TransactionsPage() {
                       >
                         {formatCents(t.amount_cents)}
                       </td>
-                      <td className="px-5 py-2 text-right">
+                      <td className="px-5 py-2 text-right space-x-2 whitespace-nowrap">
                         <button
                           onClick={() => {
                             setEditError(null);
@@ -338,6 +344,17 @@ export function TransactionsPage() {
                           className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline px-2 py-1"
                         >
                           Edit
+                        </button>
+                        <button
+                          onClick={() => deleteTxn.mutate(t.id)}
+                          title={
+                            t.transfer_peer_id !== null
+                              ? "Deletes both legs of the transfer"
+                              : undefined
+                          }
+                          className="text-xs text-stone-500 dark:text-stone-400 hover:text-red-600 dark:hover:text-red-400 px-2 py-1"
+                        >
+                          Delete
                         </button>
                       </td>
                     </tr>

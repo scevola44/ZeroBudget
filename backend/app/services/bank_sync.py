@@ -10,6 +10,9 @@ Consequences, by design:
 - No deletion detection: a transaction removed at the bank stays in ZeroBudget.
 - "Modified" means a re-fetched row whose date/amount changed; user-owned
   fields (category, memo, payee once set) are never touched.
+- A transaction the user deleted in ZeroBudget is never re-imported: deleting
+  it leaves a ``DeletedExternalTransaction`` tombstone behind, keyed on the
+  same ``external_transaction_id``, which this module checks before inserting.
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.models import Account, BankConnection, SyncRun, Transaction
+from app.models import Account, BankConnection, DeletedExternalTransaction, SyncRun, Transaction
 from app.services.bank_amount import (
     NonEurCurrencyError,
     bank_amount_to_cents,
@@ -64,6 +67,8 @@ class SyncSummary:
     skipped_non_eur: int = 0
     skipped_unknown_account: int = 0
     skipped_unparseable_date: int = 0
+    # A row the user deliberately deleted; see the module docstring.
+    skipped_deleted: int = 0
     error_code: str | None = None
     # Account IDs that have fresh data — the router can use this to hint
     # cache invalidation on the frontend.
@@ -153,6 +158,16 @@ def select_balance(balances: list[dict[str, Any]]) -> dict[str, Any] | None:
     return balances[0] if balances else None
 
 
+async def _is_deleted(db: AsyncSession, external_id: str) -> bool:
+    return (
+        await db.scalar(
+            select(DeletedExternalTransaction.id).where(
+                DeletedExternalTransaction.external_transaction_id == external_id
+            )
+        )
+    ) is not None
+
+
 async def _import_opening_balance(
     db: AsyncSession,
     connection: BankConnection,
@@ -178,6 +193,8 @@ async def _import_opening_balance(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        return
+    if await _is_deleted(db, external_id):
         return
 
     try:
@@ -319,6 +336,9 @@ async def sync_connection(
             ).scalar_one_or_none()
 
             if existing is None:
+                if await _is_deleted(db, external_id):
+                    summary.skipped_deleted += 1
+                    continue
                 db.add(
                     Transaction(
                         user_id=connection.user_id,

@@ -20,7 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.models import Account, BankConnection, SyncRun, Transaction, User
+from app.models import (
+    Account,
+    BankConnection,
+    DeletedExternalTransaction,
+    SyncRun,
+    Transaction,
+    User,
+)
 from app.services.bank_sync import run_global_sync, select_balance, sync_connection
 from app.services.banking_client import BankingError
 from app.services.encryption import encrypt
@@ -160,6 +167,30 @@ async def test_refetch_is_idempotent(db_session):
     assert second.modified == 0
     rows = (await db_session.execute(Transaction.__table__.select())).fetchall()
     assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_deleted_transaction_is_not_reimported(db_session):
+    """Simulates the delete endpoint's tombstone, then re-runs a sync that
+    would otherwise re-fetch the same bank transaction. Deleting the
+    Transaction row frees external_transaction_id for reuse, so the tombstone
+    is the only thing telling the next sync "the user removed this on
+    purpose" instead of "never imported"."""
+    user, connection, account = await _seed(db_session)
+    db_session.add(
+        DeletedExternalTransaction(
+            user_id=user.id, external_transaction_id=f"{account.id}:ref-1"
+        )
+    )
+    await db_session.flush()
+
+    client = FakeBankingClient(transactions_by_uid={"uid_1": [_txn("42.50", "DBIT")]})
+    summary = await sync_connection(db_session, connection, client)
+
+    assert summary.added == 0
+    assert summary.skipped_deleted == 1
+    rows = (await db_session.execute(Transaction.__table__.select())).fetchall()
+    assert len(rows) == 0
 
 
 @pytest.mark.asyncio

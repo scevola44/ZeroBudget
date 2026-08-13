@@ -1,9 +1,25 @@
 """Transactions router: CRUD, filters, ownership, category clearing."""
 
-import pytest
-from httpx import AsyncClient
+from collections.abc import AsyncIterator
+from datetime import date
 
-from tests.conftest import create_account, create_category, create_group, register_user
+import pytest
+import pytest_asyncio
+from httpx import AsyncClient
+from sqlalchemy import event, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
+
+from app.db import Base
+from app.models import Account, DeletedExternalTransaction, Transaction, User
+from app.routers.transactions import delete_transaction
+from tests.conftest import (
+    _enable_sqlite_fks,
+    create_account,
+    create_category,
+    create_group,
+    register_user,
+)
 
 
 async def _add_txn(
@@ -236,6 +252,83 @@ async def test_delete_transaction(client: AsyncClient):
     r = await client.delete(f"/api/transactions/{txn_id}", headers=headers)
     assert r.status_code == 204
     assert (await client.get("/api/transactions", headers=headers)).json() == []
+
+
+@pytest_asyncio.fixture
+async def db_session() -> AsyncIterator[AsyncSession]:
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    event.listen(engine.sync_engine, "connect", _enable_sqlite_fks)
+    maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    async with maker() as session:
+        yield session
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_delete_tombstones_bank_imported_transaction(db_session: AsyncSession):
+    """Deleting a bank-imported row must leave its external_transaction_id
+    tombstoned, or the next sync would re-import it right back (see
+    app.services.bank_sync)."""
+    user = User(email="user@example.com", hashed_password="x")
+    db_session.add(user)
+    await db_session.flush()
+    account = Account(user_id=user.id, name="Checking", type="checking")
+    db_session.add(account)
+    await db_session.flush()
+    external_id = f"{account.id}:ref-1"
+    txn = Transaction(
+        user_id=user.id,
+        account_id=account.id,
+        date=date(2026, 4, 1),
+        amount_cents=-1000,
+        external_transaction_id=external_id,
+    )
+    db_session.add(txn)
+    await db_session.flush()
+
+    await delete_transaction(txn.id, db_session, user)
+
+    assert (await db_session.get(Transaction, txn.id)) is None
+    tombstone = (
+        await db_session.execute(
+            select(DeletedExternalTransaction).where(
+                DeletedExternalTransaction.external_transaction_id == external_id
+            )
+        )
+    ).scalar_one()
+    assert tombstone.user_id == user.id
+
+
+@pytest.mark.asyncio
+async def test_delete_does_not_tombstone_manually_entered_transaction(
+    db_session: AsyncSession,
+):
+    """No external_transaction_id means nothing for a sync to re-import, so a
+    manually entered transaction's deletion shouldn't leave a tombstone."""
+    user = User(email="user@example.com", hashed_password="x")
+    db_session.add(user)
+    await db_session.flush()
+    account = Account(user_id=user.id, name="Checking", type="checking")
+    db_session.add(account)
+    await db_session.flush()
+    txn = Transaction(
+        user_id=user.id, account_id=account.id, date=date(2026, 4, 1), amount_cents=-1000
+    )
+    db_session.add(txn)
+    await db_session.flush()
+
+    await delete_transaction(txn.id, db_session, user)
+
+    tombstones = (
+        await db_session.execute(select(DeletedExternalTransaction))
+    ).scalars().all()
+    assert tombstones == []
 
 
 @pytest.mark.asyncio
