@@ -139,6 +139,14 @@ export function BudgetPage() {
           >
             →
           </button>
+          {month !== currentMonth() && (
+            <button
+              onClick={() => setMonth(currentMonth())}
+              className="px-3 py-2 rounded-lg border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 hover:bg-stone-100 dark:hover:bg-stone-800"
+            >
+              Today
+            </button>
+          )}
         </div>
       </header>
 
