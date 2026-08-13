@@ -117,15 +117,18 @@ def _is_income(txn: TxnRow) -> bool:
 
 
 def _is_internal_transfer(txn: TxnRow) -> bool:
-    """A transfer whose two legs sit in the same scope — money moving between
-    the user's own accounts inside one pool. Relevant only to the income side:
+    """A transfer whose two legs sit in the same scope *and* the same
+    on-budget status — money moving between the user's own accounts inside
+    one pool, not into or out of it. Relevant only to the income side:
     without this check a same-scope transfer's inflow leg would misread as
     income. The outflow leg needs no such check — all unassigned outflow is
-    already excluded from spending regardless of scope. Cross-scope legs are
-    real movements between pools, so the inflow leg is left in, matching
+    already excluded from spending regardless of scope. Cross-scope legs, and
+    same-scope legs that cross the on-budget/off-budget boundary (e.g. a
+    transfer back from savings into checking), are real movements into a
+    pool, so their inflow leg is left in, matching
     ``budget_calc.feeds_ready_to_assign``.
     """
-    return txn.transfer_peer_scope == txn.scope
+    return txn.transfer_peer_scope == txn.scope and txn.transfer_peer_on_budget == txn.on_budget
 
 
 def _scope_of(txn: TxnRow, category_scope: dict[int, str]) -> str | None:

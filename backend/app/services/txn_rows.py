@@ -68,6 +68,17 @@ def build_txn_rows(
             return own_scope[txn.id]
         return account_scope.get(account_id, PERSONAL)
 
+    def peer_on_budget(txn: Transaction) -> bool:
+        if txn.transfer_peer_id is None:
+            return True
+        account_id = peer_account_id.get(txn.transfer_peer_id)
+        if account_id is None:
+            # Same conservative fallback as ``peer_scope``: matching this
+            # row's own on-budget status keeps the leg excluded from Ready to
+            # Assign when the other half isn't visible.
+            return own_on_budget[txn.id]
+        return account_on_budget.get(account_id, True)
+
     return [
         TxnRow(
             category_id=t.category_id,
@@ -76,6 +87,7 @@ def build_txn_rows(
             scope=own_scope[t.id],
             transfer_peer_scope=peer_scope(t),
             on_budget=own_on_budget[t.id],
+            transfer_peer_on_budget=peer_on_budget(t),
         )
         for t in transactions
     ]
