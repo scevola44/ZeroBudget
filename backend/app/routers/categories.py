@@ -178,7 +178,23 @@ async def update_category(
 ) -> CategoryResponse:
     category = await _owned_category(db, current_user.id, category_id)
     if payload.group_id is not None:
-        await _owned_group(db, current_user.id, payload.group_id)
+        target_group = await _owned_group(db, current_user.id, payload.group_id)
+        if payload.group_id != category.group_id:
+            source_group = await _owned_group(db, current_user.id, category.group_id)
+            if source_group.scope_id != target_group.scope_id:
+                # Moving it would strand the category's transactions in a
+                # scope that disagrees with their account — the same
+                # invariant the delete/reassign flow already enforces.
+                # Names, not ids: this reaches the user.
+                source_scope = await db.get(Scope, source_group.scope_id)
+                target_scope = await db.get(Scope, target_group.scope_id)
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"Cannot move a {source_scope.name} category "
+                        f"into a {target_scope.name} group."
+                    ),
+                )
         category.group_id = payload.group_id
     if payload.name is not None:
         category.name = payload.name

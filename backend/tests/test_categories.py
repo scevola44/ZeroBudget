@@ -120,6 +120,25 @@ async def test_cannot_create_category_in_other_users_group(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_cannot_move_category_into_different_scope_group(client: AsyncClient):
+    headers = await register_user(client)
+    personal_group = await create_group(client, headers, "Personal", scope=PERSONAL)
+    shared_group = await create_group(client, headers, "Family", scope=FAMILY)
+    dining = await create_category(client, headers, personal_group, "Dining")
+
+    r = await client.patch(
+        f"/api/categories/{dining}",
+        json={"group_id": shared_group},
+        headers=headers,
+    )
+    assert r.status_code == 422, r.text
+
+    groups = (await client.get("/api/category-groups", headers=headers)).json()
+    personal = next(g for g in groups if g["id"] == personal_group)
+    assert any(c["id"] == dining for c in personal["categories"])
+
+
+@pytest.mark.asyncio
 async def test_cannot_move_category_into_other_users_group(client: AsyncClient):
     alice = await register_user(client, "alice@example.com")
     bob = await register_user(client, "bob@example.com")

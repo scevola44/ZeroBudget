@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.6.2-beta.10...v0.7.0-beta.10) (2026-08-13)
+
+
+### Features
+
+* allow moving a category between groups ([#133](https://github.com/scevola44/ZeroBudget/issues/133)) ([b9d6752](https://github.com/scevola44/ZeroBudget/commit/b9d6752206df751f256ad06c7c12e3eb239c4754))
+
 ## [0.6.2-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.6.1-beta.10...v0.6.2-beta.10) (2026-08-13)
 
 
