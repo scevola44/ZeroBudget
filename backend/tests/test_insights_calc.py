@@ -42,6 +42,8 @@ def _txn(
     amount_cents: int,
     scope: str = "personal",
     on_budget: bool = True,
+    transfer_peer_scope: str | None = None,
+    transfer_peer_on_budget: bool = True,
 ) -> TxnRow:
     return TxnRow(
         category_id=category_id,
@@ -49,6 +51,8 @@ def _txn(
         amount_cents=amount_cents,
         scope=scope,
         on_budget=on_budget,
+        transfer_peer_scope=transfer_peer_scope,
+        transfer_peer_on_budget=transfer_peer_on_budget,
     )
 
 
@@ -401,6 +405,43 @@ def test_uncategorized_off_budget_inflow_contributes_no_income():
     assert flow.income_cents == 0
     assert flow.spent_cents == 0
     assert flow.refund_cents == 0
+
+
+def test_same_scope_transfer_between_two_on_budget_accounts_is_not_income():
+    # checking -> credit card: money changing accounts inside the pool, not
+    # entering it, so the inflow leg must not read as income.
+    period = _range(_month(2026, 4), _month(2026, 4))
+    transactions = [
+        _txn(
+            category_id=None,
+            date=date(2026, 4, 2),
+            amount_cents=60_000,
+            transfer_peer_scope="personal",
+        ),
+    ]
+
+    flow = flow_by_month(transactions, period, "personal", {})[0]
+
+    assert flow.income_cents == 0
+
+
+def test_same_scope_transfer_from_savings_into_checking_is_income():
+    # savings -> checking: this leg is money entering the on-budget pool for
+    # the first time, matching budget_calc.feeds_ready_to_assign.
+    period = _range(_month(2026, 4), _month(2026, 4))
+    transactions = [
+        _txn(
+            category_id=None,
+            date=date(2026, 4, 2),
+            amount_cents=60_000,
+            transfer_peer_scope="personal",
+            transfer_peer_on_budget=False,
+        ),
+    ]
+
+    flow = flow_by_month(transactions, period, "personal", {})[0]
+
+    assert flow.income_cents == 60_000
 
 
 def test_uncategorized_off_budget_outflow_is_excluded_not_counted_as_spent():

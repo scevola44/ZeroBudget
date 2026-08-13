@@ -30,6 +30,7 @@ def _txn(
     scope: str = "personal",
     transfer_peer_scope: str | None = None,
     on_budget: bool = True,
+    transfer_peer_on_budget: bool = True,
 ) -> TxnRow:
     return TxnRow(
         category_id=category_id,
@@ -38,6 +39,7 @@ def _txn(
         scope=scope,
         transfer_peer_scope=transfer_peer_scope,
         on_budget=on_budget,
+        transfer_peer_on_budget=transfer_peer_on_budget,
     )
 
 
@@ -304,10 +306,58 @@ def test_off_budget_uncategorized_outflow_does_not_reduce_ready_to_assign():
     assert compute_ready_to_assign(txns, [], APRIL, "personal") == 100_000
 
 
-def test_same_scope_transfer_into_savings_leaves_ready_to_assign_untouched():
-    # The 99% case: checking -> savings, same scope. Already excluded by the
-    # same-scope-transfer rule alone, but the savings leg's own on_budget=False
-    # must not change that.
+def test_same_scope_transfer_into_savings_reduces_ready_to_assign():
+    # checking -> savings, same scope: the money leaves the on-budget pool,
+    # so it must stop counting as available to assign even though the
+    # transfer never crosses scopes.
+    txns = [
+        _txn(category_id=None, date=date(2026, 4, 1), amount_cents=100_000),
+        _txn(
+            category_id=None,
+            date=date(2026, 4, 2),
+            amount_cents=-60_000,
+            transfer_peer_scope="personal",
+            transfer_peer_on_budget=False,
+        ),
+        _txn(
+            category_id=None,
+            date=date(2026, 4, 2),
+            amount_cents=60_000,
+            transfer_peer_scope="personal",
+            on_budget=False,
+        ),
+    ]
+    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 40_000
+
+
+def test_same_scope_transfer_from_savings_raises_ready_to_assign():
+    # savings -> checking, same scope: money re-entering the on-budget pool
+    # becomes available to assign again, per account_types.py's documented
+    # design ("does not count... until it is transferred into an on-budget
+    # account").
+    txns = [
+        _txn(category_id=None, date=date(2026, 4, 1), amount_cents=100_000, on_budget=False),
+        _txn(
+            category_id=None,
+            date=date(2026, 4, 2),
+            amount_cents=-60_000,
+            transfer_peer_scope="personal",
+            on_budget=False,
+        ),
+        _txn(
+            category_id=None,
+            date=date(2026, 4, 2),
+            amount_cents=60_000,
+            transfer_peer_scope="personal",
+            transfer_peer_on_budget=False,
+        ),
+    ]
+    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 60_000
+
+
+def test_same_scope_transfer_between_two_on_budget_accounts_leaves_ready_to_assign_untouched():
+    # checking -> credit card, both on-budget, same scope: money changing
+    # accounts inside the pool, not entering or leaving it.
     txns = [
         _txn(category_id=None, date=date(2026, 4, 1), amount_cents=100_000),
         _txn(
@@ -321,7 +371,6 @@ def test_same_scope_transfer_into_savings_leaves_ready_to_assign_untouched():
             date=date(2026, 4, 2),
             amount_cents=60_000,
             transfer_peer_scope="personal",
-            on_budget=False,
         ),
     ]
     assert compute_ready_to_assign(txns, [], APRIL, "personal") == 100_000

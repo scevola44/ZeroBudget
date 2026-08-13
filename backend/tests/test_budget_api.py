@@ -542,7 +542,7 @@ async def test_uncategorized_inflow_to_a_savings_account_does_not_raise_ready_to
 
 
 @pytest.mark.asyncio
-async def test_transfer_from_checking_to_savings_does_not_move_ready_to_assign(
+async def test_transfer_from_checking_to_savings_reduces_ready_to_assign(
     client: AsyncClient,
 ):
     headers = await register_user(client)
@@ -556,7 +556,25 @@ async def test_transfer_from_checking_to_savings_does_not_move_ready_to_assign(
     await _transfer(client, headers, checking, savings, 60_000, "2026-04-02")
 
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 100_000
+    assert body["personal_ready_to_assign_cents"] == 40_000
+
+
+@pytest.mark.asyncio
+async def test_transfer_from_savings_to_checking_raises_ready_to_assign(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking", type="checking")
+    savings = await create_account(client, headers, "Savings", type="savings")
+
+    await _add_inflow(client, headers, savings, 100_000, "2026-04-01")
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    assert body["personal_ready_to_assign_cents"] == 0
+
+    await _transfer(client, headers, savings, checking, 60_000, "2026-04-02")
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    assert body["personal_ready_to_assign_cents"] == 60_000
 
 
 @pytest.mark.asyncio

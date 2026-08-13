@@ -61,15 +61,24 @@ class TxnRow:
     # Whether this row's account feeds Ready to Assign — False for savings
     # accounts. See ``feeds_ready_to_assign``.
     on_budget: bool = True
+    # Whether the transfer peer's account is on-budget; meaningless when the
+    # row isn't a transfer leg. Defaults to True so callers building a
+    # same-scope, on-budget-only transfer don't need to set it.
+    # See ``feeds_ready_to_assign``.
+    transfer_peer_on_budget: bool = True
 
 
 def feeds_ready_to_assign(txn: TxnRow) -> bool:
     """Whether ``txn`` is money arriving in (or leaving) its scope's RTA pool.
 
     Uncategorized rows are the sole source of Ready to Assign. Transfer legs
-    are uncategorized too, but only *cross-scope* legs actually move money
-    between pools: a same-scope transfer is one pool's money changing accounts,
-    so both its legs are excluded and the pool is untouched.
+    are uncategorized too, but only legs that actually move money between
+    pools count: a *cross-scope* transfer moves money between the personal and
+    shared pools, and a same-scope transfer that crosses the on-budget/
+    off-budget boundary moves money into or out of the budget entirely (e.g.
+    checking -> savings). A same-scope transfer between two accounts with the
+    same on-budget status is just one pool's money changing accounts, so both
+    its legs are excluded and the pool is untouched.
 
     The two legs are always equal and opposite, so excluding them is the same
     arithmetic as letting them cancel out — except when they fall in different
@@ -80,12 +89,18 @@ def feeds_ready_to_assign(txn: TxnRow) -> bool:
     as an exclusion rather than relying on cancellation is what pins that, and
     what lets ``insights_calc`` apply the identical rule.
 
-    Off-budget accounts (savings) are excluded outright, regardless of
-    category or transfer status — that money sits outside the budget entirely.
+    Off-budget accounts (savings) never feed RTA directly through this row —
+    only through the on-budget leg of a transfer that moves money in or out of
+    them, per ``account_types.OFF_BUDGET_ACCOUNT_TYPES``'s documented design.
     """
     if txn.category_id is not None:
         return False
-    return txn.on_budget and txn.transfer_peer_scope != txn.scope
+    if not txn.on_budget:
+        return False
+    return (
+        txn.transfer_peer_scope != txn.scope
+        or txn.transfer_peer_on_budget != txn.on_budget
+    )
 
 
 @dataclass(frozen=True)
