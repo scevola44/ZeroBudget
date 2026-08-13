@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.6.0-beta.10...v0.6.1-beta.10) (2026-08-13)
+
+
+### Bug Fixes
+
+* move Today button below month selector on mobile ([#129](https://github.com/scevola44/ZeroBudget/issues/129)) ([d5f8f9b](https://github.com/scevola44/ZeroBudget/commit/d5f8f9b766da975b3f52bb96117fe8a3fa36b441))
+
 ## [0.6.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.5.1-beta.10...v0.6.0-beta.10) (2026-08-13)
 
 
