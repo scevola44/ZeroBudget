@@ -3,8 +3,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models.scope import PERSONAL, Scope
-
 GoalKind = Literal["monthly", "yearly", "target_date"]
 
 
@@ -38,13 +36,13 @@ def _validate_goal_combo(
 class CategoryGroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     sort_order: int = 0
-    scope: Scope = PERSONAL
+    scope_id: int
 
 
 class CategoryGroupUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     sort_order: int | None = None
-    scope: Scope | None = None
+    scope_id: int | None = None
 
 
 class CategoryCreate(BaseModel):
@@ -97,7 +95,7 @@ class CategoryGroupResponse(BaseModel):
     id: int
     name: str
     sort_order: int
-    scope: Scope
+    scope_id: int
     categories: list[CategoryResponse] = []
 
 

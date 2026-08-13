@@ -2,8 +2,8 @@
 
 These tests pin down the behaviour that defines "zero-based" for this app:
 Ready-to-Assign shrinks as you assign money; category balances roll forward
-month to month; activity is scoped to the requested month; and personal vs.
-shared scopes are independent budget pools.
+month to month; activity is scoped to the requested month; and separate scopes
+are independent budget pools.
 """
 
 from datetime import date
@@ -18,6 +18,11 @@ from app.services.budget_calc import (
     parse_month,
 )
 
+# Scopes are rows in the database, so these unit tests only need two distinct
+# ids. The names say which pool each stands for.
+PERSONAL = 1
+FAMILY = 2
+
 APRIL = date(2026, 4, 1)
 MAY = date(2026, 5, 1)
 
@@ -27,8 +32,8 @@ def _txn(
     category_id: int | None,
     date: date,
     amount_cents: int,
-    scope: str = "personal",
-    transfer_peer_scope: str | None = None,
+    scope_id: int = PERSONAL,
+    transfer_peer_scope_id: int | None = None,
     on_budget: bool = True,
     transfer_peer_on_budget: bool = True,
 ) -> TxnRow:
@@ -36,8 +41,8 @@ def _txn(
         category_id=category_id,
         date=date,
         amount_cents=amount_cents,
-        scope=scope,
-        transfer_peer_scope=transfer_peer_scope,
+        scope_id=scope_id,
+        transfer_peer_scope_id=transfer_peer_scope_id,
         on_budget=on_budget,
         transfer_peer_on_budget=transfer_peer_on_budget,
     )
@@ -48,10 +53,10 @@ def _assign(
     category_id: int,
     month: date,
     amount_cents: int,
-    scope: str = "personal",
+    scope_id: int = PERSONAL,
 ) -> AssignmentRow:
     return AssignmentRow(
-        category_id=category_id, month=month, amount_cents=amount_cents, scope=scope
+        category_id=category_id, month=month, amount_cents=amount_cents, scope_id=scope_id
     )
 
 
@@ -63,7 +68,7 @@ def test_month_helpers():
 
 
 def test_ready_to_assign_starts_empty():
-    assert compute_ready_to_assign([], [], APRIL, "personal") == 0
+    assert compute_ready_to_assign([], [], APRIL, PERSONAL) == 0
 
 
 def test_ready_to_assign_counts_only_unassigned_inflow():
@@ -72,13 +77,13 @@ def test_ready_to_assign_counts_only_unassigned_inflow():
         _txn(category_id=42, date=date(2026, 4, 5), amount_cents=-20_000),  # categorized spend
     ]
     # Categorized spend does NOT affect ready_to_assign.
-    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 100_000
+    assert compute_ready_to_assign(txns, [], APRIL, PERSONAL) == 100_000
 
 
 def test_ready_to_assign_shrinks_as_money_is_assigned():
     txns = [_txn(category_id=None, date=date(2026, 4, 3), amount_cents=100_000)]
     assigns = [_assign(category_id=1, month=APRIL, amount_cents=60_000)]
-    assert compute_ready_to_assign(txns, assigns, APRIL, "personal") == 40_000
+    assert compute_ready_to_assign(txns, assigns, APRIL, PERSONAL) == 40_000
 
 
 def test_ready_to_assign_scoped_to_requested_month():
@@ -91,9 +96,9 @@ def test_ready_to_assign_scoped_to_requested_month():
         _assign(category_id=1, month=MAY, amount_cents=20_000),
     ]
     # April sees its inflows and deducts only through-April assignments.
-    assert compute_ready_to_assign(txns, assigns, APRIL, "personal") == 70_000
+    assert compute_ready_to_assign(txns, assigns, APRIL, PERSONAL) == 70_000
     # May sees all inflows through May and deducts all through-May assignments.
-    assert compute_ready_to_assign(txns, assigns, MAY, "personal") == 100_000
+    assert compute_ready_to_assign(txns, assigns, MAY, PERSONAL) == 100_000
 
 
 def test_past_month_unaffected_by_future_assignments():
@@ -103,7 +108,7 @@ def test_past_month_unaffected_by_future_assignments():
         _assign(category_id=1, month=APRIL, amount_cents=50_000),
         _assign(category_id=1, month=MAY, amount_cents=50_000),
     ]
-    assert compute_ready_to_assign(txns, assigns, MARCH, "personal") == 0
+    assert compute_ready_to_assign(txns, assigns, MARCH, PERSONAL) == 0
 
 
 def test_category_balance_for_single_month():
@@ -179,46 +184,46 @@ def test_multiple_categories_are_independent():
 
 def test_personal_inflow_does_not_bleed_into_shared_rta():
     txns = [
-        _txn(category_id=None, date=APRIL, amount_cents=100_000, scope="personal"),
+        _txn(category_id=None, date=APRIL, amount_cents=100_000, scope_id=PERSONAL),
     ]
-    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 100_000
-    assert compute_ready_to_assign(txns, [], APRIL, "shared") == 0
+    assert compute_ready_to_assign(txns, [], APRIL, PERSONAL) == 100_000
+    assert compute_ready_to_assign(txns, [], APRIL, FAMILY) == 0
 
 
 def test_shared_inflow_does_not_bleed_into_personal_rta():
     txns = [
-        _txn(category_id=None, date=APRIL, amount_cents=80_000, scope="shared"),
+        _txn(category_id=None, date=APRIL, amount_cents=80_000, scope_id=FAMILY),
     ]
-    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 0
-    assert compute_ready_to_assign(txns, [], APRIL, "shared") == 80_000
+    assert compute_ready_to_assign(txns, [], APRIL, PERSONAL) == 0
+    assert compute_ready_to_assign(txns, [], APRIL, FAMILY) == 80_000
 
 
 def test_per_scope_assignments_only_drain_their_own_pool():
     txns = [
-        _txn(category_id=None, date=APRIL, amount_cents=100_000, scope="personal"),
-        _txn(category_id=None, date=APRIL, amount_cents=80_000, scope="shared"),
+        _txn(category_id=None, date=APRIL, amount_cents=100_000, scope_id=PERSONAL),
+        _txn(category_id=None, date=APRIL, amount_cents=80_000, scope_id=FAMILY),
     ]
     assigns = [
-        _assign(category_id=1, month=APRIL, amount_cents=30_000, scope="personal"),
-        _assign(category_id=2, month=APRIL, amount_cents=20_000, scope="shared"),
+        _assign(category_id=1, month=APRIL, amount_cents=30_000, scope_id=PERSONAL),
+        _assign(category_id=2, month=APRIL, amount_cents=20_000, scope_id=FAMILY),
     ]
-    assert compute_ready_to_assign(txns, assigns, APRIL, "personal") == 70_000
-    assert compute_ready_to_assign(txns, assigns, APRIL, "shared") == 60_000
+    assert compute_ready_to_assign(txns, assigns, APRIL, PERSONAL) == 70_000
+    assert compute_ready_to_assign(txns, assigns, APRIL, FAMILY) == 60_000
 
 
 def test_future_overdraft_isolated_per_scope():
     # Shared has a future assignment with no future inflow → eats into shared
     # RTA. Personal must be unaffected.
     txns = [
-        _txn(category_id=None, date=APRIL, amount_cents=100_000, scope="personal"),
-        _txn(category_id=None, date=APRIL, amount_cents=50_000, scope="shared"),
+        _txn(category_id=None, date=APRIL, amount_cents=100_000, scope_id=PERSONAL),
+        _txn(category_id=None, date=APRIL, amount_cents=50_000, scope_id=FAMILY),
     ]
     assigns = [
-        _assign(category_id=2, month=MAY, amount_cents=70_000, scope="shared"),
+        _assign(category_id=2, month=MAY, amount_cents=70_000, scope_id=FAMILY),
     ]
-    assert compute_ready_to_assign(txns, assigns, APRIL, "personal") == 100_000
+    assert compute_ready_to_assign(txns, assigns, APRIL, PERSONAL) == 100_000
     # Shared April: 50k inflow on hand, May overdraft of 70k pulls back 70k.
-    assert compute_ready_to_assign(txns, assigns, APRIL, "shared") == -20_000
+    assert compute_ready_to_assign(txns, assigns, APRIL, FAMILY) == -20_000
 
 
 def test_cross_scope_transfer_moves_ready_to_assign_between_pools():
@@ -227,47 +232,47 @@ def test_cross_scope_transfer_moves_ready_to_assign_between_pools():
     # Personal: 1000 salary, then -600 transfer out → 400.
     # Shared: 600 transfer in → 600.
     txns = [
-        _txn(category_id=None, date=date(2026, 4, 1), amount_cents=100_000, scope="personal"),
+        _txn(category_id=None, date=date(2026, 4, 1), amount_cents=100_000, scope_id=PERSONAL),
         _txn(
             category_id=None,
             date=date(2026, 4, 2),
             amount_cents=-60_000,
-            scope="personal",
-            transfer_peer_scope="shared",
+            scope_id=PERSONAL,
+            transfer_peer_scope_id=FAMILY,
         ),
         _txn(
             category_id=None,
             date=date(2026, 4, 2),
             amount_cents=60_000,
-            scope="shared",
-            transfer_peer_scope="personal",
+            scope_id=FAMILY,
+            transfer_peer_scope_id=PERSONAL,
         ),
     ]
-    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 40_000
-    assert compute_ready_to_assign(txns, [], APRIL, "shared") == 60_000
+    assert compute_ready_to_assign(txns, [], APRIL, PERSONAL) == 40_000
+    assert compute_ready_to_assign(txns, [], APRIL, FAMILY) == 60_000
 
 
 def test_same_scope_transfer_leaves_ready_to_assign_untouched():
     # Moving money between two personal accounts is the same pool's money
     # changing hands: neither leg touches Ready to Assign.
     txns = [
-        _txn(category_id=None, date=date(2026, 4, 1), amount_cents=100_000, scope="personal"),
+        _txn(category_id=None, date=date(2026, 4, 1), amount_cents=100_000, scope_id=PERSONAL),
         _txn(
             category_id=None,
             date=date(2026, 4, 2),
             amount_cents=-60_000,
-            scope="personal",
-            transfer_peer_scope="personal",
+            scope_id=PERSONAL,
+            transfer_peer_scope_id=PERSONAL,
         ),
         _txn(
             category_id=None,
             date=date(2026, 4, 2),
             amount_cents=60_000,
-            scope="personal",
-            transfer_peer_scope="personal",
+            scope_id=PERSONAL,
+            transfer_peer_scope_id=PERSONAL,
         ),
     ]
-    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 100_000
+    assert compute_ready_to_assign(txns, [], APRIL, PERSONAL) == 100_000
 
 
 def test_incoming_same_scope_transfer_leg_is_not_treated_as_income():
@@ -278,11 +283,11 @@ def test_incoming_same_scope_transfer_leg_is_not_treated_as_income():
             category_id=None,
             date=APRIL,
             amount_cents=60_000,
-            scope="personal",
-            transfer_peer_scope="personal",
+            scope_id=PERSONAL,
+            transfer_peer_scope_id=PERSONAL,
         ),
     ]
-    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 0
+    assert compute_ready_to_assign(txns, [], APRIL, PERSONAL) == 0
 
 
 # --- Off-budget (savings) accounts --------------------------------------------
@@ -294,7 +299,7 @@ def test_off_budget_uncategorized_inflow_does_not_feed_ready_to_assign():
     txns = [
         _txn(category_id=None, date=date(2026, 4, 3), amount_cents=100_000, on_budget=False),
     ]
-    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 0
+    assert compute_ready_to_assign(txns, [], APRIL, PERSONAL) == 0
 
 
 def test_off_budget_uncategorized_outflow_does_not_reduce_ready_to_assign():
@@ -303,7 +308,7 @@ def test_off_budget_uncategorized_outflow_does_not_reduce_ready_to_assign():
         _txn(category_id=None, date=date(2026, 4, 5), amount_cents=-40_000, on_budget=False),
     ]
     # The off-budget outflow is invisible, not subtracted.
-    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 100_000
+    assert compute_ready_to_assign(txns, [], APRIL, PERSONAL) == 100_000
 
 
 def test_same_scope_transfer_into_savings_reduces_ready_to_assign():
@@ -316,18 +321,18 @@ def test_same_scope_transfer_into_savings_reduces_ready_to_assign():
             category_id=None,
             date=date(2026, 4, 2),
             amount_cents=-60_000,
-            transfer_peer_scope="personal",
+            transfer_peer_scope_id=PERSONAL,
             transfer_peer_on_budget=False,
         ),
         _txn(
             category_id=None,
             date=date(2026, 4, 2),
             amount_cents=60_000,
-            transfer_peer_scope="personal",
+            transfer_peer_scope_id=PERSONAL,
             on_budget=False,
         ),
     ]
-    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 40_000
+    assert compute_ready_to_assign(txns, [], APRIL, PERSONAL) == 40_000
 
 
 def test_same_scope_transfer_from_savings_raises_ready_to_assign():
@@ -341,18 +346,18 @@ def test_same_scope_transfer_from_savings_raises_ready_to_assign():
             category_id=None,
             date=date(2026, 4, 2),
             amount_cents=-60_000,
-            transfer_peer_scope="personal",
+            transfer_peer_scope_id=PERSONAL,
             on_budget=False,
         ),
         _txn(
             category_id=None,
             date=date(2026, 4, 2),
             amount_cents=60_000,
-            transfer_peer_scope="personal",
+            transfer_peer_scope_id=PERSONAL,
             transfer_peer_on_budget=False,
         ),
     ]
-    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 60_000
+    assert compute_ready_to_assign(txns, [], APRIL, PERSONAL) == 60_000
 
 
 def test_same_scope_transfer_between_two_on_budget_accounts_leaves_ready_to_assign_untouched():
@@ -364,16 +369,16 @@ def test_same_scope_transfer_between_two_on_budget_accounts_leaves_ready_to_assi
             category_id=None,
             date=date(2026, 4, 2),
             amount_cents=-60_000,
-            transfer_peer_scope="personal",
+            transfer_peer_scope_id=PERSONAL,
         ),
         _txn(
             category_id=None,
             date=date(2026, 4, 2),
             amount_cents=60_000,
-            transfer_peer_scope="personal",
+            transfer_peer_scope_id=PERSONAL,
         ),
     ]
-    assert compute_ready_to_assign(txns, [], APRIL, "personal") == 100_000
+    assert compute_ready_to_assign(txns, [], APRIL, PERSONAL) == 100_000
 
 
 def test_categorized_transaction_in_off_budget_account_still_reduces_category_balance():

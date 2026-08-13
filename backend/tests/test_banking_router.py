@@ -9,7 +9,7 @@ from typing import Any
 from app.config import get_settings
 from app.services.banking_client import BankingError, get_banking_client
 from app.main import app
-from tests.conftest import register_user
+from tests.conftest import FAMILY, PERSONAL, register_user, scope_id
 
 MOCK_ASPSP = {"name": "Mock ASPSP", "country": "FI", "logo": None}
 
@@ -95,7 +95,11 @@ async def _connect(client, headers, fake: FakeBankingClient) -> dict[str, Any]:
     """Run the full connect flow and return the callback response body."""
     r = await client.post(
         "/api/banking/connections",
-        json={"aspsp_name": "Mock ASPSP", "aspsp_country": "FI"},
+        json={
+            "aspsp_name": "Mock ASPSP",
+            "aspsp_country": "FI",
+            "scope_id": await scope_id(client, headers, PERSONAL),
+        },
         headers=headers,
     )
     assert r.status_code == 201, r.text
@@ -146,7 +150,11 @@ async def test_connect_with_shared_scope_creates_shared_accounts(client):
 
     r = await client.post(
         "/api/banking/connections",
-        json={"aspsp_name": "Mock ASPSP", "aspsp_country": "FI", "scope": "shared"},
+        json={
+            "aspsp_name": "Mock ASPSP",
+            "aspsp_country": "FI",
+            "scope_id": await scope_id(client, headers, FAMILY),
+        },
         headers=headers,
     )
     assert r.status_code == 201, r.text
@@ -161,7 +169,7 @@ async def test_connect_with_shared_scope_creates_shared_accounts(client):
     r = await client.get("/api/accounts", headers=headers)
     accounts = r.json()
     assert len(accounts) == 1
-    assert accounts[0]["scope"] == "shared"
+    assert accounts[0]["scope_id"] == await scope_id(client, headers, FAMILY)
 
 
 async def test_callback_imports_opening_balance(client):
@@ -248,7 +256,11 @@ async def test_callback_rejects_foreign_state(client):
 
     r = await client.post(
         "/api/banking/connections",
-        json={"aspsp_name": "Mock ASPSP", "aspsp_country": "FI"},
+        json={
+            "aspsp_name": "Mock ASPSP",
+            "aspsp_country": "FI",
+            "scope_id": await scope_id(client, alice, PERSONAL),
+        },
         headers=alice,
     )
     state = r.json()["state"]
@@ -268,7 +280,11 @@ async def test_callback_rejects_bank_with_no_eur_accounts(client):
 
     r = await client.post(
         "/api/banking/connections",
-        json={"aspsp_name": "Mock ASPSP", "aspsp_country": "FI"},
+        json={
+            "aspsp_name": "Mock ASPSP",
+            "aspsp_country": "FI",
+            "scope_id": await scope_id(client, headers, PERSONAL),
+        },
         headers=headers,
     )
     state = r.json()["state"]
@@ -355,7 +371,11 @@ async def test_callback_rejects_xxx_currency_account_with_non_eur_balance(client
 
     r = await client.post(
         "/api/banking/connections",
-        json={"aspsp_name": "Mock ASPSP", "aspsp_country": "FI"},
+        json={
+            "aspsp_name": "Mock ASPSP",
+            "aspsp_country": "FI",
+            "scope_id": await scope_id(client, headers, PERSONAL),
+        },
         headers=headers,
     )
     state = r.json()["state"]
@@ -375,7 +395,11 @@ async def test_callback_rejects_xxx_currency_account_with_no_balances(client):
 
     r = await client.post(
         "/api/banking/connections",
-        json={"aspsp_name": "Mock ASPSP", "aspsp_country": "FI"},
+        json={
+            "aspsp_name": "Mock ASPSP",
+            "aspsp_country": "FI",
+            "scope_id": await scope_id(client, headers, PERSONAL),
+        },
         headers=headers,
     )
     state = r.json()["state"]

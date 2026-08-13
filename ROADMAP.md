@@ -27,13 +27,17 @@ These are deliberate design decisions — several diverge from YNAB **on
 purpose**; they are the reason this app exists. Every new feature must respect
 them. Do not "fix" them to match YNAB.
 
-1. **Scopes** (`personal` / `shared`, labelled "Family" in the UI —
-   `backend/app/models/scope.py`, `frontend/src/api/types.ts`): two
-   independent budget pools with **separate Ready-to-Assign totals** for one
-   user. This replaces YNAB's multi-budget concept. Every new feature must be
-   scope-aware: accounts and category groups carry a scope, categorized
-   spending must stay within one scope, and aggregates (RTA, reports, totals)
-   are computed per scope.
+1. **Scopes** (rows in the `scopes` table, one set per user —
+   `backend/app/models/scope.py`, `backend/app/routers/scopes.py`,
+   `frontend/src/lib/useScopes.ts`): independent budget pools with **separate
+   Ready-to-Assign totals** for one user. This replaces YNAB's multi-budget
+   concept. Users add, rename and delete their own from the Settings page;
+   `Personal` and `Family` are only what registration seeds, and a user always
+   has at least one. Every new feature must be scope-aware: accounts and
+   category groups carry a `scope_id`, categorized spending must stay within
+   one scope, and aggregates (RTA, reports, totals) are computed per scope —
+   **for however many scopes exist**, never a hard-coded pair. API responses
+   that report per-scope figures return a list keyed by `scope_id`.
 2. **EUR-only, signed integer cents** (`amount_cents: BigInteger` everywhere;
    positive = inflow, negative = outflow). No currency columns, no floats, no
    milliunits. Multi-currency is an explicit non-goal (see bottom).
@@ -58,7 +62,7 @@ them. Do not "fix" them to match YNAB.
    `budget_calc.py`; `frontend/src/lib/dates.ts`).
 8. **Conventions to follow** (see CLAUDE.md for the full list):
    - One Alembic migration per schema change (`backend/alembic/versions/`,
-     linear chain, currently `0001`–`0005`).
+     linear chain, currently `0001`–`0011`).
    - Frontend patterns: TanStack Query with array keys + broad prefix
      invalidation, inline-edit (click → input, Enter/blur commits, Escape
      cancels), Tailwind utility classes with `dark:` variants, money via
@@ -400,8 +404,8 @@ still counts as that scope's income, same as any other unassigned inflow.
   `test_insights_calc.py::test_month_end_balances_match_compute_category_balances`.
   The latter is load-bearing: `insights_calc` re-implements the rollover walk
   for speed, and that test is what stops it drifting from `budget_calc`.
-- Personal and Family are computed and rendered separately. The only
-  cross-scope figure is the explicitly labelled Personal-vs-Family split bar.
+- Every scope is computed and rendered separately. The only cross-scope figure
+  is the explicitly labelled per-scope split bar.
 
 ---
 
@@ -577,8 +581,8 @@ Listed so nobody drifts into them. Revisit only on explicit owner request.
 - **Native mobile client scope creep on this backend** — a native iOS client
   is being planned separately in [`IOS_ROADMAP.md`](./IOS_ROADMAP.md); that
   document tracks its own phases and does not belong in this file.
-- **Multi-user households / sharing** — the `shared` scope models the joint
-  pool for a single login; real multi-login sharing is out of scope.
+- **Multi-user households / sharing** — a shared scope models the joint pool
+  for a single login; real multi-login sharing is out of scope.
 - **Loan planner / investment tracking** — `loan` accounts may exist as
   simple ledgers, nothing more.
 - **YNAB API sync, rewind/undo history, month notes/flags** — nice-to-haves

@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.deps import CurrentUser, DbSession
-from app.models import User
+from app.models import Scope, User
+from app.models.scope import DEFAULT_SCOPE_NAMES
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserResponse
 from app.security import create_access_token, hash_password, verify_password
 
@@ -18,6 +19,14 @@ async def register(payload: RegisterRequest, db: DbSession) -> TokenResponse:
         )
     user = User(email=payload.email, hashed_password=hash_password(payload.password))
     db.add(user)
+    await db.flush()  # assigns user.id, which the scopes reference
+
+    # A user with no scopes could not create an account or a category group, so
+    # the seed commits with the user rather than as a separate step.
+    db.add_all(
+        Scope(user_id=user.id, name=name, sort_order=sort_order)
+        for sort_order, name in enumerate(DEFAULT_SCOPE_NAMES)
+    )
     await db.commit()
     await db.refresh(user)
     return TokenResponse(access_token=create_access_token(user.id))

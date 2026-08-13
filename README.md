@@ -10,12 +10,13 @@ and the app tells you how much is still waiting to be assigned.
 
 ## Features
 
-- **Two independent budget pools per user** — every account and category
-  group has a *scope*, **Personal** or **Family** (shared), each with its own
-  Ready to Assign total. This replaces YNAB's multi-budget concept and is the
-  reason this app exists: budgeting a joint account alongside your own money
-  in one view.
-- **Zero-based budget page** — per-scope Ready to Assign pills, month
+- **Independent budget pools per user** — every account and category group
+  belongs to a *scope*, and each scope has its own Ready to Assign total. This
+  replaces YNAB's multi-budget concept and is the reason this app exists:
+  budgeting a joint account alongside your own money in one view. A new account
+  starts with **Personal** and **Family**; add, rename and delete your own on
+  the Settings page.
+- **Zero-based budget page** — a Ready to Assign pill per scope, month
   navigation, collapsible category groups with Assigned/Available summaries
   and per-scope totals, inline assignment editing.
 - **Goals on every category** (they're mandatory, not optional): monthly,
@@ -114,11 +115,14 @@ after 30 days; Fly.io's free allowance is more durable for a personal app.
 ## Data model
 
 - `User` — email + hashed password (JWT auth)
-- `Account` — checking / savings / cash; has a `scope` (`personal` /
-  `shared`); balance is derived from transactions, never stored
+- `Scope` — an independent budget pool, named by the user. Seeded as
+  `Personal` and `Family` at registration; a scope still referenced by an
+  account or category group cannot be deleted
+- `Account` — checking / savings / cash; belongs to a `Scope` via `scope_id`;
+  balance is derived from transactions, never stored
 - `CategoryGroup` + `Category` — two-level budget tree; groups carry the
-  `scope`; every category has a mandatory goal (`monthly`, `yearly`, or
-  `target_date` + amount)
+  `scope_id` and categories inherit it; every category has a mandatory goal
+  (`monthly`, `yearly`, or `target_date` + amount)
 - `Transaction` — signed integer cents; `category_id` may be NULL for
   unassigned inflow (the source of "Ready to Assign"); carries an external
   dedup id when synced from a bank

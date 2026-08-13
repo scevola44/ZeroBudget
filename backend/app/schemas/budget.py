@@ -2,7 +2,6 @@ from datetime import date
 
 from pydantic import BaseModel
 
-from app.models.scope import Scope
 from app.schemas.category import GoalKind
 
 
@@ -23,14 +22,20 @@ class BudgetCategoryRow(BaseModel):
 class BudgetGroupRow(BaseModel):
     id: int
     name: str
-    scope: Scope
+    scope_id: int
     categories: list[BudgetCategoryRow]
+
+
+class ScopeReadyToAssign(BaseModel):
+    scope_id: int
+    ready_to_assign_cents: int
 
 
 class BudgetMonthResponse(BaseModel):
     month: str  # "YYYY-MM"
-    personal_ready_to_assign_cents: int
-    shared_ready_to_assign_cents: int
+    # One entry per scope, in the user's own scope order. A list rather than a
+    # map because JSON object keys are strings and scope ids are not.
+    ready_to_assign: list[ScopeReadyToAssign]
     groups: list[BudgetGroupRow]
 
 

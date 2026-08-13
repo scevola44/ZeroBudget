@@ -132,7 +132,7 @@ export function TransactionsPage() {
   const accounts = accountsQuery.data ?? [];
   const flatCategories =
     groupsQuery.data?.flatMap((g) =>
-      g.categories.map((c) => ({ ...c, groupId: g.id, groupName: g.name, groupScope: g.scope })),
+      g.categories.map((c) => ({ ...c, groupId: g.id, groupName: g.name, groupScopeId: g.scope_id })),
     ) ?? [];
 
   const updateTxn = useMutation({
@@ -588,7 +588,7 @@ export function TransactionsPage() {
           // Only categories in the transaction's own scope are valid — the
           // backend rejects the rest with a 422.
           categories={flatCategories.filter(
-            (c) => c.groupScope === accountById[editingTransaction.account_id]?.scope,
+            (c) => c.groupScopeId === accountById[editingTransaction.account_id]?.scope_id,
           )}
           budgetByCategoryId={budgetByCategoryId}
           peerAccount={

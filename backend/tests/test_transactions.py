@@ -14,7 +14,10 @@ from app.db import Base
 from app.models import Account, DeletedExternalTransaction, Transaction, User
 from app.routers.transactions import _delete_transactions_cascading, delete_transaction
 from tests.conftest import (
+    FAMILY,
+    PERSONAL,
     _enable_sqlite_fks,
+    add_scope,
     create_account,
     create_category,
     create_group,
@@ -278,7 +281,10 @@ async def test_delete_tombstones_bank_imported_transaction(db_session: AsyncSess
     user = User(email="user@example.com", hashed_password="x")
     db_session.add(user)
     await db_session.flush()
-    account = Account(user_id=user.id, name="Checking", type="checking")
+    scope = await add_scope(db_session, user.id)
+    account = Account(
+        user_id=user.id, name="Checking", type="checking", scope_id=scope.id
+    )
     db_session.add(account)
     await db_session.flush()
     external_id = f"{account.id}:ref-1"
@@ -314,7 +320,10 @@ async def test_delete_does_not_tombstone_manually_entered_transaction(
     user = User(email="user@example.com", hashed_password="x")
     db_session.add(user)
     await db_session.flush()
-    account = Account(user_id=user.id, name="Checking", type="checking")
+    scope = await add_scope(db_session, user.id)
+    account = Account(
+        user_id=user.id, name="Checking", type="checking", scope_id=scope.id
+    )
     db_session.add(account)
     await db_session.flush()
     txn = Transaction(
@@ -433,7 +442,10 @@ async def test_bulk_delete_tombstones_bank_imported_transactions(db_session: Asy
     user = User(email="user@example.com", hashed_password="x")
     db_session.add(user)
     await db_session.flush()
-    account = Account(user_id=user.id, name="Checking", type="checking")
+    scope = await add_scope(db_session, user.id)
+    account = Account(
+        user_id=user.id, name="Checking", type="checking", scope_id=scope.id
+    )
     db_session.add(account)
     await db_session.flush()
     external_id = f"{account.id}:ref-1"
@@ -501,9 +513,9 @@ async def test_category_suggestions_span_all_of_the_users_accounts(client: Async
 @pytest.mark.asyncio
 async def test_category_suggestions_exclude_mismatched_scope_categories(client: AsyncClient):
     headers = await register_user(client)
-    personal_account = await create_account(client, headers, "Checking", scope="personal")
-    shared_account = await create_account(client, headers, "Joint", scope="shared")
-    personal_group = await create_group(client, headers, "Bills", scope="personal")
+    personal_account = await create_account(client, headers, "Checking", scope=PERSONAL)
+    shared_account = await create_account(client, headers, "Joint", scope=FAMILY)
+    personal_group = await create_group(client, headers, "Bills", scope=PERSONAL)
     personal_category = await create_category(client, headers, personal_group, "Rent")
 
     await _add_txn(

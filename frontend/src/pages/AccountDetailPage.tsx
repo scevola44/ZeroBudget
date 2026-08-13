@@ -60,10 +60,10 @@ export function AccountDetailPage() {
   // matches the account's scope — otherwise the backend rejects with 422.
   const flatCategories =
     groupsQuery.data?.flatMap((g) =>
-      g.categories.map((c) => ({ ...c, groupId: g.id, groupName: g.name, groupScope: g.scope })),
+      g.categories.map((c) => ({ ...c, groupId: g.id, groupName: g.name, groupScopeId: g.scope_id })),
     ) ?? [];
   const eligibleCategories = account
-    ? flatCategories.filter((c) => c.groupScope === account.scope)
+    ? flatCategories.filter((c) => c.groupScopeId === account.scope_id)
     : flatCategories;
 
   const [date, setDate] = useState(todayISO);
@@ -304,7 +304,7 @@ export function AccountDetailPage() {
           <h1 className="text-2xl font-semibold">
             {account ? account.name : "Account"}
           </h1>
-          {account && <ScopeChip scope={account.scope} />}
+          {account && <ScopeChip scopeId={account.scope_id} />}
         </div>
         <Link
           to="/accounts"

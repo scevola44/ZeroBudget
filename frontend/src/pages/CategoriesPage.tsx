@@ -17,15 +17,17 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import { api } from "../api/client";
-import { type Category, type CategoryGroup, type GoalKind, type YnabImportRow, type YnabImportResponse, type Scope } from "../api/types";
+import { type Category, type CategoryGroup, type GoalKind, type YnabImportRow, type YnabImportResponse } from "../api/types";
 import { DragHandle } from "../components/DragHandle";
 import { ScopeChip } from "../components/ScopeChip";
+import { ScopeSelect } from "../components/ScopeSelect";
 import { EditGroupModal } from "../components/EditGroupModal";
 import { DeleteGroupConfirmModal } from "../components/DeleteGroupConfirmModal";
 import { DeleteCategoryConfirmModal } from "../components/DeleteCategoryConfirmModal";
 import { YnabImportModal } from "./YnabImportModal";
 import { formatGoal } from "../lib/goal";
 import { parseAmountToCents } from "../lib/money";
+import { useScopes } from "../lib/useScopes";
 
 function SortableGroupHeader({
   group,
@@ -48,7 +50,7 @@ function SortableGroupHeader({
     >
       <DragHandle listeners={listeners} />
       <span className="flex-1">{group.name}</span>
-      <ScopeChip scope={group.scope} />
+      <ScopeChip scopeId={group.scope_id} />
       <button
         type="button"
         onClick={onEditClick}
@@ -275,7 +277,11 @@ export function CategoriesPage() {
   });
 
   const [newGroup, setNewGroup] = useState("");
-  const [newGroupScope, setNewGroupScope] = useState<Scope>("personal");
+  // Null until the user picks; falls back to their first scope so the new-group
+  // form is usable as soon as it renders.
+  const [pickedGroupScopeId, setPickedGroupScopeId] = useState<number | null>(null);
+  const { defaultScopeId } = useScopes();
+  const newGroupScopeId = pickedGroupScopeId ?? defaultScopeId;
   const [draftByGroup, setDraftByGroup] = useState<Record<number, NewCategoryDraft>>({});
   const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
   const [editingDraft, setEditingDraft] = useState<NewCategoryDraft>(EMPTY_DRAFT);
@@ -300,7 +306,7 @@ export function CategoriesPage() {
     return {
       category,
       reassignTargets: groups
-        .filter((g) => g.scope === owningGroup.scope)
+        .filter((g) => g.scope_id === owningGroup.scope_id)
         .flatMap((g) =>
           g.categories
             .filter((c) => c.id !== category.id)
@@ -320,14 +326,14 @@ export function CategoriesPage() {
   }
 
   const createGroup = useMutation({
-    mutationFn: (vars: { name: string; scope: Scope }) =>
+    mutationFn: (vars: { name: string; scope_id: number }) =>
       api("/api/category-groups", {
         method: "POST",
-        body: { name: vars.name, scope: vars.scope },
+        body: { name: vars.name, scope_id: vars.scope_id },
       }),
     onSuccess: () => {
       setNewGroup("");
-      setNewGroupScope("personal");
+      setPickedGroupScopeId(null);
       void qc.invalidateQueries({ queryKey: ["category-groups"] });
       void qc.invalidateQueries({ queryKey: ["budget"] });
     },
@@ -400,10 +406,10 @@ export function CategoriesPage() {
   });
 
   const updateGroup = useMutation({
-    mutationFn: (vars: { groupId: number; name: string; scope: Scope }) =>
+    mutationFn: (vars: { groupId: number; name: string; scopeId: number }) =>
       api(`/api/category-groups/${vars.groupId}`, {
         method: "PATCH",
-        body: { name: vars.name, scope: vars.scope },
+        body: { name: vars.name, scope_id: vars.scopeId },
       }),
     onSuccess: () => {
       setEditingGroupId(null);
@@ -547,7 +553,8 @@ export function CategoriesPage() {
           className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 flex flex-col sm:flex-row gap-3 sm:items-end"
           onSubmit={(e) => {
             e.preventDefault();
-            if (newGroup.trim()) createGroup.mutate({ name: newGroup.trim(), scope: newGroupScope });
+            if (newGroup.trim() && newGroupScopeId !== null)
+              createGroup.mutate({ name: newGroup.trim(), scope_id: newGroupScopeId });
           }}
         >
           <div className="flex-1 space-y-1">
@@ -561,21 +568,7 @@ export function CategoriesPage() {
           </div>
           <div className="space-y-1">
             <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Scope</label>
-            <div className="relative">
-              <select
-                value={newGroupScope}
-                onChange={(e) => setNewGroupScope(e.target.value as Scope)}
-                className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
-              >
-                <option value="personal">Personal</option>
-                <option value="shared">Family</option>
-              </select>
-              <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
-                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4 6l4 4 4-4" />
-                </svg>
-              </div>
-            </div>
+            <ScopeSelect value={newGroupScopeId} onChange={setPickedGroupScopeId} />
           </div>
           <button
             type="submit"
@@ -612,7 +605,9 @@ export function CategoriesPage() {
                       category={c}
                       isEditing={editingCategoryId === c.id}
                       editingDraft={editingDraft}
-                      groupOptions={(groupsQuery.data ?? []).filter((g) => g.scope === group.scope)}
+                      groupOptions={(groupsQuery.data ?? []).filter(
+                        (g) => g.scope_id === group.scope_id,
+                      )}
                       editError={editCategoryError}
                       onEditStart={() => {
                         setEditingCategoryId(c.id);
@@ -694,8 +689,8 @@ export function CategoriesPage() {
             setEditingGroupId(null);
             setEditError(null);
           }}
-          onSave={(name, scope) => {
-            updateGroup.mutate({ groupId: editingGroupId, name, scope });
+          onSave={(name, scopeId) => {
+            updateGroup.mutate({ groupId: editingGroupId, name, scopeId });
           }}
           isPending={updateGroup.isPending}
           error={editError}

@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select, update
 
-from app.deps import CurrentUser, DbSession
-from app.models import Category, CategoryGroup, Transaction
+from app.deps import CurrentUser, DbSession, owned_scope
+from app.models import Category, CategoryGroup, Scope, Transaction
 from app.schemas.category import (
     CategoryCreate,
     CategoryGroupCreate,
@@ -68,7 +68,7 @@ async def list_groups(
             id=g.id,
             name=g.name,
             sort_order=g.sort_order,
-            scope=g.scope,
+            scope_id=g.scope_id,
             categories=cats_by_group.get(g.id, []),
         )
         for g in groups
@@ -83,11 +83,12 @@ async def list_groups(
 async def create_group(
     payload: CategoryGroupCreate, db: DbSession, current_user: CurrentUser
 ) -> CategoryGroupResponse:
+    await owned_scope(db, current_user.id, payload.scope_id)
     group = CategoryGroup(
         user_id=current_user.id,
         name=payload.name,
         sort_order=payload.sort_order,
-        scope=payload.scope,
+        scope_id=payload.scope_id,
     )
     db.add(group)
     await db.commit()
@@ -96,7 +97,7 @@ async def create_group(
         id=group.id,
         name=group.name,
         sort_order=group.sort_order,
-        scope=group.scope,
+        scope_id=group.scope_id,
         categories=[],
     )
 
@@ -113,7 +114,7 @@ async def update_group(
         group.name = payload.name
     if payload.sort_order is not None:
         group.sort_order = payload.sort_order
-    if payload.scope is not None and payload.scope != group.scope:
+    if payload.scope_id is not None and payload.scope_id != group.scope_id:
         # Changing scope on a group with categories would silently shift
         # assignments and balances between Ready-to-Assign pools. Restrict to
         # empty groups; the user can move categories elsewhere first.
@@ -125,14 +126,15 @@ async def update_group(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot change scope on a group that contains categories.",
             )
-        group.scope = payload.scope
+        await owned_scope(db, current_user.id, payload.scope_id)
+        group.scope_id = payload.scope_id
     await db.commit()
     await db.refresh(group)
     return CategoryGroupResponse(
         id=group.id,
         name=group.name,
         sort_order=group.sort_order,
-        scope=group.scope,
+        scope_id=group.scope_id,
         categories=[],
     )
 
@@ -179,15 +181,18 @@ async def update_category(
         target_group = await _owned_group(db, current_user.id, payload.group_id)
         if payload.group_id != category.group_id:
             source_group = await _owned_group(db, current_user.id, category.group_id)
-            if source_group.scope != target_group.scope:
+            if source_group.scope_id != target_group.scope_id:
                 # Moving it would strand the category's transactions in a
                 # scope that disagrees with their account — the same
                 # invariant the delete/reassign flow already enforces.
+                # Names, not ids: this reaches the user.
+                source_scope = await db.get(Scope, source_group.scope_id)
+                target_scope = await db.get(Scope, target_group.scope_id)
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=(
-                        f"Cannot move a {source_group.scope} category "
-                        f"into a {target_group.scope} group."
+                        f"Cannot move a {source_scope.name} category "
+                        f"into a {target_scope.name} group."
                     ),
                 )
         category.group_id = payload.group_id
@@ -254,15 +259,17 @@ async def delete_category(
         target = await _owned_category(db, current_user.id, reassign_to)
         source_group = await _owned_group(db, current_user.id, category.group_id)
         target_group = await _owned_group(db, current_user.id, target.group_id)
-        if source_group.scope != target_group.scope:
+        if source_group.scope_id != target_group.scope_id:
             # Moving them would strand transactions in a category whose scope
             # disagrees with their account — exactly what the transaction
             # router's scope guard exists to prevent.
+            source_scope = await db.get(Scope, source_group.scope_id)
+            target_scope = await db.get(Scope, target_group.scope_id)
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
-                    f"Cannot move transactions from a {source_group.scope} category "
-                    f"to a {target_group.scope} one."
+                    f"Cannot move transactions from a {source_scope.name} category "
+                    f"to a {target_scope.name} one."
                 ),
             )
         await db.execute(

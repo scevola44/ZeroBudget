@@ -8,7 +8,14 @@ real spending; ``POST /transfer`` is no help because it creates *new* legs.
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import create_account, create_category, create_group, register_user
+from tests.conftest import (
+    FAMILY,
+    create_account,
+    create_category,
+    create_group,
+    ready_to_assign,
+    register_user,
+)
 
 TRANSFER_CENTS = 60_000
 SALARY_CENTS = 100_000
@@ -58,7 +65,10 @@ async def _rows_by_id(client: AsyncClient, headers: dict) -> dict:
 
 async def _ready_to_assign(client: AsyncClient, headers: dict, month: str = "2026-04") -> tuple:
     body = (await client.get(f"/api/budget/{month}", headers=headers)).json()
-    return body["personal_ready_to_assign_cents"], body["shared_ready_to_assign_cents"]
+    return (
+        await ready_to_assign(client, headers, body),
+        await ready_to_assign(client, headers, body, FAMILY),
+    )
 
 
 @pytest.mark.asyncio

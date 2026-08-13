@@ -32,7 +32,7 @@ from app.services.bank_sync import run_global_sync, select_balance, sync_connect
 from app.services.banking_client import BankingError
 from app.services.encryption import encrypt
 from app.services.sync_quota import latest_run, quota_remaining, runs_today
-from tests.conftest import _enable_sqlite_fks
+from tests.conftest import _enable_sqlite_fks, add_scope
 
 
 @dataclass
@@ -93,10 +93,12 @@ async def _seed(db: AsyncSession) -> tuple[User, BankConnection, Account]:
     db.add(connection)
     await db.flush()
 
+    scope = await add_scope(db, user.id)
     account = Account(
         user_id=user.id,
         name="Checking",
         type="checking",
+        scope_id=scope.id,
         bank_connection_id=connection.id,
         bank_account_uid="uid_1",
     )

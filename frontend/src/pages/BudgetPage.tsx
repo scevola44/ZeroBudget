@@ -3,12 +3,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { BudgetCategoryRow, BudgetGroupRow, BudgetMonth, Scope } from "../api/types";
-import { scopeLabel } from "../api/types";
 import { UnassignedTransactionsIsland } from "../components/UnassignedTransactionsIsland";
 import { availablePillClass } from "../lib/budgetAvailability";
 import { currentMonth, monthLabel, shiftMonth } from "../lib/dates";
 import { formatGoal, monthlyGoalCents } from "../lib/goal";
 import { formatCents, parseAmountToCents } from "../lib/money";
+import { useScopes } from "../lib/useScopes";
 
 const COLLAPSED_GROUPS_STORAGE_KEY = "budget:collapsed-groups";
 
@@ -99,18 +99,24 @@ export function BudgetPage() {
     },
   });
 
-  const personalReady = budgetQuery.data?.personal_ready_to_assign_cents ?? 0;
-  const sharedReady = budgetQuery.data?.shared_ready_to_assign_cents ?? 0;
-  const personalGroups: BudgetGroupRow[] =
-    budgetQuery.data?.groups.filter((g) => g.scope === "personal") ?? [];
-  const sharedGroups: BudgetGroupRow[] =
-    budgetQuery.data?.groups.filter((g) => g.scope === "shared") ?? [];
-  const personalNeededCents = personalGroups
-    .flatMap((g) => g.categories)
-    .reduce((s, c) => s + (c.needed_this_month_cents ?? 0), 0);
-  const sharedNeededCents = sharedGroups
-    .flatMap((g) => g.categories)
-    .reduce((s, c) => s + (c.needed_this_month_cents ?? 0), 0);
+  const { scopes } = useScopes();
+  const readyByScopeId = new Map(
+    (budgetQuery.data?.ready_to_assign ?? []).map((row) => [
+      row.scope_id,
+      row.ready_to_assign_cents,
+    ]),
+  );
+  const groupsByScopeId = new Map<number, BudgetGroupRow[]>();
+  for (const group of budgetQuery.data?.groups ?? []) {
+    groupsByScopeId.set(group.scope_id, [
+      ...(groupsByScopeId.get(group.scope_id) ?? []),
+      group,
+    ]);
+  }
+  const neededCentsFor = (groups: BudgetGroupRow[]) =>
+    groups
+      .flatMap((g) => g.categories)
+      .reduce((s, c) => s + (c.needed_this_month_cents ?? 0), 0);
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -154,8 +160,14 @@ export function BudgetPage() {
       <UnassignedTransactionsIsland />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <ReadyToAssignPill scope="personal" cents={personalReady} neededCents={personalNeededCents} />
-        <ReadyToAssignPill scope="shared" cents={sharedReady} neededCents={sharedNeededCents} />
+        {scopes.map((scope) => (
+          <ReadyToAssignPill
+            key={scope.id}
+            scope={scope}
+            cents={readyByScopeId.get(scope.id) ?? 0}
+            neededCents={neededCentsFor(groupsByScopeId.get(scope.id) ?? [])}
+          />
+        ))}
       </div>
 
       {budgetQuery.isLoading && (
@@ -175,24 +187,16 @@ export function BudgetPage() {
         </div>
       )}
 
-      <ScopeSection
-        scope="personal"
-        groups={personalGroups}
-        collapsedGroups={collapsedGroups}
-        toggleGroup={toggleGroup}
-        onAssign={(categoryId, cents) =>
-          assignMutation.mutate({ categoryId, cents })
-        }
-      />
-      <ScopeSection
-        scope="shared"
-        groups={sharedGroups}
-        collapsedGroups={collapsedGroups}
-        toggleGroup={toggleGroup}
-        onAssign={(categoryId, cents) =>
-          assignMutation.mutate({ categoryId, cents })
-        }
-      />
+      {scopes.map((scope) => (
+        <ScopeSection
+          key={scope.id}
+          scope={scope}
+          groups={groupsByScopeId.get(scope.id) ?? []}
+          collapsedGroups={collapsedGroups}
+          toggleGroup={toggleGroup}
+          onAssign={(categoryId, cents) => assignMutation.mutate({ categoryId, cents })}
+        />
+      ))}
     </div>
   );
 }
@@ -209,7 +213,7 @@ function ReadyToAssignPill({
   return (
     <div className={`rounded-2xl p-5 ${readyToAssignBoxClass(cents, neededCents)}`}>
       <div className="text-xs uppercase tracking-wide opacity-70">
-        Ready to Assign — {scopeLabel(scope)}
+        Ready to Assign — {scope.name}
       </div>
       <div className="text-3xl font-semibold tabular-nums">{formatCents(cents)}</div>
       <div className="text-xs mt-1 opacity-80 tabular-nums">Needed: {formatCents(neededCents)}</div>
@@ -241,14 +245,14 @@ function ScopeSection({
       <div
         className={`flex items-center justify-between rounded-xl px-4 py-2 ${scopeHeaderClass(totalAssignedCents, totalGoalCents)}`}
       >
-        <h2 className="text-sm font-semibold uppercase tracking-wide">{scopeLabel(scope)}</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide">{scope.name}</h2>
         <span className="text-xs font-medium tabular-nums">
           Needed {formatCents(totalGoalCents)}/mo
         </span>
       </div>
       {groups.length === 0 ? (
         <div className="bg-white dark:bg-stone-900 border border-dashed border-stone-300 dark:border-stone-700 rounded-2xl p-6 text-center text-sm text-stone-500 dark:text-stone-400">
-          No {scopeLabel(scope).toLowerCase()} category groups yet. Add one on the{" "}
+          No {scope.name} category groups yet. Add one on the{" "}
           <a className="text-indigo-600 dark:text-indigo-400 hover:underline" href="/categories">
             Categories
           </a>{" "}

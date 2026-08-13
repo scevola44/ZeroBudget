@@ -4,7 +4,14 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.deps import CurrentUser, DbSession
-from app.models import Account, Category, CategoryGroup, DeletedExternalTransaction, Transaction
+from app.models import (
+    Account,
+    Category,
+    CategoryGroup,
+    DeletedExternalTransaction,
+    Scope,
+    Transaction,
+)
 from app.schemas.transaction import (
     BulkDeleteRequest,
     BulkDeleteResponse,
@@ -92,12 +99,17 @@ async def _enforce_scope_match(
     account = await _owned_account(db, user_id, account_id)
     category = await _owned_category(db, user_id, category_id)
     group = await db.get(CategoryGroup, category.group_id)
-    if group is None or group.scope != account.scope:
+    if group is None or group.scope_id != account.scope_id:
+        # Names, not ids: this reaches the user. Loaded only on the failure
+        # path, which is why it sits inside the branch.
+        category_scope = await db.get(Scope, group.scope_id) if group else None
+        account_scope = await db.get(Scope, account.scope_id)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
-                f"Category scope ({group.scope if group else '?'}) does not match "
-                f"account scope ({account.scope}). Use a transfer instead."
+                f"Category scope ({category_scope.name if category_scope else '?'}) "
+                f"does not match account scope ({account_scope.name}). "
+                "Use a transfer instead."
             ),
         )
 
@@ -169,11 +181,11 @@ async def suggest_transaction_categories(
         return []
 
     cats_result = await db.execute(
-        select(Category.id, CategoryGroup.scope)
+        select(Category.id, CategoryGroup.scope_id)
         .join(CategoryGroup, Category.group_id == CategoryGroup.id)
         .where(Category.user_id == current_user.id)
     )
-    scope_by_category_id = dict(cats_result.all())
+    scope_id_by_category_id = dict(cats_result.all())
 
     history_result = await db.execute(
         select(Transaction.id, Transaction.payee, Transaction.category_id, Transaction.date)
@@ -185,7 +197,7 @@ async def suggest_transaction_categories(
     rows = [
         PayeeHistoryRow(id=row.id, payee=row.payee, category_id=row.category_id, date=row.date)
         for row in history_result.all()
-        if scope_by_category_id.get(row.category_id) == account.scope
+        if scope_id_by_category_id.get(row.category_id) == account.scope_id
     ]
 
     return suggest_categories(payee, rows)
@@ -218,7 +230,7 @@ async def import_transactions_from_ynab(
         category_id = row.category_id
         if category_id is not None:
             cat_entry = cats_by_id.get(category_id)
-            if cat_entry is None or cat_entry[1].scope != account.scope:
+            if cat_entry is None or cat_entry[1].scope_id != account.scope_id:
                 category_id = None
 
         transactions.append(

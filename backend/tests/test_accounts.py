@@ -3,7 +3,13 @@
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import create_account, register_user
+from tests.conftest import (
+    FAMILY,
+    PERSONAL,
+    create_account,
+    register_user,
+    scope_id,
+)
 
 
 @pytest.mark.asyncio
@@ -44,25 +50,29 @@ async def test_update_renames_account(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_update_changes_scope(client: AsyncClient):
     headers = await register_user(client)
-    account_id = await create_account(client, headers, scope="personal")
+    account_id = await create_account(client, headers, scope=PERSONAL)
 
+    family = await scope_id(client, headers, FAMILY)
     r = await client.patch(
         f"/api/accounts/{account_id}",
-        json={"scope": "shared"},
+        json={"scope_id": family},
         headers=headers,
     )
     assert r.status_code == 200
-    assert r.json()["scope"] == "shared"
+    assert r.json()["scope_id"] == family
 
 
 @pytest.mark.asyncio
 async def test_update_scope_blocked_with_categorized_transactions(client: AsyncClient):
     headers = await register_user(client)
-    account_id = await create_account(client, headers, scope="personal")
+    account_id = await create_account(client, headers, scope=PERSONAL)
     group_id = (
         await client.post(
             "/api/category-groups",
-            json={"name": "Bills", "scope": "personal"},
+            json={
+                "name": "Bills",
+                "scope_id": await scope_id(client, headers, PERSONAL),
+            },
             headers=headers,
         )
     ).json()["id"]
@@ -94,7 +104,7 @@ async def test_update_scope_blocked_with_categorized_transactions(client: AsyncC
 
     r = await client.patch(
         f"/api/accounts/{account_id}",
-        json={"scope": "shared"},
+        json={"scope_id": await scope_id(client, headers, FAMILY)},
         headers=headers,
     )
     assert r.status_code == 400

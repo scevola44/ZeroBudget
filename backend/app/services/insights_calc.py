@@ -38,7 +38,7 @@ become precise instead of blanket.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 
@@ -128,10 +128,13 @@ def _is_internal_transfer(txn: TxnRow) -> bool:
     pool, so their inflow leg is left in, matching
     ``budget_calc.feeds_ready_to_assign``.
     """
-    return txn.transfer_peer_scope == txn.scope and txn.transfer_peer_on_budget == txn.on_budget
+    return (
+        txn.transfer_peer_scope_id == txn.scope_id
+        and txn.transfer_peer_on_budget == txn.on_budget
+    )
 
 
-def _scope_of(txn: TxnRow, category_scope: dict[int, str]) -> str | None:
+def _scope_id_of(txn: TxnRow, category_scope_id: dict[int, int]) -> int | None:
     """Which pool a transaction belongs to.
 
     Categorized rows take the scope of their **category's group**, not their
@@ -140,8 +143,8 @@ def _scope_of(txn: TxnRow, category_scope: dict[int, str]) -> str | None:
     Uncategorized rows have only their account scope to go on.
     """
     if txn.category_id is None:
-        return txn.scope
-    return category_scope.get(txn.category_id)
+        return txn.scope_id
+    return category_scope_id.get(txn.category_id)
 
 
 @dataclass(frozen=True)
@@ -157,7 +160,7 @@ class CategorySpending:
 
 @dataclass(frozen=True)
 class ScopeSpending:
-    scope: str
+    scope_id: int
     by_category: dict[int, CategorySpending]
 
     @property
@@ -168,10 +171,10 @@ class ScopeSpending:
 def compute_spending_breakdown(
     transactions: list[TxnRow],
     period: MonthRange,
-    category_scope: dict[int, str],
-    scopes: tuple[str, ...],
-) -> dict[str, ScopeSpending]:
-    """Spending per category over ``period``, one entry per scope in ``scopes``.
+    category_scope_id: dict[int, int],
+    scope_ids: Sequence[int],
+) -> dict[int, ScopeSpending]:
+    """Spending per category over ``period``, one entry per scope in ``scope_ids``.
 
     Spending is reported **gross**, with refunds alongside rather than netted in.
     A floored net would not sum: a refund landing in a different month from its
@@ -191,26 +194,28 @@ def compute_spending_breakdown(
             # outflow never counts as an expense, and inflow is income
             # (handled in flow_by_month), not spend.
             continue
-        scope = _scope_of(txn, category_scope)
-        if scope not in scopes:
+        scope_id = _scope_id_of(txn, category_scope_id)
+        if scope_id not in scope_ids:
             continue
-        key = (scope, txn.category_id)
+        key = (scope_id, txn.category_id)
         if txn.amount_cents < 0:
             spent[key] = spent.get(key, 0) - txn.amount_cents
         else:
             refunded[key] = refunded.get(key, 0) + txn.amount_cents
 
     breakdown: dict[str, ScopeSpending] = {}
-    for scope in scopes:
+    for scope_id in scope_ids:
         category_ids = {
-            category_id for (row_scope, category_id) in (*spent, *refunded) if row_scope == scope
+            category_id
+            for (row_scope_id, category_id) in (*spent, *refunded)
+            if row_scope_id == scope_id
         }
-        breakdown[scope] = ScopeSpending(
-            scope=scope,
+        breakdown[scope_id] = ScopeSpending(
+            scope_id=scope_id,
             by_category={
                 category_id: CategorySpending(
-                    spent_cents=spent.get((scope, category_id), 0),
-                    refund_cents=refunded.get((scope, category_id), 0),
+                    spent_cents=spent.get((scope_id, category_id), 0),
+                    refund_cents=refunded.get((scope_id, category_id), 0),
                 )
                 for category_id in category_ids
             },
@@ -238,8 +243,8 @@ class MonthFlow:
 def flow_by_month(
     transactions: list[TxnRow],
     period: MonthRange,
-    scope: str,
-    category_scope: dict[int, str],
+    scope_id: int,
+    category_scope_id: dict[int, int],
 ) -> list[MonthFlow]:
     """Income against spending for every month in ``period``, for one scope.
 
@@ -256,7 +261,7 @@ def flow_by_month(
     refunded: dict[date, int] = {month: 0 for month in months}
 
     for txn in transactions:
-        if _scope_of(txn, category_scope) != scope or _is_internal_transfer(txn):
+        if _scope_id_of(txn, category_scope_id) != scope_id or _is_internal_transfer(txn):
             continue
         if txn.category_id is None and (txn.amount_cents < 0 or not txn.on_budget):
             # Unassigned outflow never counts as spending (see the identical

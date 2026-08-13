@@ -4,7 +4,6 @@ from sqlalchemy import BigInteger, Date, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
-from app.models.scope import PERSONAL
 
 GOAL_KINDS: tuple[str, ...] = ("monthly", "yearly", "target_date")
 
@@ -18,9 +17,9 @@ class CategoryGroup(Base):
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    # "personal" or "shared" — categories inherit scope from their group.
-    scope: Mapped[str] = mapped_column(
-        String(16), nullable=False, default=PERSONAL
+    # Categories inherit their scope from their group — see app.models.scope.
+    scope_id: Mapped[int] = mapped_column(
+        ForeignKey("scopes.id", ondelete="RESTRICT"), index=True, nullable=False
     )
 
 

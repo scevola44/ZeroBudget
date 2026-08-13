@@ -5,14 +5,16 @@ import { api } from "../api/client";
 import type {
   CategoryTrendRow,
   Insights,
-  Scope,
   ScopeBreakdown,
   ScopeFlow,
   ScopeOverspending,
+  ScopeSplitRow,
 } from "../api/types";
-import { scopeLabel } from "../api/types";
+
 import { ScopeChip } from "../components/ScopeChip";
 import { OTHER_SERIES_CLASS, seriesClass } from "../lib/chartColors";
+import { scopeBarClass } from "../lib/scopeColors";
+import { useScopes } from "../lib/useScopes";
 import { currentMonth, monthLabel, shiftMonth } from "../lib/dates";
 import type { RangePreset } from "../lib/insightsRange";
 import {
@@ -133,76 +135,85 @@ function PresetPicker({
 // ---------------------------------------------------------------------------
 
 function SpendingSection({ insights }: { insights: Insights }) {
-  const { scope_split: split, personal, shared } = insights.breakdown;
+  const { scope_split: split, scopes } = insights.breakdown;
 
   return (
     <section className="space-y-4">
       <h2 className={SECTION_HEADING_CLASS}>Where the money went</h2>
-      <ScopeSplitBar
-        personalCents={split.personal_spent_cents}
-        sharedCents={split.shared_spent_cents}
-        totalCents={split.total_spent_cents}
-      />
+      <ScopeSplitBar rows={split.scopes} totalCents={split.total_spent_cents} />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ScopeSpendingCard breakdown={personal} />
-        <ScopeSpendingCard breakdown={shared} />
+        {scopes.map((breakdown) => (
+          <ScopeSpendingCard key={breakdown.scope_id} breakdown={breakdown} />
+        ))}
       </div>
     </section>
   );
 }
 
 function ScopeSplitBar({
-  personalCents,
-  sharedCents,
+  rows,
   totalCents,
 }: {
-  personalCents: number;
-  sharedCents: number;
+  rows: ScopeSplitRow[];
   totalCents: number;
 }) {
+  const { scopeById } = useScopes();
+
   if (totalCents <= 0) {
     return <div className={EMPTY_CARD_CLASS}>No spending in this range.</div>;
   }
 
+  // A zero-width segment still contributes a visible gap in a `gap-0.5` flex
+  // row, so scopes with no spending are dropped from the bar. They keep their
+  // legend entry: a zero there is informative where a zero sliver is just noise.
+  const segments = rows.filter((row) => row.spent_cents > 0);
+
   return (
     <div className={`${CARD_CLASS} p-5 space-y-3`}>
       <div className={`text-xs uppercase tracking-wide ${MUTED_CLASS}`}>
-        Personal vs Family
+        Split by scope
       </div>
       <div className="flex gap-0.5 h-3 w-full">
-        <div
-          className="bg-sky-600 rounded-l-full"
-          style={{ width: `${percentOf(personalCents, totalCents)}%` }}
-        />
-        <div
-          className="bg-violet-600 dark:bg-violet-500 rounded-r-full"
-          style={{ width: `${percentOf(sharedCents, totalCents)}%` }}
-        />
+        {segments.map((row, index) => (
+          <div
+            key={row.scope_id}
+            className={[
+              scopeBarClass(scopeById.get(row.scope_id)?.sort_order ?? index),
+              index === 0 ? "rounded-l-full" : "",
+              index === segments.length - 1 ? "rounded-r-full" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            style={{ width: `${percentOf(row.spent_cents, totalCents)}%` }}
+          />
+        ))}
       </div>
       <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-        <SplitLegendEntry
-          scope="personal"
-          cents={personalCents}
-          totalCents={totalCents}
-        />
-        <SplitLegendEntry scope="shared" cents={sharedCents} totalCents={totalCents} />
+        {rows.map((row) => (
+          <SplitLegendEntry
+            key={row.scope_id}
+            scopeId={row.scope_id}
+            cents={row.spent_cents}
+            totalCents={totalCents}
+          />
+        ))}
       </div>
     </div>
   );
 }
 
 function SplitLegendEntry({
-  scope,
+  scopeId,
   cents,
   totalCents,
 }: {
-  scope: Scope;
+  scopeId: number;
   cents: number;
   totalCents: number;
 }) {
   return (
     <span className="flex items-center gap-2">
-      <ScopeChip scope={scope} />
+      <ScopeChip scopeId={scopeId} />
       <span className="tabular-nums">
         {formatCents(cents)} · {formatPercent(percentOf(cents, totalCents))}
       </span>
@@ -221,13 +232,13 @@ function ScopeSpendingCard({ breakdown }: { breakdown: ScopeBreakdown }) {
   return (
     <div className={CARD_CLASS}>
       <div className="px-5 py-3 border-b border-stone-200 dark:border-stone-700 flex items-center justify-between gap-3">
-        <ScopeChip scope={breakdown.scope} />
+        <ScopeChip scopeId={breakdown.scope_id} />
         <span className="font-semibold tabular-nums">{formatCents(total)}</span>
       </div>
 
       {total <= 0 ? (
         <div className={`px-5 py-8 text-center ${MUTED_CLASS}`}>
-          Nothing spent in {scopeLabel(breakdown.scope)} this range.
+          Nothing spent in this scope this range.
         </div>
       ) : (
         <div className="p-5 space-y-5">
@@ -320,13 +331,13 @@ function CategoryBar({
 // ---------------------------------------------------------------------------
 
 function IncomeVsSpendingSection({ insights }: { insights: Insights }) {
-  const { personal, shared } = insights.income_vs_spending;
-  // Both scopes share one vertical scale. Independent axes would draw a €200
-  // Personal bar the same height as a €2,000 Family bar and the side-by-side
-  // layout would actively mislead.
+  const flows = insights.income_vs_spending;
+  // Every scope shares one vertical scale. Independent axes would draw a €200
+  // bar the same height as a €2,000 one and the side-by-side layout would
+  // actively mislead.
   const axisMaxCents = Math.max(
     1,
-    ...[personal, shared].flatMap((flow) =>
+    ...flows.flatMap((flow) =>
       flow.months.flatMap((month) => [month.income_cents, month.spent_cents]),
     ),
   );
@@ -336,12 +347,18 @@ function IncomeVsSpendingSection({ insights }: { insights: Insights }) {
     <section className="space-y-4">
       <h2 className={SECTION_HEADING_CLASS}>Income vs Spending</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ScopeFlowCard flow={personal} axisMaxCents={axisMaxCents} showChart={showChart} />
-        <ScopeFlowCard flow={shared} axisMaxCents={axisMaxCents} showChart={showChart} />
+        {flows.map((flow) => (
+          <ScopeFlowCard
+            key={flow.scope_id}
+            flow={flow}
+            axisMaxCents={axisMaxCents}
+            showChart={showChart}
+          />
+        ))}
       </div>
       {showChart && (
         <p className={`text-xs ${MUTED_CLASS}`}>
-          Both charts share one scale, topping out at {formatCents(axisMaxCents)}.
+          All charts share one scale, topping out at {formatCents(axisMaxCents)}.
         </p>
       )}
     </section>
@@ -362,7 +379,7 @@ function ScopeFlowCard({
   return (
     <div className={CARD_CLASS}>
       <div className="px-5 py-3 border-b border-stone-200 dark:border-stone-700">
-        <ScopeChip scope={flow.scope} />
+        <ScopeChip scopeId={flow.scope_id} />
       </div>
       <div className="p-5 space-y-4">
         <dl className="grid grid-cols-3 gap-3 text-sm">
@@ -459,8 +476,7 @@ function LegendSwatch({ className, label }: { className: string; label: string }
 
 function OverspendingSection({ insights }: { insights: Insights }) {
   const {
-    personal,
-    shared,
+    scopes,
     threshold_pct: thresholdPct,
     min_notable_cents: minNotableCents,
     min_baseline_months: minBaselineMonths,
@@ -473,8 +489,12 @@ function OverspendingSection({ insights }: { insights: Insights }) {
     <section className="space-y-4">
       <h2 className={SECTION_HEADING_CLASS}>Overspending</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <ScopeOverspendingCard overspending={personal} />
-        <ScopeOverspendingCard overspending={shared} />
+        {scopes.map((overspending) => (
+          <ScopeOverspendingCard
+            key={overspending.scope_id}
+            overspending={overspending}
+          />
+        ))}
       </div>
       <p className={`text-xs ${MUTED_CLASS}`}>
         "Usual" is a typical month between {monthLabel(baselineStart)} and{" "}
@@ -496,7 +516,7 @@ function ScopeOverspendingCard({
   return (
     <div className={CARD_CLASS}>
       <div className="px-5 py-3 border-b border-stone-200 dark:border-stone-700 flex items-center justify-between gap-3">
-        <ScopeChip scope={overspending.scope} />
+        <ScopeChip scopeId={overspending.scope_id} />
         <span className={`text-sm ${MUTED_CLASS}`}>
           {overspending.on_track_count} on track
         </span>

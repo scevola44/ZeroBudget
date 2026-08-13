@@ -4,14 +4,19 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from app.deps import CurrentUser, DbSession
-from app.models import Account, Category, CategoryGroup, MonthlyAssignment, Transaction
+from app.models import (
+    Account,
+    Category,
+    CategoryGroup,
+    MonthlyAssignment,
+    Scope,
+    Transaction,
+)
 from app.models.account_types import account_on_budget
-from app.models.scope import PERSONAL, SCOPES, SHARED
 from app.schemas.insights import (
     CategorySpendingRow,
     CategoryTrendRow,
     GroupSpendingRow,
-    IncomeVsSpending,
     InsightsPeriod,
     InsightsResponse,
     MonthFlowRow,
@@ -20,6 +25,7 @@ from app.schemas.insights import (
     ScopeFlow,
     ScopeOverspending,
     ScopeSplit,
+    ScopeSplitRow,
     SpendingBreakdown,
 )
 from app.services.budget_calc import (
@@ -143,12 +149,22 @@ async def get_insights(
         .all()
     )
 
-    account_scope: dict[int, str] = {a.id: a.scope for a in accounts}
+    scopes = (
+        (
+            await db.execute(
+                select(Scope)
+                .where(Scope.user_id == current_user.id)
+                .order_by(Scope.sort_order, Scope.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    account_scope_id: dict[int, int] = {a.id: a.scope_id for a in accounts}
     account_on_budget_map: dict[int, bool] = {a.id: account_on_budget(a.type) for a in accounts}
-    group_scope: dict[int, str] = {g.id: g.scope for g in groups}
-    category_scope: dict[int, str] = {
-        c.id: group_scope.get(c.group_id, PERSONAL) for c in categories
-    }
+    group_scope_id: dict[int, int] = {g.id: g.scope_id for g in groups}
+    category_scope_id: dict[int, int] = {c.id: group_scope_id[c.group_id] for c in categories}
     category_group: dict[int, int] = {c.id: c.group_id for c in categories}
     category_name: dict[int, str] = {c.id: c.name for c in categories}
     group_name: dict[int, str] = {g.id: g.name for g in groups}
@@ -156,36 +172,40 @@ async def get_insights(
     # Peers are loaded separately: this query is date-windowed, and a transfer
     # linked from two bank imports can straddle the horizon.
     peer_account_id = await load_peer_account_ids(db, txn_rows_db)
-    txns = build_txn_rows(txn_rows_db, account_scope, account_on_budget_map, peer_account_id)
+    txns = build_txn_rows(
+        txn_rows_db, account_scope_id, account_on_budget_map, peer_account_id
+    )
     assignments = [
         AssignmentRow(
             category_id=a.category_id,
             month=a.month,
             amount_cents=a.amount_cents,
-            scope=category_scope.get(a.category_id, PERSONAL),
+            scope_id=category_scope_id[a.category_id],
         )
         for a in assignment_rows_db
     ]
 
-    spending = compute_spending_breakdown(txns, period, category_scope, SCOPES)
+    spending = compute_spending_breakdown(
+        txns, period, category_scope_id, [scope.id for scope in scopes]
+    )
     trends = compute_category_trends(
         [c.id for c in categories], txns, assignments, period
     )
     baseline = baseline_range(period)
 
-    def breakdown_for(scope: str) -> ScopeBreakdown:
-        scope_groups = [g.id for g in groups if g.scope == scope]
+    def breakdown_for(scope_id: int) -> ScopeBreakdown:
+        scope_groups = [g.id for g in groups if g.scope_id == scope_id]
         return _scope_breakdown(
-            spending[scope], scope_groups, category_group, category_name, group_name
+            spending[scope_id], scope_groups, category_group, category_name, group_name
         )
 
-    def flow_for(scope: str) -> ScopeFlow:
-        return _scope_flow(txns, period, scope, category_scope)
+    def flow_for(scope_id: int) -> ScopeFlow:
+        return _scope_flow(txns, period, scope_id, category_scope_id)
 
-    def overspending_for(scope: str) -> ScopeOverspending:
-        scoped = [c.id for c in categories if category_scope[c.id] == scope]
+    def overspending_for(scope_id: int) -> ScopeOverspending:
+        scoped = [c.id for c in categories if category_scope_id[c.id] == scope_id]
         return _scope_overspending(
-            scope, scoped, trends, category_name, category_group, group_name
+            scope_id, scoped, trends, category_name, category_group, group_name
         )
 
     return InsightsResponse(
@@ -198,23 +218,25 @@ async def get_insights(
         ),
         breakdown=SpendingBreakdown(
             scope_split=ScopeSplit(
-                personal_spent_cents=spending[PERSONAL].total_spent_cents,
-                shared_spent_cents=spending[SHARED].total_spent_cents,
-                total_spent_cents=spending[PERSONAL].total_spent_cents
-                + spending[SHARED].total_spent_cents,
+                scopes=[
+                    ScopeSplitRow(
+                        scope_id=scope.id,
+                        spent_cents=spending[scope.id].total_spent_cents,
+                    )
+                    for scope in scopes
+                ],
+                total_spent_cents=sum(
+                    spending[scope.id].total_spent_cents for scope in scopes
+                ),
             ),
-            personal=breakdown_for(PERSONAL),
-            shared=breakdown_for(SHARED),
+            scopes=[breakdown_for(scope.id) for scope in scopes],
         ),
-        income_vs_spending=IncomeVsSpending(
-            personal=flow_for(PERSONAL), shared=flow_for(SHARED)
-        ),
+        income_vs_spending=[flow_for(scope.id) for scope in scopes],
         overspending=Overspending(
             threshold_pct=OVERSPEND_THRESHOLD_PCT,
             min_notable_cents=MIN_NOTABLE_CENTS,
             min_baseline_months=MIN_BASELINE_MONTHS,
-            personal=overspending_for(PERSONAL),
-            shared=overspending_for(SHARED),
+            scopes=[overspending_for(scope.id) for scope in scopes],
         ),
     )
 
@@ -247,7 +269,7 @@ def _scope_breakdown(
         group_totals[row.group_id] = group_totals.get(row.group_id, 0) + row.spent_cents
 
     return ScopeBreakdown(
-        scope=spending.scope,
+        scope_id=spending.scope_id,
         total_spent_cents=spending.total_spent_cents,
         groups=sorted(
             (
@@ -268,12 +290,12 @@ def _scope_breakdown(
 def _scope_flow(
     txns: list[TxnRow],
     period: MonthRange,
-    scope: str,
-    category_scope: dict[int, str],
+    scope_id: int,
+    category_scope_id: dict[int, int],
 ) -> ScopeFlow:
-    months = flow_by_month(txns, period, scope, category_scope)
+    months = flow_by_month(txns, period, scope_id, category_scope_id)
     return ScopeFlow(
-        scope=scope,
+        scope_id=scope_id,
         income_cents=sum(month.income_cents for month in months),
         spent_cents=sum(month.spent_cents for month in months),
         refund_cents=sum(month.refund_cents for month in months),
@@ -292,7 +314,7 @@ def _scope_flow(
 
 
 def _scope_overspending(
-    scope: str,
+    scope_id: int,
     category_ids: list[int],
     trends: dict[int, CategoryTrend],
     category_name: dict[int, str],
@@ -301,7 +323,7 @@ def _scope_overspending(
 ) -> ScopeOverspending:
     flagged = [trends[category_id] for category_id in category_ids if trends[category_id].flags]
     return ScopeOverspending(
-        scope=scope,
+        scope_id=scope_id,
         categories=[
             CategoryTrendRow(
                 category_id=trend.category_id,

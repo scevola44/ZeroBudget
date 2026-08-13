@@ -4,7 +4,6 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
-from app.models.scope import PERSONAL
 
 
 class Account(Base):
@@ -17,9 +16,9 @@ class Account(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     # Free-form string for now: "checking" / "savings" / "cash".
     type: Mapped[str] = mapped_column(String(32), nullable=False, default="checking")
-    # "personal" or "shared" — see app.models.scope.SCOPES.
-    scope: Mapped[str] = mapped_column(
-        String(16), nullable=False, default=PERSONAL
+    # The budget pool this account's money belongs to — see app.models.scope.
+    scope_id: Mapped[int] = mapped_column(
+        ForeignKey("scopes.id", ondelete="RESTRICT"), index=True, nullable=False
     )
     # A retired account. Its transactions still count towards every past month;
     # it is only hidden from the account list. Closing is the alternative to
