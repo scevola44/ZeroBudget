@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
+import { api } from "../api/client";
 import type { Account } from "../api/types";
 import { parseAmountToCents } from "../lib/money";
 import { todayISO } from "../lib/dates";
-import {
-  READY_TO_ASSIGN_OPTION_VALUE,
-  parseCategorySelectValue,
-} from "../lib/readyToAssignOption";
-import type { CategoryChoice } from "./EditTransactionModal";
+import { parseCategorySelectValue } from "../lib/readyToAssignOption";
+import { useDebouncedValue } from "../lib/useDebouncedValue";
+import { type CategoryBudgetInfo, type CategoryChoice, CategoryPicker } from "./CategoryPicker";
 
 export type TransactionCreateInput = {
   account_id: number;
@@ -22,6 +22,7 @@ export type TransactionCreateInput = {
 export function AddTransactionModal({
   accounts,
   categoriesByScope,
+  budgetByCategoryId,
   isOpen,
   onClose,
   onSave,
@@ -31,6 +32,8 @@ export function AddTransactionModal({
   accounts: Account[];
   /** All categories, flat — filtered to the chosen account's scope on each render. */
   categoriesByScope: (CategoryChoice & { groupScope: string })[];
+  /** Current month's assigned/balance per category id, for the remaining-budget pill. */
+  budgetByCategoryId?: Map<number, CategoryBudgetInfo>;
   isOpen: boolean;
   onClose: () => void;
   onSave: (input: TransactionCreateInput) => void;
@@ -45,6 +48,9 @@ export function AddTransactionModal({
   const [amount, setAmount] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [amountError, setAmountError] = useState<string | null>(null);
+  // Whether the user has picked a category themselves this entry, so a
+  // suggestion arriving afterward never overrides that choice.
+  const [categoryTouched, setCategoryTouched] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -54,17 +60,36 @@ export function AddTransactionModal({
     setMemo("");
     setAmount("");
     setCategoryId("");
+    setCategoryTouched(false);
     setAmountError(null);
     // openAccounts is derived from `accounts` each render; only re-seed when the modal opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  if (!isOpen) return null;
-
   const selectedAccount = openAccounts.find((a) => String(a.id) === accountId);
   const categories = selectedAccount
     ? categoriesByScope.filter((c) => c.groupScope === selectedAccount.scope)
     : [];
+
+  const debouncedPayee = useDebouncedValue(payee, 300);
+  const suggestionsQuery = useQuery<number[]>({
+    queryKey: ["category-suggestions", selectedAccount?.id, debouncedPayee],
+    queryFn: () =>
+      api<number[]>(
+        `/api/transactions/category-suggestions?account_id=${selectedAccount?.id}&payee=${encodeURIComponent(debouncedPayee)}`,
+      ),
+    enabled: isOpen && selectedAccount !== undefined && debouncedPayee.trim().length > 0,
+  });
+  const suggestedCategoryIds = suggestionsQuery.data ?? [];
+
+  // Tracks the top suggestion into the field as the payee changes, but stops
+  // the moment the user picks a category themselves.
+  useEffect(() => {
+    if (categoryTouched) return;
+    setCategoryId(suggestedCategoryIds.length > 0 ? String(suggestedCategoryIds[0]) : "");
+  }, [suggestedCategoryIds, categoryTouched]);
+
+  if (!isOpen) return null;
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -115,6 +140,7 @@ export function AddTransactionModal({
               onChange={(e) => {
                 setAccountId(e.target.value);
                 setCategoryId("");
+                setCategoryTouched(false);
               }}
               required
               disabled={isPending}
@@ -154,20 +180,17 @@ export function AddTransactionModal({
             <label className="text-sm font-medium text-stone-700 dark:text-stone-300">
               Category
             </label>
-            <select
+            <CategoryPicker
               value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
+              onChange={(newValue) => {
+                setCategoryTouched(true);
+                setCategoryId(newValue);
+              }}
+              categories={categories}
+              suggestedCategoryIds={suggestedCategoryIds}
+              budgetByCategoryId={budgetByCategoryId}
               disabled={isPending}
-              className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-            >
-              <option value="">— Unassigned (inflow) —</option>
-              <option value={READY_TO_ASSIGN_OPTION_VALUE}>Ready to Assign</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.groupName} › {c.name}
-                </option>
-              ))}
-            </select>
+            />
           </div>
 
           <div className="space-y-1">

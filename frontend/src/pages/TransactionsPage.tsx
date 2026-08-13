@@ -3,13 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 
 import { api } from "../api/client";
-import type { Account, CategoryGroup, Transaction } from "../api/types";
+import type { Account, BudgetMonth, CategoryGroup, Transaction } from "../api/types";
 import {
   AddTransactionModal,
   type TransactionCreateInput,
 } from "../components/AddTransactionModal";
 import { BulkDeleteTransactionsConfirmModal } from "../components/BulkDeleteTransactionsConfirmModal";
 import { CategoryBadge, needsCategory } from "../components/CategoryBadge";
+import type { CategoryBudgetInfo } from "../components/CategoryPicker";
 import {
   EditTransactionModal,
   type TransactionEdit,
@@ -116,10 +117,22 @@ export function TransactionsPage() {
     queryFn: () => api<CategoryGroup[]>("/api/category-groups"),
   });
 
+  // Powers the category picker's remaining-budget pill — always the
+  // currently active month, regardless of the transaction's own date.
+  const budgetQuery = useQuery<BudgetMonth>({
+    queryKey: ["budget", currentMonth()],
+    queryFn: () => api<BudgetMonth>(`/api/budget/${currentMonth()}`),
+  });
+  const budgetByCategoryId = new Map<number, CategoryBudgetInfo>(
+    budgetQuery.data?.groups.flatMap((g) =>
+      g.categories.map((c) => [c.id, { assigned_cents: c.assigned_cents, balance_cents: c.balance_cents }] as const),
+    ) ?? [],
+  );
+
   const accounts = accountsQuery.data ?? [];
   const flatCategories =
     groupsQuery.data?.flatMap((g) =>
-      g.categories.map((c) => ({ ...c, groupName: g.name, groupScope: g.scope })),
+      g.categories.map((c) => ({ ...c, groupId: g.id, groupName: g.name, groupScope: g.scope })),
     ) ?? [];
 
   const updateTxn = useMutation({
@@ -577,6 +590,7 @@ export function TransactionsPage() {
           categories={flatCategories.filter(
             (c) => c.groupScope === accountById[editingTransaction.account_id]?.scope,
           )}
+          budgetByCategoryId={budgetByCategoryId}
           peerAccount={
             (editingTransaction.transfer_peer_account_id !== null
               ? accountById[editingTransaction.transfer_peer_account_id]
@@ -629,6 +643,7 @@ export function TransactionsPage() {
       <AddTransactionModal
         accounts={accounts}
         categoriesByScope={flatCategories}
+        budgetByCategoryId={budgetByCategoryId}
         isOpen={addOpen}
         onClose={() => {
           setAddOpen(false);

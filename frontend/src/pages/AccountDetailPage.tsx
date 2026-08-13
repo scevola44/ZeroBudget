@@ -3,7 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { Account, CategoryGroup, Transaction, Transfer } from "../api/types";
+import type { Account, BudgetMonth, CategoryGroup, Transaction, Transfer } from "../api/types";
+import type { CategoryBudgetInfo } from "../components/CategoryPicker";
 import {
   EditTransactionModal,
   type TransactionEdit,
@@ -11,7 +12,7 @@ import {
 import { LinkTransferModal } from "../components/LinkTransferModal";
 import { ScopeChip } from "../components/ScopeChip";
 import { partitionSuggested } from "../lib/categorySuggestions";
-import { todayISO } from "../lib/dates";
+import { currentMonth, todayISO } from "../lib/dates";
 import { formatCents, parseAmountToCents } from "../lib/money";
 import {
   READY_TO_ASSIGN_OPTION_VALUE,
@@ -43,11 +44,23 @@ export function AccountDetailPage() {
     queryFn: () => api<CategoryGroup[]>("/api/category-groups"),
   });
 
+  // Powers the category picker's remaining-budget pill — always the
+  // currently active month, regardless of the transaction's own date.
+  const budgetQuery = useQuery<BudgetMonth>({
+    queryKey: ["budget", currentMonth()],
+    queryFn: () => api<BudgetMonth>(`/api/budget/${currentMonth()}`),
+  });
+  const budgetByCategoryId = new Map<number, CategoryBudgetInfo>(
+    budgetQuery.data?.groups.flatMap((g) =>
+      g.categories.map((c) => [c.id, { assigned_cents: c.assigned_cents, balance_cents: c.balance_cents }] as const),
+    ) ?? [],
+  );
+
   // Categories visible in the dropdown are only those whose group scope
   // matches the account's scope — otherwise the backend rejects with 422.
   const flatCategories =
     groupsQuery.data?.flatMap((g) =>
-      g.categories.map((c) => ({ ...c, groupName: g.name, groupScope: g.scope })),
+      g.categories.map((c) => ({ ...c, groupId: g.id, groupName: g.name, groupScope: g.scope })),
     ) ?? [];
   const eligibleCategories = account
     ? flatCategories.filter((c) => c.groupScope === account.scope)
@@ -617,6 +630,7 @@ export function AccountDetailPage() {
         <EditTransactionModal
           transaction={editingTransaction}
           categories={eligibleCategories}
+          budgetByCategoryId={budgetByCategoryId}
           peerAccount={peerAccountOf(editingTransaction) ?? null}
           transferTargets={transferTargets}
           isOpen={true}

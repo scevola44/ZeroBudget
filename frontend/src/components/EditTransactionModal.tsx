@@ -3,14 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api/client";
 import type { Account, Transaction } from "../api/types";
-import { partitionSuggested } from "../lib/categorySuggestions";
+import { type CategoryBudgetInfo, CategoryPicker, type CategoryChoice } from "./CategoryPicker";
 import { parseAmountToCents } from "../lib/money";
-import {
-  READY_TO_ASSIGN_OPTION_VALUE,
-  categorySelectValue,
-  parseCategorySelectValue,
-} from "../lib/readyToAssignOption";
-import { TRANSFER_OPTION_PREFIX, transferTargetId } from "../lib/transferOption";
+import { categorySelectValue, parseCategorySelectValue } from "../lib/readyToAssignOption";
+import { transferTargetId } from "../lib/transferOption";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
 
 export type TransactionEdit = {
@@ -22,11 +18,10 @@ export type TransactionEdit = {
   is_ready_to_assign: boolean;
 };
 
-export type CategoryChoice = { id: number; name: string; groupName: string };
-
 export function EditTransactionModal({
   transaction,
   categories,
+  budgetByCategoryId,
   peerAccount,
   transferTargets,
   isOpen,
@@ -42,6 +37,8 @@ export function EditTransactionModal({
   transaction: Transaction;
   /** Already narrowed to the account's scope by the caller. */
   categories: CategoryChoice[];
+  /** Current month's assigned/balance per category id, for the remaining-budget pill. */
+  budgetByCategoryId?: Map<number, CategoryBudgetInfo>;
   /** The other leg's account, when this transaction is a transfer. */
   peerAccount: Account | null;
   /** Other accounts this (non-transfer) transaction could be turned into a transfer with. */
@@ -98,10 +95,6 @@ export function EditTransactionModal({
       debouncedPayee !== transaction.payee,
   });
   const suggestedCategoryIds = suggestionsQuery.data ?? [];
-  const { suggested: suggestedCategories, rest: otherCategories } = partitionSuggested(
-    categories,
-    suggestedCategoryIds,
-  );
 
   // Leaves the saved category alone until the payee is actually edited away
   // from it; from then on, tracks the top suggestion until the user picks a
@@ -201,53 +194,23 @@ export function EditTransactionModal({
                 )}
               </div>
             ) : (
-              <div className="relative">
-                <select
-                  value={categoryId}
-                  onChange={(e) => {
-                    const targetAccountId = transferTargetId(e.target.value);
-                    if (targetAccountId !== null) {
-                      onPickTransferTarget?.(targetAccountId);
-                      return;
-                    }
-                    setCategoryTouched(true);
-                    setCategoryId(e.target.value);
-                  }}
-                  disabled={isPending}
-                  className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg pl-3 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-                >
-                  <option value="">— Unassigned (inflow) —</option>
-                  <option value={READY_TO_ASSIGN_OPTION_VALUE}>Ready to Assign</option>
-                  {suggestedCategories.length > 0 && (
-                    <optgroup label="Suggested">
-                      {suggestedCategories.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.groupName} › {c.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {otherCategories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.groupName} › {c.name}
-                    </option>
-                  ))}
-                  {transferTargets && transferTargets.length > 0 && (
-                    <optgroup label="Transfer">
-                      {transferTargets.map((a) => (
-                        <option key={a.id} value={`${TRANSFER_OPTION_PREFIX}${a.id}`}>
-                          Transfer : {a.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-                <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
-                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 6l4 4 4-4" />
-                  </svg>
-                </div>
-              </div>
+              <CategoryPicker
+                value={categoryId}
+                onChange={(newValue) => {
+                  const targetAccountId = transferTargetId(newValue);
+                  if (targetAccountId !== null) {
+                    onPickTransferTarget?.(targetAccountId);
+                    return;
+                  }
+                  setCategoryTouched(true);
+                  setCategoryId(newValue);
+                }}
+                categories={categories}
+                suggestedCategoryIds={suggestedCategoryIds}
+                budgetByCategoryId={budgetByCategoryId}
+                transferTargets={transferTargets}
+                disabled={isPending}
+              />
             )}
           </div>
 
