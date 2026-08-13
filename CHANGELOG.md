@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.4.0-beta.10...v0.5.0-beta.10) (2026-08-13)
+
+
+### Features
+
+* allow deleting transactions from the Transactions page ([#118](https://github.com/scevola44/ZeroBudget/issues/118)) ([ad1cf78](https://github.com/scevola44/ZeroBudget/commit/ad1cf78bacd7eb08db26f69cd172fab3ea2763b1))
+* mass-delete transactions with row selection and filtered select-all ([#120](https://github.com/scevola44/ZeroBudget/issues/120)) ([dd85a87](https://github.com/scevola44/ZeroBudget/commit/dd85a87c17a922b749d8327bf0c96e694ed63121))
+
+
+### Bug Fixes
+
+* reuse existing bank connection/accounts on reconnect, sync month-to-date on first link ([#117](https://github.com/scevola44/ZeroBudget/issues/117)) ([b47d841](https://github.com/scevola44/ZeroBudget/commit/b47d8419bf556dffcc26bb27758e4f37f4cd495b))
+
 ## [0.4.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.3.0-beta.10...v0.4.0-beta.10) (2026-08-12)
 
 
