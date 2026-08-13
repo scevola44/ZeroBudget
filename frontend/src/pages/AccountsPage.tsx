@@ -5,9 +5,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "../api/client";
 import { bankingApi } from "../api/banking";
 import type { Aspsp, BankConnection, SyncStatus } from "../api/banking";
-import { MANUAL_ACCOUNT_TYPES, type Account, type Scope } from "../api/types";
+import { MANUAL_ACCOUNT_TYPES, type Account } from "../api/types";
 import { EditAccountModal, type AccountEdit } from "../components/EditAccountModal";
 import { ScopeChip } from "../components/ScopeChip";
+import { ScopeSelect } from "../components/ScopeSelect";
+import { useScopes } from "../lib/useScopes";
 import { formatCents } from "../lib/money";
 
 const CONSENT_EXPIRY_WARNING_DAYS = 7;
@@ -32,7 +34,11 @@ export function AccountsPage() {
 
   const [name, setName] = useState("");
   const [type, setType] = useState("checking");
-  const [scope, setScope] = useState<Scope>("personal");
+  // Null until the scopes query lands; `scopeId` below falls back to the
+  // user's first scope so the form is usable the moment it renders.
+  const [pickedScopeId, setPickedScopeId] = useState<number | null>(null);
+  const { defaultScopeId } = useScopes();
+  const scopeId = pickedScopeId ?? defaultScopeId;
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
@@ -40,7 +46,7 @@ export function AccountsPage() {
   const [showClosed, setShowClosed] = useState(false);
 
   const createMutation = useMutation({
-    mutationFn: (body: { name: string; type: string; scope: Scope }) =>
+    mutationFn: (body: { name: string; type: string; scope_id: number }) =>
       api<Account>("/api/accounts", { method: "POST", body }),
     onSuccess: () => {
       setName("");
@@ -90,9 +96,9 @@ export function AccountsPage() {
         <ReauthBanner
           key={connection.id}
           connection={connection}
-          scope={
+          scopeId={
             (accountsQuery.data ?? []).find((a) => a.bank_connection_id === connection.id)
-              ?.scope ?? "personal"
+              ?.scope_id ?? null
           }
           onError={setError}
         />
@@ -102,7 +108,8 @@ export function AccountsPage() {
         className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 flex flex-col sm:flex-row gap-3 sm:items-end"
         onSubmit={(e) => {
           e.preventDefault();
-          if (name.trim()) createMutation.mutate({ name: name.trim(), type, scope });
+          if (name.trim() && scopeId !== null)
+            createMutation.mutate({ name: name.trim(), type, scope_id: scopeId });
         }}
       >
         <div className="flex-1 space-y-1">
@@ -138,21 +145,7 @@ export function AccountsPage() {
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Scope</label>
-          <div className="relative">
-            <select
-              value={scope}
-              onChange={(e) => setScope(e.target.value as Scope)}
-              className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
-            >
-              <option value="personal">Personal</option>
-              <option value="shared">Family</option>
-            </select>
-            <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
-              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 6l4 4 4-4" />
-              </svg>
-            </div>
-          </div>
+          <ScopeSelect value={scopeId} onChange={setPickedScopeId} />
         </div>
         <button
           type="submit"
@@ -294,7 +287,7 @@ function AccountRow({
           <Link to={`/accounts/${account.id}`} className="text-indigo-600 dark:text-indigo-400 hover:underline">
             {account.name}
           </Link>
-          <ScopeChip scope={account.scope} />
+          <ScopeChip scopeId={account.scope_id} />
           {account.closed && (
             <span className="text-xs rounded-full px-2 py-0.5 bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400">
               Closed
@@ -345,22 +338,25 @@ function AccountRow({
 
 function ReauthBanner({
   connection,
-  scope,
+  scopeId,
   onError,
 }: {
   connection: BankConnection;
-  scope: Scope;
+  scopeId: number | null;
   onError: (message: string) => void;
 }) {
   const [isRedirecting, setIsRedirecting] = useState(false);
 
   const reconnect = async () => {
+    // The banner only renders for a connection that already has an account, so
+    // the scope is known; the guard is for the moment before the query lands.
+    if (scopeId === null) return;
     setIsRedirecting(true);
     try {
       const { authorization_url } = await bankingApi.connect(
         connection.aspsp_name,
         connection.aspsp_country,
-        scope
+        scopeId,
       );
       window.location.href = authorization_url;
     } catch (err) {
@@ -400,7 +396,9 @@ function BankLinkCard({
   const [isPicking, setIsPicking] = useState(false);
   const [country, setCountry] = useState("");
   const [aspspName, setAspspName] = useState("");
-  const [linkScope, setLinkScope] = useState<Scope>("personal");
+  const [pickedLinkScopeId, setPickedLinkScopeId] = useState<number | null>(null);
+  const { defaultScopeId } = useScopes();
+  const linkScopeId = pickedLinkScopeId ?? defaultScopeId;
   const [isRedirecting, setIsRedirecting] = useState(false);
 
   const statusQuery = useQuery<SyncStatus>({
@@ -452,10 +450,14 @@ function BankLinkCard({
   });
 
   const startConnect = async () => {
-    if (!aspspName || !country) return;
+    if (!aspspName || !country || linkScopeId === null) return;
     setIsRedirecting(true);
     try {
-      const { authorization_url } = await bankingApi.connect(aspspName, country, linkScope);
+      const { authorization_url } = await bankingApi.connect(
+        aspspName,
+        country,
+        linkScopeId,
+      );
       window.location.href = authorization_url;
     } catch (err) {
       setIsRedirecting(false);
@@ -577,21 +579,7 @@ function BankLinkCard({
               </div>
               <div className="space-y-1">
                 <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Scope</label>
-                <div className="relative">
-                  <select
-                    value={linkScope}
-                    onChange={(e) => setLinkScope(e.target.value as Scope)}
-                    className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 rounded-lg pl-3 pr-8 bg-white dark:bg-stone-900"
-                  >
-                    <option value="personal">Personal</option>
-                    <option value="shared">Family</option>
-                  </select>
-                  <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
-                    <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M4 6l4 4 4-4" />
-                    </svg>
-                  </div>
-                </div>
+                <ScopeSelect value={linkScopeId} onChange={setPickedLinkScopeId} />
               </div>
               <button
                 onClick={() => void startConnect()}

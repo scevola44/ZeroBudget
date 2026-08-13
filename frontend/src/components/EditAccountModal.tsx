@@ -1,14 +1,10 @@
 import { useEffect, useState } from "react";
-import {
-  MANUAL_ACCOUNT_TYPES,
-  type Account,
-  type Scope,
-  scopeLabel,
-} from "../api/types";
+import { MANUAL_ACCOUNT_TYPES, type Account } from "../api/types";
+import { ScopeSelect } from "./ScopeSelect";
 
 export type AccountEdit = {
   name: string;
-  scope: Scope;
+  scope_id: number;
   type?: string;
   closed: boolean;
 };
@@ -29,7 +25,7 @@ export function EditAccountModal({
   error: string | null;
 }) {
   const [name, setName] = useState(account.name);
-  const [scope, setScope] = useState<Scope>(account.scope);
+  const [scopeId, setScopeId] = useState<number>(account.scope_id);
   const [type, setType] = useState(account.type);
   const [closed, setClosed] = useState(account.closed);
 
@@ -39,7 +35,7 @@ export function EditAccountModal({
   useEffect(() => {
     if (isOpen) {
       setName(account.name);
-      setScope(account.scope);
+      setScopeId(account.scope_id);
       setType(account.type);
       setClosed(account.closed);
     }
@@ -76,7 +72,7 @@ export function EditAccountModal({
             if (!nameOk) return;
             onSave({
               name: name.trim(),
-              scope,
+              scope_id: scopeId,
               type: isLinked ? undefined : type,
               closed,
             });
@@ -130,22 +126,7 @@ export function EditAccountModal({
             <label className="text-sm font-medium text-stone-700 dark:text-stone-300">
               Scope
             </label>
-            <div className="relative">
-              <select
-                value={scope}
-                onChange={(e) => setScope(e.target.value as Scope)}
-                disabled={isPending}
-                className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg pl-3 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-              >
-                <option value="personal">{scopeLabel("personal")}</option>
-                <option value="shared">{scopeLabel("shared")}</option>
-              </select>
-              <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-stone-400 dark:text-stone-500">
-                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4 6l4 4 4-4" />
-                </svg>
-              </div>
-            </div>
+            <ScopeSelect value={scopeId} onChange={setScopeId} disabled={isPending} />
           </div>
 
           <label className="flex items-start gap-2 text-sm text-stone-700 dark:text-stone-300 cursor-pointer">

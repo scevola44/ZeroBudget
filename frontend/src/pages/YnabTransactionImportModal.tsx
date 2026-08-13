@@ -99,12 +99,12 @@ function parseYnabTransactionCsv(text: string): ParsedRow[] {
 function resolveCategoryId(
   categoryGroup: string,
   category: string,
-  accountScope: string,
+  accountScopeId: number,
   categoryGroups: CategoryGroup[],
 ): number | null {
   if (!categoryGroup || !category) return null;
   const group = categoryGroups.find((g) => g.name === categoryGroup);
-  if (!group || group.scope !== accountScope) return null;
+  if (!group || group.scope_id !== accountScopeId) return null;
   const cat = group.categories.find((c) => c.name === category);
   return cat?.id ?? null;
 }
@@ -178,7 +178,7 @@ export function YnabTransactionImportModal({
       const category_id = resolveCategoryId(
         row.categoryGroup,
         row.category,
-        account.scope,
+        account.scope_id,
         categoryGroups,
       );
       rows.push({

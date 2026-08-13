@@ -13,19 +13,17 @@ export const MANUAL_ACCOUNT_TYPES: { value: string; label: string }[] = [
   { value: "loan", label: "Loan" },
 ];
 
-export type Scope = "personal" | "shared";
-
-export const SCOPES: Scope[] = ["personal", "shared"];
-
-export function scopeLabel(scope: Scope): string {
-  return scope === "shared" ? "Family" : "Personal";
-}
+// A budget pool. Users create, rename and delete their own; the two a new
+// account starts with ("Personal", "Family") are seeds, not fixed values.
+// `sort_order` is both the display order and the palette slot — see
+// lib/scopeColors.ts.
+export type Scope = { id: number; name: string; sort_order: number };
 
 export type Account = {
   id: number;
   name: string;
   type: AccountType;
-  scope: Scope;
+  scope_id: number;
   balance_cents: number;
   closed: boolean;
   bank_connection_id: number | null;
@@ -49,7 +47,7 @@ export type CategoryGroup = {
   id: number;
   name: string;
   sort_order: number;
-  scope: Scope;
+  scope_id: number;
   categories: Category[];
 };
 
@@ -113,14 +111,19 @@ export type BudgetCategoryRow = {
 export type BudgetGroupRow = {
   id: number;
   name: string;
-  scope: Scope;
+  scope_id: number;
   categories: BudgetCategoryRow[];
+};
+
+export type ScopeReadyToAssign = {
+  scope_id: number;
+  ready_to_assign_cents: number;
 };
 
 export type BudgetMonth = {
   month: string;
-  personal_ready_to_assign_cents: number;
-  shared_ready_to_assign_cents: number;
+  // One entry per scope, in the user's own scope order.
+  ready_to_assign: ScopeReadyToAssign[];
   groups: BudgetGroupRow[];
 };
 
@@ -150,22 +153,25 @@ export type GroupSpendingRow = {
 };
 
 export type ScopeBreakdown = {
-  scope: Scope;
+  scope_id: number;
   total_spent_cents: number;
   groups: GroupSpendingRow[];
   categories: CategorySpendingRow[];
 };
 
+export type ScopeSplitRow = {
+  scope_id: number;
+  spent_cents: number;
+};
+
 export type ScopeSplit = {
-  personal_spent_cents: number;
-  shared_spent_cents: number;
+  scopes: ScopeSplitRow[];
   total_spent_cents: number;
 };
 
 export type SpendingBreakdown = {
   scope_split: ScopeSplit;
-  personal: ScopeBreakdown;
-  shared: ScopeBreakdown;
+  scopes: ScopeBreakdown[];
 };
 
 export type MonthFlowRow = {
@@ -177,7 +183,7 @@ export type MonthFlowRow = {
 };
 
 export type ScopeFlow = {
-  scope: Scope;
+  scope_id: number;
   income_cents: number;
   spent_cents: number;
   refund_cents: number;
@@ -211,7 +217,7 @@ export type CategoryTrendRow = {
 };
 
 export type ScopeOverspending = {
-  scope: Scope;
+  scope_id: number;
   categories: CategoryTrendRow[];
   on_track_count: number;
 };
@@ -219,7 +225,7 @@ export type ScopeOverspending = {
 export type Insights = {
   period: InsightsPeriod;
   breakdown: SpendingBreakdown;
-  income_vs_spending: { personal: ScopeFlow; shared: ScopeFlow };
+  income_vs_spending: ScopeFlow[];
   overspending: Overspending;
 };
 
@@ -227,8 +233,7 @@ export type Overspending = {
   threshold_pct: number;
   min_notable_cents: number;
   min_baseline_months: number;
-  personal: ScopeOverspending;
-  shared: ScopeOverspending;
+  scopes: ScopeOverspending[];
 };
 
 export type YnabImportRow = { group: string; category: string };

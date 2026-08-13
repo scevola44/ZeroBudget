@@ -31,7 +31,7 @@ export function AddTransactionModal({
 }: {
   accounts: Account[];
   /** All categories, flat — filtered to the chosen account's scope on each render. */
-  categoriesByScope: (CategoryChoice & { groupScope: string })[];
+  categoriesByScope: (CategoryChoice & { groupScopeId: number })[];
   /** Current month's assigned/balance per category id, for the remaining-budget pill. */
   budgetByCategoryId?: Map<number, CategoryBudgetInfo>;
   isOpen: boolean;
@@ -68,7 +68,7 @@ export function AddTransactionModal({
 
   const selectedAccount = openAccounts.find((a) => String(a.id) === accountId);
   const categories = selectedAccount
-    ? categoriesByScope.filter((c) => c.groupScope === selectedAccount.scope)
+    ? categoriesByScope.filter((c) => c.groupScopeId === selectedAccount.scope_id)
     : [];
 
   const debouncedPayee = useDebouncedValue(payee, 300);
