@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.7.0-beta.10...v0.8.0-beta.10) (2026-08-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* `scope` is replaced by `scope_id` on every account, category-group and bank-connection payload, and the budget and insights responses now return per-scope lists instead of fixed personal/shared fields.
+
+### Features
+
+* dynamic scope management jvf37i ([#135](https://github.com/scevola44/ZeroBudget/issues/135)) ([1dab4db](https://github.com/scevola44/ZeroBudget/commit/1dab4db6a16f326ee83294c0ef607de10ff06278))
+
 ## [0.7.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.6.2-beta.10...v0.7.0-beta.10) (2026-08-13)
 
 
