@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.5.0-beta.10...v0.5.1-beta.10) (2026-08-13)
+
+
+### Bug Fixes
+
+* move Ready to Assign when a transfer crosses the on-budget boundary ([#121](https://github.com/scevola44/ZeroBudget/issues/121)) ([c4e1090](https://github.com/scevola44/ZeroBudget/commit/c4e1090d050ff6bc9011a1111c9bcfe1632eeb0b))
+
 ## [0.5.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.4.0-beta.10...v0.5.0-beta.10) (2026-08-13)
 
 
