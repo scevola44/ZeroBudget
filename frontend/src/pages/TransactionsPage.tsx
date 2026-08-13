@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import type { Account, CategoryGroup, Transaction } from "../api/types";
+import { BulkDeleteTransactionsConfirmModal } from "../components/BulkDeleteTransactionsConfirmModal";
 import {
   EditTransactionModal,
   type TransactionEdit,
@@ -34,6 +35,9 @@ export function TransactionsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [editingTxnId, setEditingTxnId] = useState<number | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
   // The existing row being linked to a transfer, and the account holding its
   // other leg — set together when "Transfer : <account>" is picked in the
   // edit modal.
@@ -63,6 +67,12 @@ export function TransactionsPage() {
       { replace: true },
     );
   }, [searchParams, setSearchParams]);
+
+  // A selection describes rows the user can currently see, so it shouldn't
+  // silently carry over ids that just scrolled out of the filtered view.
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [startDate, endDate, selectedAccountIds, selectedCategoryId]);
 
   const importMutation = useMutation({
     mutationFn: (rows: ImportRow[]) =>
@@ -122,6 +132,22 @@ export function TransactionsPage() {
     onSuccess: invalidateAfterLink,
   });
 
+  const bulkDeleteTxns = useMutation({
+    mutationFn: (ids: number[]) =>
+      api<{ deleted: number }>("/api/transactions/bulk-delete", {
+        method: "POST",
+        body: { ids },
+      }),
+    onSuccess: () => {
+      setSelectedIds(new Set());
+      setBulkDeleteOpen(false);
+      setBulkDeleteError(null);
+      invalidateAfterLink();
+    },
+    onError: (err) =>
+      setBulkDeleteError(err instanceof Error ? err.message : "Delete failed"),
+  });
+
   // A transfer touches two accounts, so the broad prefix has to go too.
   function invalidateAfterLink() {
     void qc.invalidateQueries({ queryKey: ["transactions"] });
@@ -151,6 +177,15 @@ export function TransactionsPage() {
     });
   }
 
+  function toggleSelected(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   const filteredTxns = (txnsQuery.data ?? []).filter((t) => {
     if (selectedAccountIds.size > 0 && !selectedAccountIds.has(t.account_id)) return false;
     if (selectedCategoryId === "null") {
@@ -162,6 +197,22 @@ export function TransactionsPage() {
     }
     return true;
   });
+
+  const allFilteredSelected =
+    filteredTxns.length > 0 && filteredTxns.every((t) => selectedIds.has(t.id));
+  const someFilteredSelected = filteredTxns.some((t) => selectedIds.has(t.id));
+  const selectAllRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someFilteredSelected && !allFilteredSelected;
+    }
+  }, [someFilteredSelected, allFilteredSelected]);
+
+  function toggleSelectAllFiltered() {
+    setSelectedIds(allFilteredSelected ? new Set() : new Set(filteredTxns.map((t) => t.id)));
+  }
+
+  const selectedTransactions = (txnsQuery.data ?? []).filter((t) => selectedIds.has(t.id));
 
   const accountById = Object.fromEntries(accounts.map((a) => [a.id, a]));
   const categoryById = Object.fromEntries(flatCategories.map((c) => [c.id, c]));
@@ -272,6 +323,34 @@ export function TransactionsPage() {
         )}
       </div>
 
+      {/* Bulk selection action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center justify-between bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl px-5 py-3">
+          <span className="text-sm text-stone-700 dark:text-stone-300">
+            {selectedIds.size} selected
+          </span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="text-sm text-stone-600 dark:text-stone-400 hover:underline px-2 py-1"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setBulkDeleteError(null);
+                setBulkDeleteOpen(true);
+              }}
+              className="bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600 text-white rounded-lg px-4 py-2 text-sm font-medium"
+            >
+              Delete selected
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Transaction table */}
       <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl overflow-hidden">
         {txnsQuery.isLoading && (
@@ -285,6 +364,16 @@ export function TransactionsPage() {
             <table className="w-full text-sm">
               <thead className="text-xs uppercase text-stone-500 dark:text-stone-400">
                 <tr>
+                  <th className="px-5 py-2">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={toggleSelectAllFiltered}
+                      aria-label="Select all filtered transactions"
+                      className="rounded accent-indigo-600"
+                    />
+                  </th>
                   <th className="text-left px-5 py-2">Date</th>
                   <th className="text-left px-5 py-2">Account</th>
                   <th className="text-left px-5 py-2">Payee</th>
@@ -300,6 +389,15 @@ export function TransactionsPage() {
                   const cat = t.category_id !== null ? categoryById[t.category_id] : null;
                   return (
                     <tr key={t.id} className="border-t border-stone-100 dark:border-stone-800">
+                      <td className="px-5 py-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(t.id)}
+                          onChange={() => toggleSelected(t.id)}
+                          aria-label={`Select transaction on ${t.date}`}
+                          className="rounded accent-indigo-600"
+                        />
+                      </td>
                       <td className="px-5 py-2 text-stone-600 dark:text-stone-400">{t.date}</td>
                       <td className="px-5 py-2 text-stone-600 dark:text-stone-400">
                         {account?.name ?? <span className="text-stone-400 dark:text-stone-500">—</span>}
@@ -365,6 +463,18 @@ export function TransactionsPage() {
           </div>
         )}
       </div>
+
+      <BulkDeleteTransactionsConfirmModal
+        selectedTransactions={selectedTransactions}
+        isOpen={bulkDeleteOpen}
+        onClose={() => {
+          setBulkDeleteOpen(false);
+          setBulkDeleteError(null);
+        }}
+        onConfirm={() => bulkDeleteTxns.mutate(Array.from(selectedIds))}
+        isPending={bulkDeleteTxns.isPending}
+        error={bulkDeleteError}
+      />
 
       {editingTransaction && (
         <EditTransactionModal

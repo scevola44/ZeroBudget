@@ -6,6 +6,8 @@ from sqlalchemy import func, select
 from app.deps import CurrentUser, DbSession
 from app.models import Account, Category, CategoryGroup, DeletedExternalTransaction, Transaction
 from app.schemas.transaction import (
+    BulkDeleteRequest,
+    BulkDeleteResponse,
     PayeeTransferSuggestion,
     TransactionCreate,
     TransactionImportRequest,
@@ -642,21 +644,26 @@ async def update_transaction(
     return _to_response(txn, await load_peer_account_ids(db, [txn]))
 
 
-@router.delete("/{txn_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_transaction(
-    txn_id: int, db: DbSession, current_user: CurrentUser
-) -> None:
-    txn = await _owned_transaction(db, current_user.id, txn_id)
-    legs = [txn]
-    if txn.transfer_peer_id is not None:
-        # Half a transfer is never a meaningful record: drop the pair. Break the
-        # links first so neither delete trips the other's foreign key.
-        peer = await db.get(Transaction, txn.transfer_peer_id)
-        txn.transfer_peer_id = None
-        if peer is not None:
-            peer.transfer_peer_id = None
-            legs.append(peer)
-            await db.flush()
+async def _delete_transactions_cascading(
+    db, user_id: int, txns: list[Transaction]
+) -> list[Transaction]:
+    """Expands the given owned transactions to include any transfer peers not
+    already in the set, tombstones bank-imported legs, and deletes
+    everything. Returns every leg actually deleted. Caller commits."""
+    legs_by_id: dict[int, Transaction] = {txn.id: txn for txn in txns}
+    for txn in txns:
+        # Half a transfer is never a meaningful record: drop the pair.
+        if txn.transfer_peer_id is not None and txn.transfer_peer_id not in legs_by_id:
+            peer = await db.get(Transaction, txn.transfer_peer_id)
+            if peer is not None:
+                legs_by_id[peer.id] = peer
+    legs = list(legs_by_id.values())
+
+    # Break the links first so neither delete trips the other's foreign key.
+    for leg in legs:
+        leg.transfer_peer_id = None
+    if legs:
+        await db.flush()
 
     # Tombstone bank-imported rows so the next sync doesn't mistake "the user
     # deleted this" for "never imported" and bring it right back — see
@@ -665,10 +672,35 @@ async def delete_transaction(
         if leg.external_transaction_id is not None:
             db.add(
                 DeletedExternalTransaction(
-                    user_id=current_user.id,
+                    user_id=user_id,
                     external_transaction_id=leg.external_transaction_id,
                 )
             )
     for leg in legs:
         await db.delete(leg)
+    return legs
+
+
+@router.post("/bulk-delete", response_model=BulkDeleteResponse)
+async def bulk_delete_transactions(
+    payload: BulkDeleteRequest, db: DbSession, current_user: CurrentUser
+) -> BulkDeleteResponse:
+    result = await db.execute(
+        select(Transaction).where(
+            Transaction.id.in_(set(payload.ids)),
+            Transaction.user_id == current_user.id,
+        )
+    )
+    txns = list(result.scalars().all())
+    legs = await _delete_transactions_cascading(db, current_user.id, txns)
+    await db.commit()
+    return BulkDeleteResponse(deleted=len(legs))
+
+
+@router.delete("/{txn_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_transaction(
+    txn_id: int, db: DbSession, current_user: CurrentUser
+) -> None:
+    txn = await _owned_transaction(db, current_user.id, txn_id)
+    await _delete_transactions_cascading(db, current_user.id, [txn])
     await db.commit()
