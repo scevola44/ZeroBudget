@@ -103,3 +103,11 @@ class TransactionImportResponse(BaseModel):
 
 class UnassignedCountResponse(BaseModel):
     count: int
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: list[int] = Field(min_length=1)
+
+
+class BulkDeleteResponse(BaseModel):
+    deleted: int

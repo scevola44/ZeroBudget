@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base
 from app.models import Account, DeletedExternalTransaction, Transaction, User
-from app.routers.transactions import delete_transaction
+from app.routers.transactions import _delete_transactions_cascading, delete_transaction
 from tests.conftest import (
     _enable_sqlite_fks,
     create_account,
@@ -329,6 +329,136 @@ async def test_delete_does_not_tombstone_manually_entered_transaction(
         await db_session.execute(select(DeletedExternalTransaction))
     ).scalars().all()
     assert tombstones == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_removes_selected_transactions(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    t1 = await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=-100)
+    t2 = await _add_txn(client, headers, account_id=a, date="2026-04-02", amount=-200)
+    keep = await _add_txn(client, headers, account_id=a, date="2026-04-03", amount=-300)
+
+    r = await client.post(
+        "/api/transactions/bulk-delete", json={"ids": [t1, t2]}, headers=headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"deleted": 2}
+
+    remaining = (await client.get("/api/transactions", headers=headers)).json()
+    assert [t["id"] for t in remaining] == [keep]
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_cascades_to_transfer_peer(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers, "A1")
+    b = await create_account(client, headers, "A2")
+    outflow = await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=-300)
+    inflow = await _add_txn(client, headers, account_id=b, date="2026-04-01", amount=300)
+    link = await client.post(
+        f"/api/transactions/{outflow}/transfer-link",
+        json={"peer_transaction_id": inflow},
+        headers=headers,
+    )
+    assert link.status_code == 200, link.text
+
+    # Only the outflow leg is selected — the inflow peer should still be
+    # cascade-deleted, and reflected in the response count.
+    r = await client.post(
+        "/api/transactions/bulk-delete", json={"ids": [outflow]}, headers=headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"deleted": 2}
+    assert (await client.get("/api/transactions", headers=headers)).json() == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_both_transfer_legs_does_not_double_delete(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers, "A1")
+    b = await create_account(client, headers, "A2")
+    outflow = await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=-300)
+    inflow = await _add_txn(client, headers, account_id=b, date="2026-04-01", amount=300)
+    link = await client.post(
+        f"/api/transactions/{outflow}/transfer-link",
+        json={"peer_transaction_id": inflow},
+        headers=headers,
+    )
+    assert link.status_code == 200, link.text
+
+    # Both legs selected explicitly — should still resolve to exactly 2 deletes.
+    r = await client.post(
+        "/api/transactions/bulk-delete",
+        json={"ids": [outflow, inflow]},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"deleted": 2}
+    assert (await client.get("/api/transactions", headers=headers)).json() == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_ignores_other_users_ids(client: AsyncClient):
+    alice = await register_user(client, "alice@example.com")
+    bob = await register_user(client, "bob@example.com")
+    a = await create_account(client, alice)
+    b = await create_account(client, bob)
+    alice_txn = await _add_txn(client, alice, account_id=a, date="2026-04-01", amount=-100)
+    bob_txn = await _add_txn(client, bob, account_id=b, date="2026-04-01", amount=-100)
+
+    r = await client.post(
+        "/api/transactions/bulk-delete",
+        json={"ids": [alice_txn, bob_txn]},
+        headers=alice,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"deleted": 1}
+    assert (await client.get("/api/transactions", headers=alice)).json() == []
+    remaining_bob = (await client.get("/api/transactions", headers=bob)).json()
+    assert [t["id"] for t in remaining_bob] == [bob_txn]
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_rejects_empty_ids(client: AsyncClient):
+    headers = await register_user(client)
+    r = await client.post("/api/transactions/bulk-delete", json={"ids": []}, headers=headers)
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_tombstones_bank_imported_transactions(db_session: AsyncSession):
+    """Bulk delete must tombstone bank-imported legs the same way single
+    delete does, so a later sync doesn't re-import them."""
+    user = User(email="user@example.com", hashed_password="x")
+    db_session.add(user)
+    await db_session.flush()
+    account = Account(user_id=user.id, name="Checking", type="checking")
+    db_session.add(account)
+    await db_session.flush()
+    external_id = f"{account.id}:ref-1"
+    txn = Transaction(
+        user_id=user.id,
+        account_id=account.id,
+        date=date(2026, 4, 1),
+        amount_cents=-1000,
+        external_transaction_id=external_id,
+    )
+    db_session.add(txn)
+    await db_session.flush()
+
+    legs = await _delete_transactions_cascading(db_session, user.id, [txn])
+    await db_session.commit()
+
+    assert len(legs) == 1
+    tombstone = (
+        await db_session.execute(
+            select(DeletedExternalTransaction).where(
+                DeletedExternalTransaction.external_transaction_id == external_id
+            )
+        )
+    ).scalar_one()
+    assert tombstone.user_id == user.id
 
 
 @pytest.mark.asyncio
