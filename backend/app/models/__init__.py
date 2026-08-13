@@ -9,6 +9,7 @@ from app.models.assignment import MonthlyAssignment
 from app.models.bank_connection import BankAuthRequest, BankConnection
 from app.models.category import Category, CategoryGroup
 from app.models.deleted_external_transaction import DeletedExternalTransaction
+from app.models.scope import Scope
 from app.models.sync_run import SyncRun
 from app.models.transaction import Transaction
 from app.models.user import User
@@ -21,6 +22,7 @@ __all__ = [
     "CategoryGroup",
     "DeletedExternalTransaction",
     "MonthlyAssignment",
+    "Scope",
     "SyncRun",
     "Transaction",
     "User",

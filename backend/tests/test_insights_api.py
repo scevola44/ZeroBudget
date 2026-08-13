@@ -8,9 +8,29 @@ the same numbers the Budget page shows for that month.
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import create_account, create_category, create_group, register_user
+from tests.conftest import (
+    FAMILY,
+    PERSONAL,
+    create_account,
+    create_category,
+    create_group,
+    register_user,
+    scope_id,
+)
 
 APRIL = "2026-04"
+
+
+async def _for_scope(
+    client: AsyncClient, headers: dict, rows: list[dict], scope: str = PERSONAL
+) -> dict:
+    """Pick one scope's entry out of a response list keyed by ``scope_id``."""
+    wanted = await scope_id(client, headers, scope)
+    for row in rows:
+        if row["scope_id"] == wanted:
+            return row
+    raise AssertionError(f"no entry for scope {scope!r}")
+
 
 
 async def _post_transaction(
@@ -70,10 +90,16 @@ async def test_empty_insights_report_zero_for_both_scopes(client: AsyncClient):
     assert body["period"]["start_month"] == APRIL
     assert body["period"]["month_count"] == 1
     assert body["breakdown"]["scope_split"]["total_spent_cents"] == 0
-    for scope in ("personal", "shared"):
-        assert body["breakdown"][scope]["total_spent_cents"] == 0
-        assert body["income_vs_spending"][scope]["income_cents"] == 0
-        assert body["overspending"][scope]["categories"] == []
+    for scope in (PERSONAL, FAMILY):
+        assert (await _for_scope(
+            client, headers, body["breakdown"]["scopes"], scope
+        ))["total_spent_cents"] == 0
+        assert (await _for_scope(
+            client, headers, body["income_vs_spending"], scope
+        ))["income_cents"] == 0
+        assert (await _for_scope(
+            client, headers, body["overspending"]["scopes"], scope
+        ))["categories"] == []
 
 
 @pytest.mark.asyncio
@@ -151,9 +177,9 @@ async def test_a_trivial_dip_into_the_red_is_not_reported(client: AsyncClient):
     await _assign(client, headers, APRIL, groceries, 24_700)
     await _post_transaction(client, headers, account, -25_000, "2026-04-05", groceries)
 
-    overspending = (await _get_insights(client, headers)).json()["overspending"][
-        "personal"
-    ]
+    overspending = await _for_scope(
+        client, headers, (await _get_insights(client, headers)).json()["overspending"]["scopes"]
+    )
 
     assert overspending["categories"] == []
     assert overspending["on_track_count"] == 1
@@ -164,10 +190,10 @@ async def test_personal_and_family_spending_are_reported_separately(
     client: AsyncClient,
 ):
     headers = await register_user(client)
-    personal_account = await create_account(client, headers, "Personal", scope="personal")
-    joint_account = await create_account(client, headers, "Joint", scope="shared")
-    personal_group = await create_group(client, headers, "Daily", scope="personal")
-    family_group = await create_group(client, headers, "Household", scope="shared")
+    personal_account = await create_account(client, headers, "Personal", scope=PERSONAL)
+    joint_account = await create_account(client, headers, "Joint", scope=FAMILY)
+    personal_group = await create_group(client, headers, "Daily", scope=PERSONAL)
+    family_group = await create_group(client, headers, "Household", scope=FAMILY)
     groceries = await create_category(client, headers, personal_group, "Groceries")
     rent = await create_category(client, headers, family_group, "Rent")
 
@@ -178,14 +204,14 @@ async def test_personal_and_family_spending_are_reported_separately(
 
     body = (await _get_insights(client, headers)).json()
 
-    assert body["breakdown"]["personal"]["total_spent_cents"] == 40_000
-    assert body["breakdown"]["shared"]["total_spent_cents"] == 90_000
-    assert body["breakdown"]["scope_split"] == {
-        "personal_spent_cents": 40_000,
-        "shared_spent_cents": 90_000,
-        "total_spent_cents": 130_000,
-    }
-    assert [row["name"] for row in body["breakdown"]["personal"]["categories"]] == [
+    assert (await _for_scope(client, headers, body["breakdown"]["scopes"]))["total_spent_cents"] == 40_000
+    assert (await _for_scope(client, headers, body["breakdown"]["scopes"], FAMILY))["total_spent_cents"] == 90_000
+    assert body["breakdown"]["scope_split"]["total_spent_cents"] == 130_000
+    assert [row["spent_cents"] for row in body["breakdown"]["scope_split"]["scopes"]] == [
+        40_000,
+        90_000,
+    ]
+    assert [row["name"] for row in (await _for_scope(client, headers, body["breakdown"]["scopes"]))["categories"]] == [
         "Groceries"
     ]
 
@@ -201,10 +227,10 @@ async def test_rows_carry_category_and_group_names(client: AsyncClient):
 
     body = (await _get_insights(client, headers)).json()
 
-    category = body["breakdown"]["personal"]["categories"][0]
+    category = (await _for_scope(client, headers, body["breakdown"]["scopes"]))["categories"][0]
     assert category["name"] == "Groceries"
     assert category["group_name"] == "Daily"
-    assert body["breakdown"]["personal"]["groups"][0] == {
+    assert (await _for_scope(client, headers, body["breakdown"]["scopes"]))["groups"][0] == {
         "group_id": group,
         "name": "Daily",
         "spent_cents": 40_000,
@@ -223,8 +249,8 @@ async def test_uncategorized_outflow_never_counts_as_spending(
 
     body = (await _get_insights(client, headers)).json()
 
-    assert body["breakdown"]["personal"]["total_spent_cents"] == 0
-    assert body["breakdown"]["personal"]["categories"] == []
+    assert (await _for_scope(client, headers, body["breakdown"]["scopes"]))["total_spent_cents"] == 0
+    assert (await _for_scope(client, headers, body["breakdown"]["scopes"]))["categories"] == []
 
 
 @pytest.mark.asyncio
@@ -240,7 +266,9 @@ async def test_income_is_uncategorized_inflow_and_spending_is_everything_else(
     await _post_transaction(client, headers, account, -40_000, "2026-04-05", groceries)
     await _post_transaction(client, headers, account, 3_000, "2026-04-09", groceries)
 
-    flow = (await _get_insights(client, headers)).json()["income_vs_spending"]["personal"]
+    flow = await _for_scope(
+        client, headers, (await _get_insights(client, headers)).json()["income_vs_spending"]
+    )
 
     assert flow["income_cents"] == 250_000
     assert flow["spent_cents"] == 40_000
@@ -253,9 +281,13 @@ async def test_income_is_uncategorized_inflow_and_spending_is_everything_else(
 async def test_every_month_of_a_multi_month_range_gets_a_flow_row(client: AsyncClient):
     headers = await register_user(client)
 
-    flow = (
-        await _get_insights(client, headers, start="2026-02", end="2026-04")
-    ).json()["income_vs_spending"]["personal"]
+    flow = await _for_scope(
+        client,
+        headers,
+        (
+            await _get_insights(client, headers, start="2026-02", end="2026-04")
+        ).json()["income_vs_spending"],
+    )
 
     assert [month["month"] for month in flow["months"]] == [
         "2026-02",
@@ -276,7 +308,7 @@ async def test_future_transactions_do_not_affect_the_range(client: AsyncClient):
 
     body = (await _get_insights(client, headers)).json()
 
-    assert body["breakdown"]["personal"]["total_spent_cents"] == 40_000
+    assert (await _for_scope(client, headers, body["breakdown"]["scopes"]))["total_spent_cents"] == 40_000
 
 
 @pytest.mark.asyncio
@@ -293,7 +325,7 @@ async def test_insights_only_see_the_requesting_users_data(client: AsyncClient):
     body = (await _get_insights(client, bob)).json()
 
     assert body["breakdown"]["scope_split"]["total_spent_cents"] == 0
-    assert body["breakdown"]["personal"]["categories"] == []
+    assert (await _for_scope(client, bob, body["breakdown"]["scopes"]))["categories"] == []
 
 
 @pytest.mark.asyncio
@@ -308,9 +340,9 @@ async def test_a_category_whose_available_went_negative_is_flagged(
     await _assign(client, headers, APRIL, groceries, 10_000)
     await _post_transaction(client, headers, account, -25_000, "2026-04-05", groceries)
 
-    overspending = (await _get_insights(client, headers)).json()["overspending"][
-        "personal"
-    ]
+    overspending = await _for_scope(
+        client, headers, (await _get_insights(client, headers)).json()["overspending"]["scopes"]
+    )
 
     assert len(overspending["categories"]) == 1
     row = overspending["categories"][0]
@@ -333,9 +365,9 @@ async def test_a_healthy_category_is_counted_as_on_track_not_listed(
     await _assign(client, headers, APRIL, groceries, 30_000)
     await _post_transaction(client, headers, account, -25_000, "2026-04-05", groceries)
 
-    overspending = (await _get_insights(client, headers)).json()["overspending"][
-        "personal"
-    ]
+    overspending = await _for_scope(
+        client, headers, (await _get_insights(client, headers)).json()["overspending"]["scopes"]
+    )
 
     assert overspending["categories"] == []
     assert overspending["on_track_count"] == 1
@@ -349,9 +381,9 @@ async def test_insights_reconciles_with_the_budget_page_for_the_same_month(
     is the same money the Insights breakdown reports as spending."""
     headers = await register_user(client)
     personal_account = await create_account(client, headers, "Personal")
-    joint_account = await create_account(client, headers, "Joint", scope="shared")
-    personal_group = await create_group(client, headers, "Daily", scope="personal")
-    family_group = await create_group(client, headers, "Household", scope="shared")
+    joint_account = await create_account(client, headers, "Joint", scope=FAMILY)
+    personal_group = await create_group(client, headers, "Daily", scope=PERSONAL)
+    family_group = await create_group(client, headers, "Household", scope=FAMILY)
     groceries = await create_category(client, headers, personal_group, "Groceries")
     fun = await create_category(client, headers, personal_group, "Fun")
     rent = await create_category(client, headers, family_group, "Rent")
@@ -381,8 +413,8 @@ async def test_insights_reconciles_with_the_budget_page_for_the_same_month(
         for group in budget["groups"]
         for category in group["categories"]
     }
-    for scope in ("personal", "shared"):
-        breakdown = insights["breakdown"][scope]
+    for scope in (PERSONAL, FAMILY):
+        breakdown = await _for_scope(client, headers, insights["breakdown"]["scopes"], scope)
         for row in breakdown["categories"]:
             assert row["activity_cents"] == budget_activity[row["category_id"]]
 
@@ -396,9 +428,9 @@ async def test_insights_reconciles_with_the_budget_page_for_the_same_month(
             row["spent_cents"] for row in breakdown["categories"]
         )
 
-    assert insights["breakdown"]["personal"]["total_spent_cents"] == 50_000
-    assert insights["breakdown"]["shared"]["total_spent_cents"] == 90_000
-    assert insights["income_vs_spending"]["personal"]["income_cents"] == 0
+    assert (await _for_scope(client, headers, insights["breakdown"]["scopes"]))["total_spent_cents"] == 50_000
+    assert (await _for_scope(client, headers, insights["breakdown"]["scopes"], FAMILY))["total_spent_cents"] == 90_000
+    assert (await _for_scope(client, headers, insights["income_vs_spending"]))["income_cents"] == 0
 
 
 @pytest.mark.asyncio
@@ -406,8 +438,8 @@ async def test_a_same_scope_transfer_is_neither_income_nor_spending(client: Asyn
     """Before transfers were first-class, the receiving leg read as income and
     the sending leg as uncategorized spending. Both legs must now vanish."""
     headers = await register_user(client)
-    checking = await create_account(client, headers, "Checking", scope="personal")
-    savings = await create_account(client, headers, "Savings", scope="personal")
+    checking = await create_account(client, headers, "Checking", scope=PERSONAL)
+    savings = await create_account(client, headers, "Savings", scope=PERSONAL)
 
     await _post_transaction(client, headers, checking, 250_000, "2026-04-01")
     r = await client.post(
@@ -425,11 +457,11 @@ async def test_a_same_scope_transfer_is_neither_income_nor_spending(client: Asyn
     assert r.status_code == 201, r.text
 
     insights = (await _get_insights(client, headers)).json()
-    flow = insights["income_vs_spending"]["personal"]
+    flow = await _for_scope(client, headers, insights["income_vs_spending"])
 
     assert flow["income_cents"] == 250_000
     assert flow["spent_cents"] == 0
-    assert insights["breakdown"]["personal"]["total_spent_cents"] == 0
+    assert (await _for_scope(client, headers, insights["breakdown"]["scopes"]))["total_spent_cents"] == 0
 
 
 @pytest.mark.asyncio
@@ -441,8 +473,8 @@ async def test_a_cross_scope_transfer_inflow_leg_still_counts_as_income(
     sending leg is unassigned outgoing money like any other, so it never
     counts as spending — not even here."""
     headers = await register_user(client)
-    personal = await create_account(client, headers, "Personal", scope="personal")
-    joint = await create_account(client, headers, "Joint", scope="shared")
+    personal = await create_account(client, headers, "Personal", scope=PERSONAL)
+    joint = await create_account(client, headers, "Joint", scope=FAMILY)
 
     await _post_transaction(client, headers, personal, 250_000, "2026-04-01")
     r = await client.post(
@@ -461,8 +493,8 @@ async def test_a_cross_scope_transfer_inflow_leg_still_counts_as_income(
 
     insights = (await _get_insights(client, headers)).json()
 
-    assert insights["breakdown"]["personal"]["total_spent_cents"] == 0
-    assert insights["income_vs_spending"]["shared"]["income_cents"] == 60_000
+    assert (await _for_scope(client, headers, insights["breakdown"]["scopes"]))["total_spent_cents"] == 0
+    assert (await _for_scope(client, headers, insights["income_vs_spending"], FAMILY))["income_cents"] == 60_000
 
 
 @pytest.mark.asyncio
@@ -477,9 +509,9 @@ async def test_uncategorized_savings_activity_is_excluded_from_income_and_spendi
 
     body = (await _get_insights(client, headers)).json()
 
-    assert body["income_vs_spending"]["personal"]["income_cents"] == 0
-    assert body["income_vs_spending"]["personal"]["spent_cents"] == 0
-    assert body["breakdown"]["personal"]["total_spent_cents"] == 0
+    assert (await _for_scope(client, headers, body["income_vs_spending"]))["income_cents"] == 0
+    assert (await _for_scope(client, headers, body["income_vs_spending"]))["spent_cents"] == 0
+    assert (await _for_scope(client, headers, body["breakdown"]["scopes"]))["total_spent_cents"] == 0
 
 
 @pytest.mark.asyncio
@@ -495,7 +527,7 @@ async def test_categorized_savings_activity_still_appears_in_spending_breakdown(
 
     body = (await _get_insights(client, headers)).json()
 
-    category = body["breakdown"]["personal"]["categories"][0]
+    category = (await _for_scope(client, headers, body["breakdown"]["scopes"]))["categories"][0]
     assert category["name"] == "Groceries"
     assert category["spent_cents"] == 6_000
 
@@ -538,8 +570,8 @@ async def test_a_linked_pair_split_across_months_is_excluded_from_both(
     they no longer cancel each other out inside one month. Both must still drop
     out of income and spending."""
     headers = await register_user(client)
-    checking = await create_account(client, headers, "Checking", scope="personal")
-    savings = await create_account(client, headers, "Savings", scope="personal")
+    checking = await create_account(client, headers, "Checking", scope=PERSONAL)
+    savings = await create_account(client, headers, "Savings", scope=PERSONAL)
 
     await _post_transaction(client, headers, checking, 250_000, "2026-03-01")
     outflow = await _post_and_get_id(client, headers, checking, -60_000, "2026-03-31")
@@ -549,9 +581,9 @@ async def test_a_linked_pair_split_across_months_is_excluded_from_both(
     march = (await _get_insights(client, headers, "2026-03", "2026-03")).json()
     april = (await _get_insights(client, headers, APRIL, APRIL)).json()
 
-    assert march["breakdown"]["personal"]["total_spent_cents"] == 0
-    assert march["income_vs_spending"]["personal"]["income_cents"] == 250_000
-    assert april["income_vs_spending"]["personal"]["income_cents"] == 0
+    assert (await _for_scope(client, headers, march["breakdown"]["scopes"]))["total_spent_cents"] == 0
+    assert (await _for_scope(client, headers, march["income_vs_spending"]))["income_cents"] == 250_000
+    assert (await _for_scope(client, headers, april["income_vs_spending"]))["income_cents"] == 0
 
 
 @pytest.mark.asyncio
@@ -565,8 +597,8 @@ async def test_a_cross_scope_pair_straddling_the_horizon_keeps_its_visible_leg(
     longer needs this guard: unassigned outflow never counts as spending
     regardless of how its peer's scope resolves.)"""
     headers = await register_user(client)
-    personal = await create_account(client, headers, "Personal", scope="personal")
-    joint = await create_account(client, headers, "Joint", scope="shared")
+    personal = await create_account(client, headers, "Personal", scope=PERSONAL)
+    joint = await create_account(client, headers, "Joint", scope=FAMILY)
 
     outflow = await _post_and_get_id(client, headers, personal, -60_000, "2026-03-31")
     inflow = await _post_and_get_id(client, headers, joint, 60_000, "2026-04-02")
@@ -574,4 +606,4 @@ async def test_a_cross_scope_pair_straddling_the_horizon_keeps_its_visible_leg(
 
     april = (await _get_insights(client, headers, APRIL, APRIL)).json()
 
-    assert april["income_vs_spending"]["shared"]["income_cents"] == 60_000
+    assert (await _for_scope(client, headers, april["income_vs_spending"], FAMILY))["income_cents"] == 60_000

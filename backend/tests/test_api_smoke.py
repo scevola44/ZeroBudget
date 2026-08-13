@@ -3,6 +3,8 @@
 import pytest
 from httpx import AsyncClient
 
+from tests.conftest import PERSONAL, ready_to_assign, scope_id
+
 
 async def _register(client: AsyncClient, email: str = "alice@example.com") -> str:
     r = await client.post(
@@ -22,9 +24,12 @@ async def test_full_zero_based_flow(client: AsyncClient):
     assert me.status_code == 200
     assert me.json()["email"] == "alice@example.com"
 
-    # Create an account.
+    # Create an account in the Personal scope seeded at registration.
+    personal = await scope_id(client, headers, PERSONAL)
     acct = await client.post(
-        "/api/accounts", json={"name": "Checking", "type": "checking"}, headers=headers
+        "/api/accounts",
+        json={"name": "Checking", "type": "checking", "scope_id": personal},
+        headers=headers,
     )
     assert acct.status_code == 201, acct.text
     account_id = acct.json()["id"]
@@ -47,7 +52,9 @@ async def test_full_zero_based_flow(client: AsyncClient):
 
     # Create a category group + category.
     group = await client.post(
-        "/api/category-groups", json={"name": "Bills"}, headers=headers
+        "/api/category-groups",
+        json={"name": "Bills", "scope_id": personal},
+        headers=headers,
     )
     assert group.status_code == 201, group.text
     group_id = group.json()["id"]
@@ -69,7 +76,7 @@ async def test_full_zero_based_flow(client: AsyncClient):
     budget = await client.get("/api/budget/2026-04", headers=headers)
     assert budget.status_code == 200, budget.text
     body = budget.json()
-    assert body["personal_ready_to_assign_cents"] == 100_000
+    assert await ready_to_assign(client, headers, body) == 100_000
     assert body["groups"][0]["categories"][0]["name"] == "Rent"
 
     # Assign 600.00 to Rent.
@@ -97,7 +104,7 @@ async def test_full_zero_based_flow(client: AsyncClient):
 
     # Verify the budget view.
     budget = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert budget["personal_ready_to_assign_cents"] == 40_000  # 1000 - 600
+    assert await ready_to_assign(client, headers, budget) == 40_000  # 1000 - 600
     rent_row = budget["groups"][0]["categories"][0]
     assert rent_row["assigned_cents"] == 60_000
     assert rent_row["activity_cents"] == -15_000
@@ -119,12 +126,17 @@ async def test_full_zero_based_flow(client: AsyncClient):
 async def test_users_are_isolated(client: AsyncClient):
     alice = await _register(client, "alice@example.com")
     bob = await _register(client, "bob@example.com")
+    alice_headers = {"Authorization": f"Bearer {alice}"}
 
     # Alice creates an account.
     r = await client.post(
         "/api/accounts",
-        json={"name": "Alice checking", "type": "checking"},
-        headers={"Authorization": f"Bearer {alice}"},
+        json={
+            "name": "Alice checking",
+            "type": "checking",
+            "scope_id": await scope_id(client, alice_headers, PERSONAL),
+        },
+        headers=alice_headers,
     )
     assert r.status_code == 201
 

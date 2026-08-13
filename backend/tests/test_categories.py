@@ -3,7 +3,14 @@
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import create_account, create_category, create_group, register_user
+from tests.conftest import (
+    FAMILY,
+    PERSONAL,
+    create_account,
+    create_category,
+    create_group,
+    register_user,
+)
 
 
 @pytest.mark.asyncio
@@ -206,8 +213,8 @@ async def test_reassigning_across_scopes_is_rejected(client: AsyncClient):
     """The moved transactions would sit in a category whose scope disagrees
     with their account — the state the transaction scope guard prevents."""
     headers = await register_user(client)
-    personal_group = await create_group(client, headers, "Personal", scope="personal")
-    shared_group = await create_group(client, headers, "Family", scope="shared")
+    personal_group = await create_group(client, headers, "Personal", scope=PERSONAL)
+    shared_group = await create_group(client, headers, "Family", scope=FAMILY)
     dining = await create_category(client, headers, personal_group, "Dining")
     joint_food = await create_category(client, headers, shared_group, "Food")
 

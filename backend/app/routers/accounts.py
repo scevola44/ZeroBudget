@@ -3,7 +3,7 @@ from datetime import date
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select
 
-from app.deps import CurrentUser, DbSession
+from app.deps import CurrentUser, DbSession, owned_scope
 from app.models import Account, BankConnection, Transaction
 from app.schemas.account import AccountBalanceUpdate, AccountCreate, AccountResponse, AccountUpdate
 from app.services.synthetic_payees import BALANCE_ADJUSTMENT_PAYEE
@@ -41,7 +41,7 @@ def _to_response(
         id=account.id,
         name=account.name,
         type=account.type,
-        scope=account.scope,
+        scope_id=account.scope_id,
         balance_cents=balance_cents,
         closed=account.closed,
         bank_connection_id=account.bank_connection_id,
@@ -88,7 +88,7 @@ async def list_accounts(db: DbSession, current_user: CurrentUser) -> list[Accoun
                 id=a.id,
                 name=a.name,
                 type=a.type,
-                scope=a.scope,
+                scope_id=a.scope_id,
                 balance_cents=totals.get(a.id, 0),
                 closed=a.closed,
                 bank_connection_id=a.bank_connection_id,
@@ -103,11 +103,12 @@ async def list_accounts(db: DbSession, current_user: CurrentUser) -> list[Accoun
 async def create_account(
     payload: AccountCreate, db: DbSession, current_user: CurrentUser
 ) -> AccountResponse:
+    await owned_scope(db, current_user.id, payload.scope_id)
     account = Account(
         user_id=current_user.id,
         name=payload.name,
         type=payload.type,
-        scope=payload.scope,
+        scope_id=payload.scope_id,
     )
     db.add(account)
     await db.commit()
@@ -134,10 +135,10 @@ async def update_account(
                 detail="Linked account type is managed by the bank and cannot be changed.",
             )
         account.type = payload.type
-    if payload.scope is not None and payload.scope != account.scope:
+    if payload.scope_id is not None and payload.scope_id != account.scope_id:
         # Categorized transactions on this account would land in the wrong
-        # scope pool after the change (a personal-group category attached to
-        # a now-shared account, or vice versa). Require the user to
+        # scope pool after the change (a category from one scope's group
+        # attached to an account now in another). Require the user to
         # uncategorize them first. Uncategorized inflows shift cleanly.
         categorized = await db.scalar(
             select(Transaction.id)
@@ -155,7 +156,8 @@ async def update_account(
                     "transactions. Uncategorize them first."
                 ),
             )
-        account.scope = payload.scope
+        await owned_scope(db, current_user.id, payload.scope_id)
+        account.scope_id = payload.scope_id
     if payload.closed is not None:
         account.closed = payload.closed
     await db.commit()

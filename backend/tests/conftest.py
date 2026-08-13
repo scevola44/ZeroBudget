@@ -28,6 +28,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 from app.db import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import *  # noqa: F401,F403,E402
+from app.models import Scope  # noqa: E402 — named import for the helpers below
 
 
 def _enable_sqlite_fks(dbapi_connection, _connection_record) -> None:
@@ -76,17 +77,53 @@ async def register_user(
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
+PERSONAL = "Personal"
+FAMILY = "Family"
+
+
+async def add_scope(db: AsyncSession, user_id: int, name: str = PERSONAL) -> Scope:
+    """Create a scope for a user built directly through the ORM.
+
+    Tests that go through ``/api/auth/register`` get their scopes seeded for
+    free; the ones that construct a ``User`` row themselves need this.
+    """
+    scope = Scope(user_id=user_id, name=name, sort_order=0)
+    db.add(scope)
+    await db.flush()
+    return scope
+
+
+async def scope_ids(client: AsyncClient, headers: dict[str, str]) -> dict[str, int]:
+    """Name -> id for a user's scopes. Registration seeds Personal and Family."""
+    r = await client.get("/api/scopes", headers=headers)
+    assert r.status_code == 200, r.text
+    return {s["name"]: s["id"] for s in r.json()}
+
+
+async def scope_id(client: AsyncClient, headers: dict[str, str], name: str) -> int:
+    return (await scope_ids(client, headers))[name]
+
+
 async def create_account(
     client: AsyncClient,
     headers: dict[str, str],
     name: str = "Checking",
     *,
-    scope: str = "personal",
+    scope: str = PERSONAL,
     type: str = "checking",
 ) -> int:
+    """Create an account in the scope *named* ``scope``.
+
+    Tests name scopes rather than passing ids so they keep reading as English;
+    the id is resolved here.
+    """
     r = await client.post(
         "/api/accounts",
-        json={"name": name, "type": type, "scope": scope},
+        json={
+            "name": name,
+            "type": type,
+            "scope_id": await scope_id(client, headers, scope),
+        },
         headers=headers,
     )
     assert r.status_code == 201, r.text
@@ -98,15 +135,33 @@ async def create_group(
     headers: dict[str, str],
     name: str = "Bills",
     *,
-    scope: str = "personal",
+    scope: str = PERSONAL,
 ) -> int:
     r = await client.post(
         "/api/category-groups",
-        json={"name": name, "scope": scope},
+        json={"name": name, "scope_id": await scope_id(client, headers, scope)},
         headers=headers,
     )
     assert r.status_code == 201, r.text
     return r.json()["id"]
+
+
+async def ready_to_assign(
+    client: AsyncClient,
+    headers: dict[str, str],
+    budget_body: dict,
+    scope: str = PERSONAL,
+) -> int:
+    """One scope's Ready to Assign, out of an already-fetched budget response.
+
+    The response carries a row per scope keyed by id, so the name the test
+    reads in has to be resolved against the user's scopes.
+    """
+    wanted = await scope_id(client, headers, scope)
+    for row in budget_body["ready_to_assign"]:
+        if row["scope_id"] == wanted:
+            return row["ready_to_assign_cents"]
+    raise AssertionError(f"no ready_to_assign entry for scope {scope!r}")
 
 
 async def create_category(

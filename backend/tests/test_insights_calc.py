@@ -26,7 +26,12 @@ from app.services.insights_calc import (
     median_cents,
 )
 
-SCOPES = ("personal", "shared")
+# Scopes are rows in the database, so these unit tests only need two distinct
+# ids. The names say which pool each stands for.
+PERSONAL = 1
+FAMILY = 2
+
+SCOPES = (PERSONAL, FAMILY)
 GROCERIES = 1
 RENT = 2
 
@@ -40,27 +45,27 @@ def _txn(
     category_id: int | None,
     date: date,
     amount_cents: int,
-    scope: str = "personal",
+    scope_id: int = PERSONAL,
     on_budget: bool = True,
-    transfer_peer_scope: str | None = None,
+    transfer_peer_scope_id: int | None = None,
     transfer_peer_on_budget: bool = True,
 ) -> TxnRow:
     return TxnRow(
         category_id=category_id,
         date=date,
         amount_cents=amount_cents,
-        scope=scope,
+        scope_id=scope_id,
         on_budget=on_budget,
-        transfer_peer_scope=transfer_peer_scope,
+        transfer_peer_scope_id=transfer_peer_scope_id,
         transfer_peer_on_budget=transfer_peer_on_budget,
     )
 
 
 def _assign(
-    *, category_id: int, month: date, amount_cents: int, scope: str = "personal"
+    *, category_id: int, month: date, amount_cents: int, scope_id: int = PERSONAL
 ) -> AssignmentRow:
     return AssignmentRow(
-        category_id=category_id, month=month, amount_cents=amount_cents, scope=scope
+        category_id=category_id, month=month, amount_cents=amount_cents, scope_id=scope_id
     )
 
 
@@ -142,10 +147,10 @@ def test_spending_is_reported_gross_with_refunds_alongside():
     ]
 
     spending = compute_spending_breakdown(
-        transactions, period, {GROCERIES: "personal"}, SCOPES
+        transactions, period, {GROCERIES: PERSONAL}, SCOPES
     )
 
-    groceries = spending["personal"].by_category[GROCERIES]
+    groceries = spending[PERSONAL].by_category[GROCERIES]
     assert groceries.spent_cents == 40_000
     assert groceries.refund_cents == 3_000
     assert groceries.activity_cents == -37_000
@@ -158,11 +163,11 @@ def test_a_refund_only_month_has_zero_spending_never_negative():
     ]
 
     spending = compute_spending_breakdown(
-        transactions, period, {GROCERIES: "personal"}, SCOPES
+        transactions, period, {GROCERIES: PERSONAL}, SCOPES
     )
 
-    assert spending["personal"].by_category[GROCERIES].spent_cents == 0
-    assert spending["personal"].total_spent_cents == 0
+    assert spending[PERSONAL].by_category[GROCERIES].spent_cents == 0
+    assert spending[PERSONAL].total_spent_cents == 0
 
 
 def test_uncategorized_outflow_never_counts_as_spending():
@@ -173,11 +178,11 @@ def test_uncategorized_outflow_never_counts_as_spending():
     ]
 
     spending = compute_spending_breakdown(
-        transactions, period, {GROCERIES: "personal"}, SCOPES
+        transactions, period, {GROCERIES: PERSONAL}, SCOPES
     )
 
-    assert set(spending["personal"].by_category) == {GROCERIES}
-    assert spending["personal"].total_spent_cents == 40_000
+    assert set(spending[PERSONAL].by_category) == {GROCERIES}
+    assert spending[PERSONAL].total_spent_cents == 40_000
 
 
 def test_uncategorized_inflow_is_income_and_never_spending():
@@ -188,23 +193,23 @@ def test_uncategorized_inflow_is_income_and_never_spending():
 
     spending = compute_spending_breakdown(transactions, period, {}, SCOPES)
 
-    assert spending["personal"].total_spent_cents == 0
+    assert spending[PERSONAL].total_spent_cents == 0
 
 
 def test_scopes_are_reported_separately_and_never_merged():
     period = _range(_month(2026, 4), _month(2026, 4))
     transactions = [
         _txn(category_id=GROCERIES, date=date(2026, 4, 5), amount_cents=-40_000),
-        _txn(category_id=RENT, date=date(2026, 4, 5), amount_cents=-90_000, scope="shared"),
+        _txn(category_id=RENT, date=date(2026, 4, 5), amount_cents=-90_000, scope_id=FAMILY),
     ]
 
     spending = compute_spending_breakdown(
-        transactions, period, {GROCERIES: "personal", RENT: "shared"}, SCOPES
+        transactions, period, {GROCERIES: PERSONAL, RENT: FAMILY}, SCOPES
     )
 
-    assert spending["personal"].total_spent_cents == 40_000
-    assert spending["shared"].total_spent_cents == 90_000
-    assert RENT not in spending["personal"].by_category
+    assert spending[PERSONAL].total_spent_cents == 40_000
+    assert spending[FAMILY].total_spent_cents == 90_000
+    assert RENT not in spending[PERSONAL].by_category
 
 
 def test_categorized_spending_follows_its_category_group_not_its_account():
@@ -216,14 +221,14 @@ def test_categorized_spending_follows_its_category_group_not_its_account():
             category_id=RENT,
             date=date(2026, 4, 5),
             amount_cents=-90_000,
-            scope="personal",
+            scope_id=PERSONAL,
         )
     ]
 
-    spending = compute_spending_breakdown(transactions, period, {RENT: "shared"}, SCOPES)
+    spending = compute_spending_breakdown(transactions, period, {RENT: FAMILY}, SCOPES)
 
-    assert spending["shared"].total_spent_cents == 90_000
-    assert spending["personal"].total_spent_cents == 0
+    assert spending[FAMILY].total_spent_cents == 90_000
+    assert spending[PERSONAL].total_spent_cents == 0
 
 
 def test_uncategorized_off_budget_outflow_is_excluded_from_spending_breakdown():
@@ -236,7 +241,7 @@ def test_uncategorized_off_budget_outflow_is_excluded_from_spending_breakdown():
 
     spending = compute_spending_breakdown(transactions, period, {}, SCOPES)
 
-    assert spending["personal"].total_spent_cents == 0
+    assert spending[PERSONAL].total_spent_cents == 0
 
 
 def test_uncategorized_off_budget_inflow_is_not_income():
@@ -247,7 +252,7 @@ def test_uncategorized_off_budget_inflow_is_not_income():
 
     spending = compute_spending_breakdown(transactions, period, {}, SCOPES)
 
-    assert spending["personal"].total_spent_cents == 0
+    assert spending[PERSONAL].total_spent_cents == 0
 
 
 def test_categorized_activity_in_off_budget_account_still_counts_as_spending():
@@ -262,10 +267,10 @@ def test_categorized_activity_in_off_budget_account_still_counts_as_spending():
     ]
 
     spending = compute_spending_breakdown(
-        transactions, period, {GROCERIES: "personal"}, SCOPES
+        transactions, period, {GROCERIES: PERSONAL}, SCOPES
     )
 
-    assert spending["personal"].by_category[GROCERIES].spent_cents == 40_000
+    assert spending[PERSONAL].by_category[GROCERIES].spent_cents == 40_000
 
 
 def test_transactions_outside_the_period_are_excluded():
@@ -277,10 +282,10 @@ def test_transactions_outside_the_period_are_excluded():
     ]
 
     spending = compute_spending_breakdown(
-        transactions, period, {GROCERIES: "personal"}, SCOPES
+        transactions, period, {GROCERIES: PERSONAL}, SCOPES
     )
 
-    assert spending["personal"].by_category[GROCERIES].spent_cents == 20_000
+    assert spending[PERSONAL].by_category[GROCERIES].spent_cents == 20_000
 
 
 def test_an_empty_period_reports_zero_for_both_scopes():
@@ -288,8 +293,8 @@ def test_an_empty_period_reports_zero_for_both_scopes():
 
     spending = compute_spending_breakdown([], period, {}, SCOPES)
 
-    assert spending["personal"].total_spent_cents == 0
-    assert spending["shared"].total_spent_cents == 0
+    assert spending[PERSONAL].total_spent_cents == 0
+    assert spending[FAMILY].total_spent_cents == 0
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +305,7 @@ def test_an_empty_period_reports_zero_for_both_scopes():
 def test_every_month_gets_a_row_even_with_no_activity():
     period = _range(_month(2026, 4), _month(2026, 6))
 
-    flows = flow_by_month([], period, "personal", {})
+    flows = flow_by_month([], period, PERSONAL, {})
 
     assert [flow.month for flow in flows] == [
         _month(2026, 4),
@@ -320,7 +325,7 @@ def test_net_flow_equals_the_sum_of_every_amount_in_the_scope():
         _txn(category_id=GROCERIES, date=date(2026, 4, 9), amount_cents=3_000),
     ]
 
-    flow = flow_by_month(transactions, period, "personal", {GROCERIES: "personal"})[0]
+    flow = flow_by_month(transactions, period, PERSONAL, {GROCERIES: PERSONAL})[0]
 
     assert flow.income_cents == 250_000
     assert flow.spent_cents == 40_000
@@ -339,7 +344,7 @@ def test_uncategorized_outflow_is_excluded_from_net_flow():
         _txn(category_id=None, date=date(2026, 4, 6), amount_cents=-5_000),
     ]
 
-    flow = flow_by_month(transactions, period, "personal", {GROCERIES: "personal"})[0]
+    flow = flow_by_month(transactions, period, PERSONAL, {GROCERIES: PERSONAL})[0]
 
     assert flow.spent_cents == 40_000
     assert flow.income_cents == 0
@@ -350,12 +355,12 @@ def test_flows_are_isolated_per_scope():
     transactions = [
         _txn(category_id=None, date=date(2026, 4, 1), amount_cents=250_000),
         _txn(
-            category_id=None, date=date(2026, 4, 1), amount_cents=90_000, scope="shared"
+            category_id=None, date=date(2026, 4, 1), amount_cents=90_000, scope_id=FAMILY
         ),
     ]
 
-    assert flow_by_month(transactions, period, "personal", {})[0].income_cents == 250_000
-    assert flow_by_month(transactions, period, "shared", {})[0].income_cents == 90_000
+    assert flow_by_month(transactions, period, PERSONAL, {})[0].income_cents == 250_000
+    assert flow_by_month(transactions, period, FAMILY, {})[0].income_cents == 90_000
 
 
 def test_flows_derive_scope_the_same_way_the_breakdown_does():
@@ -366,14 +371,14 @@ def test_flows_derive_scope_the_same_way_the_breakdown_does():
             category_id=RENT,
             date=date(2026, 4, 5),
             amount_cents=-90_000,
-            scope="personal",
+            scope_id=PERSONAL,
         )
     ]
 
-    assert flow_by_month(transactions, period, "shared", {RENT: "shared"})[
+    assert flow_by_month(transactions, period, FAMILY, {RENT: FAMILY})[
         0
     ].spent_cents == 90_000
-    assert flow_by_month(transactions, period, "personal", {RENT: "shared"})[
+    assert flow_by_month(transactions, period, PERSONAL, {RENT: FAMILY})[
         0
     ].spent_cents == 0
 
@@ -386,12 +391,12 @@ def test_monthly_spending_sums_to_the_breakdown_total():
         _txn(category_id=None, date=date(2026, 6, 5), amount_cents=-5_000),
     ]
 
-    flows = flow_by_month(transactions, period, "personal", {GROCERIES: "personal"})
+    flows = flow_by_month(transactions, period, PERSONAL, {GROCERIES: PERSONAL})
     spending = compute_spending_breakdown(
-        transactions, period, {GROCERIES: "personal"}, SCOPES
+        transactions, period, {GROCERIES: PERSONAL}, SCOPES
     )
 
-    assert sum(flow.spent_cents for flow in flows) == spending["personal"].total_spent_cents
+    assert sum(flow.spent_cents for flow in flows) == spending[PERSONAL].total_spent_cents
 
 
 def test_uncategorized_off_budget_inflow_contributes_no_income():
@@ -400,7 +405,7 @@ def test_uncategorized_off_budget_inflow_contributes_no_income():
         _txn(category_id=None, date=date(2026, 4, 1), amount_cents=250_000, on_budget=False),
     ]
 
-    flow = flow_by_month(transactions, period, "personal", {})[0]
+    flow = flow_by_month(transactions, period, PERSONAL, {})[0]
 
     assert flow.income_cents == 0
     assert flow.spent_cents == 0
@@ -416,11 +421,11 @@ def test_same_scope_transfer_between_two_on_budget_accounts_is_not_income():
             category_id=None,
             date=date(2026, 4, 2),
             amount_cents=60_000,
-            transfer_peer_scope="personal",
+            transfer_peer_scope_id=PERSONAL,
         ),
     ]
 
-    flow = flow_by_month(transactions, period, "personal", {})[0]
+    flow = flow_by_month(transactions, period, PERSONAL, {})[0]
 
     assert flow.income_cents == 0
 
@@ -434,12 +439,12 @@ def test_same_scope_transfer_from_savings_into_checking_is_income():
             category_id=None,
             date=date(2026, 4, 2),
             amount_cents=60_000,
-            transfer_peer_scope="personal",
+            transfer_peer_scope_id=PERSONAL,
             transfer_peer_on_budget=False,
         ),
     ]
 
-    flow = flow_by_month(transactions, period, "personal", {})[0]
+    flow = flow_by_month(transactions, period, PERSONAL, {})[0]
 
     assert flow.income_cents == 60_000
 
@@ -453,7 +458,7 @@ def test_uncategorized_off_budget_outflow_is_excluded_not_counted_as_spent():
         _txn(category_id=None, date=date(2026, 4, 6), amount_cents=-5_000, on_budget=False),
     ]
 
-    flow = flow_by_month(transactions, period, "personal", {})[0]
+    flow = flow_by_month(transactions, period, PERSONAL, {})[0]
 
     assert flow.spent_cents == 0
     assert flow.income_cents == 0
@@ -471,7 +476,7 @@ def test_categorized_activity_in_off_budget_account_still_flows_normally():
         ),
     ]
 
-    flow = flow_by_month(transactions, period, "personal", {GROCERIES: "personal"})[0]
+    flow = flow_by_month(transactions, period, PERSONAL, {GROCERIES: PERSONAL})[0]
 
     assert flow.spent_cents == 40_000
 
@@ -857,7 +862,7 @@ def test_period_activity_matches_the_sum_of_monthly_budget_activity():
     period = _range(_month(2026, 1), _month(2026, 6))
 
     spending = compute_spending_breakdown(
-        transactions, period, {GROCERIES: "personal", RENT: "personal"}, SCOPES
+        transactions, period, {GROCERIES: PERSONAL, RENT: PERSONAL}, SCOPES
     )
 
     for category_id in (GROCERIES, RENT):
@@ -867,7 +872,7 @@ def test_period_activity_matches_the_sum_of_monthly_budget_activity():
             )[category_id].activity_cents
             for offset in range(6)
         )
-        assert spending["personal"].by_category[category_id].activity_cents == monthly_activity
+        assert spending[PERSONAL].by_category[category_id].activity_cents == monthly_activity
 
 
 def test_period_assigned_matches_the_sum_of_monthly_budget_assigned():

@@ -15,7 +15,6 @@ from collections.abc import Sequence
 from sqlalchemy import select
 
 from app.models import Transaction
-from app.models.scope import PERSONAL
 from app.services.budget_calc import TxnRow
 
 
@@ -40,52 +39,56 @@ async def load_peer_account_ids(
 
 def build_txn_rows(
     transactions: Sequence[Transaction],
-    account_scope: dict[int, str],
+    account_scope_id: dict[int, int],
     account_on_budget: dict[int, bool],
     peer_account_id: dict[int, int],
 ) -> list[TxnRow]:
     """Join each transaction to its account's scope and its transfer peer's.
 
-    ``peer_account_id`` covers every ``transfer_peer_id`` in ``transactions`` —
-    build it with ``load_peer_account_ids``.
+    ``account_scope_id`` and ``account_on_budget`` must cover every account the
+    rows reference — both routers build them from all of the user's accounts —
+    and ``peer_account_id`` every ``transfer_peer_id`` in ``transactions``, via
+    ``load_peer_account_ids``. A missing account is a caller bug and raises
+    rather than being silently defaulted into some arbitrary pool.
     """
-    own_scope: dict[int, str] = {
-        t.id: account_scope.get(t.account_id, PERSONAL) for t in transactions
+    own_scope_id: dict[int, int] = {
+        t.id: account_scope_id[t.account_id] for t in transactions
     }
     own_on_budget: dict[int, bool] = {
-        t.id: account_on_budget.get(t.account_id, True) for t in transactions
+        t.id: account_on_budget[t.account_id] for t in transactions
     }
 
-    def peer_scope(txn: Transaction) -> str | None:
+    def peer_scope_id(txn: Transaction) -> int | None:
         if txn.transfer_peer_id is None:
             return None
         account_id = peer_account_id.get(txn.transfer_peer_id)
         if account_id is None:
-            # Should the peer be missing anyway, falling back to this row's own
+            # A peer outside the queried window is genuinely reachable (the two
+            # legs can fall in different months). Falling back to this row's own
             # scope marks the leg same-scope and excludes it from Ready to
             # Assign — the conservative reading of a transfer whose other half
             # isn't visible.
-            return own_scope[txn.id]
-        return account_scope.get(account_id, PERSONAL)
+            return own_scope_id[txn.id]
+        return account_scope_id[account_id]
 
     def peer_on_budget(txn: Transaction) -> bool:
         if txn.transfer_peer_id is None:
             return True
         account_id = peer_account_id.get(txn.transfer_peer_id)
         if account_id is None:
-            # Same conservative fallback as ``peer_scope``: matching this
+            # Same conservative fallback as ``peer_scope_id``: matching this
             # row's own on-budget status keeps the leg excluded from Ready to
             # Assign when the other half isn't visible.
             return own_on_budget[txn.id]
-        return account_on_budget.get(account_id, True)
+        return account_on_budget[account_id]
 
     return [
         TxnRow(
             category_id=t.category_id,
             date=t.date,
             amount_cents=t.amount_cents,
-            scope=own_scope[t.id],
-            transfer_peer_scope=peer_scope(t),
+            scope_id=own_scope_id[t.id],
+            transfer_peer_scope_id=peer_scope_id(t),
             on_budget=own_on_budget[t.id],
             transfer_peer_on_budget=peer_on_budget(t),
         )

@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.deps import CurrentUser, DbSession
+from app.deps import CurrentUser, DbSession, owned_scope
 from app.models import Account, BankAuthRequest, BankConnection, SyncRun
 from app.schemas.banking import (
     AspspResponse,
@@ -132,6 +132,10 @@ async def start_connection(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="ENABLE_BANKING_REDIRECT_URL is not configured.",
         )
+    # Before the redirect is minted at the bank: an unusable scope should fail
+    # here, not after the user has authorized at their bank's site.
+    await owned_scope(db, current_user.id, payload.scope_id)
+
     state = uuid.uuid4().hex
     try:
         authorization_url = await banking.start_auth(
@@ -149,7 +153,7 @@ async def start_connection(
             state=state,
             aspsp_name=payload.aspsp_name,
             aspsp_country=payload.aspsp_country.upper(),
-            scope=payload.scope,
+            scope_id=payload.scope_id,
         )
     )
     await db.commit()
@@ -357,7 +361,7 @@ async def complete_connection(
             user_id=current_user.id,
             name=_account_display_name(raw, auth_request.aspsp_name),
             type="checking",
-            scope=auth_request.scope,
+            scope_id=auth_request.scope_id,
             bank_connection_id=connection.id,
             bank_account_uid=raw.get("uid"),
             bank_account_mask=mask,

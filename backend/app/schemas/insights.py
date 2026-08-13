@@ -2,7 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from app.models.scope import Scope
 
 OverspendFlag = Literal[
     "spent_above_usual",
@@ -43,29 +42,32 @@ class GroupSpendingRow(BaseModel):
 
 
 class ScopeBreakdown(BaseModel):
-    scope: Scope
+    scope_id: int
     total_spent_cents: int
     groups: list[GroupSpendingRow]  # descending by spent_cents
     categories: list[CategorySpendingRow]  # descending by spent_cents
 
 
+class ScopeSplitRow(BaseModel):
+    scope_id: int
+    spent_cents: int
+
+
 class ScopeSplit(BaseModel):
     """The only cross-scope aggregate on this page.
 
-    It exists so the user can see how spending divides between their two pools,
+    It exists so the user can see how spending divides between their pools,
     which is a labelled split rather than the silent merge ROADMAP invariant 1
     forbids. Every other figure stays inside one scope.
     """
 
-    personal_spent_cents: int
-    shared_spent_cents: int
+    scopes: list[ScopeSplitRow]
     total_spent_cents: int
 
 
 class SpendingBreakdown(BaseModel):
     scope_split: ScopeSplit
-    personal: ScopeBreakdown
-    shared: ScopeBreakdown
+    scopes: list[ScopeBreakdown]
 
 
 class MonthFlowRow(BaseModel):
@@ -77,17 +79,12 @@ class MonthFlowRow(BaseModel):
 
 
 class ScopeFlow(BaseModel):
-    scope: Scope
+    scope_id: int
     income_cents: int
     spent_cents: int
     refund_cents: int
     net_cents: int
     months: list[MonthFlowRow]  # one per month in the period, chronological
-
-
-class IncomeVsSpending(BaseModel):
-    personal: ScopeFlow
-    shared: ScopeFlow
 
 
 class CategoryTrendRow(BaseModel):
@@ -110,7 +107,7 @@ class CategoryTrendRow(BaseModel):
 
 
 class ScopeOverspending(BaseModel):
-    scope: Scope
+    scope_id: int
     categories: list[CategoryTrendRow]  # flagged only, most severe first
     on_track_count: int
 
@@ -121,12 +118,13 @@ class Overspending(BaseModel):
     threshold_pct: float
     min_notable_cents: int
     min_baseline_months: int
-    personal: ScopeOverspending
-    shared: ScopeOverspending
+    scopes: list[ScopeOverspending]
 
 
 class InsightsResponse(BaseModel):
     period: InsightsPeriod
     breakdown: SpendingBreakdown
-    income_vs_spending: IncomeVsSpending
+    # One flow per scope, same order as everywhere else on this page. The
+    # two-field wrapper this replaced had nothing left to hold.
+    income_vs_spending: list[ScopeFlow]
     overspending: Overspending

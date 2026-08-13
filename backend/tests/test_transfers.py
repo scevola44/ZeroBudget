@@ -9,7 +9,15 @@ cross scope genuinely moves money between pools.
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import create_account, create_category, create_group, register_user
+from tests.conftest import (
+    FAMILY,
+    PERSONAL,
+    create_account,
+    create_category,
+    create_group,
+    ready_to_assign,
+    register_user,
+)
 
 TRANSFER_CENTS = 60_000
 SALARY_CENTS = 100_000
@@ -60,7 +68,10 @@ async def _add_inflow(
 
 async def _ready_to_assign(client: AsyncClient, headers: dict, month: str = "2026-04") -> tuple:
     body = (await client.get(f"/api/budget/{month}", headers=headers)).json()
-    return body["personal_ready_to_assign_cents"], body["shared_ready_to_assign_cents"]
+    return (
+        await ready_to_assign(client, headers, body),
+        await ready_to_assign(client, headers, body, FAMILY),
+    )
 
 
 @pytest.mark.asyncio
@@ -242,8 +253,8 @@ async def test_deleting_one_leg_removes_the_pair(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_same_scope_transfer_leaves_both_pools_untouched(client: AsyncClient):
     headers = await register_user(client)
-    checking = await create_account(client, headers, "Checking", scope="personal")
-    savings = await create_account(client, headers, "Savings", scope="personal")
+    checking = await create_account(client, headers, "Checking", scope=PERSONAL)
+    savings = await create_account(client, headers, "Savings", scope=PERSONAL)
     await _add_inflow(client, headers, checking, SALARY_CENTS, "2026-04-01")
 
     before = await _ready_to_assign(client, headers)
@@ -257,8 +268,8 @@ async def test_same_scope_transfer_leaves_both_pools_untouched(client: AsyncClie
 @pytest.mark.asyncio
 async def test_cross_scope_transfer_moves_exactly_the_amount(client: AsyncClient):
     headers = await register_user(client)
-    personal = await create_account(client, headers, "Personal", scope="personal")
-    joint = await create_account(client, headers, "Joint", scope="shared")
+    personal = await create_account(client, headers, "Personal", scope=PERSONAL)
+    joint = await create_account(client, headers, "Joint", scope=FAMILY)
     await _add_inflow(client, headers, personal, SALARY_CENTS, "2026-04-01")
 
     await _transfer(client, headers, personal, joint)
@@ -271,8 +282,8 @@ async def test_cross_scope_transfer_moves_exactly_the_amount(client: AsyncClient
 @pytest.mark.asyncio
 async def test_deleting_a_cross_scope_transfer_restores_both_pools(client: AsyncClient):
     headers = await register_user(client)
-    personal = await create_account(client, headers, "Personal", scope="personal")
-    joint = await create_account(client, headers, "Joint", scope="shared")
+    personal = await create_account(client, headers, "Personal", scope=PERSONAL)
+    joint = await create_account(client, headers, "Joint", scope=FAMILY)
     await _add_inflow(client, headers, personal, SALARY_CENTS, "2026-04-01")
     body = await _transfer(client, headers, personal, joint)
 

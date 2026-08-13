@@ -3,7 +3,17 @@
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import create_account, create_category, create_group, register_user
+from tests.conftest import (
+    FAMILY,
+    PERSONAL,
+    create_account,
+    create_category,
+    create_group,
+    ready_to_assign,
+    register_user,
+    scope_id,
+    scope_ids,
+)
 
 
 async def _add_inflow(
@@ -88,7 +98,7 @@ async def test_empty_budget_has_zero_ready_to_assign(client: AsyncClient):
     assert r.status_code == 200
     body = r.json()
     assert body["month"] == "2026-04"
-    assert body["personal_ready_to_assign_cents"] == 0
+    assert await ready_to_assign(client, headers, body) == 0
     assert body["groups"] == []
 
 
@@ -103,7 +113,7 @@ async def test_ready_to_assign_flagged_inflow_contributes_like_a_plain_one(clien
     await _add_inflow(client, headers, account, 30_000, "2026-04-02", is_ready_to_assign=True)
 
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 80_000
+    assert await ready_to_assign(client, headers, body) == 80_000
 
 
 @pytest.mark.asyncio
@@ -120,7 +130,7 @@ async def test_assign_upsert_overwrites_previous_value(client: AsyncClient):
     await _assign(client, headers, "2026-04", cat, 70_000)
 
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 30_000  # 1000 - 700, NOT 1000 - 300 - 700
+    assert await ready_to_assign(client, headers, body) == 30_000  # 1000 - 700, NOT 1000 - 300 - 700
     rent_row = body["groups"][0]["categories"][0]
     assert rent_row["assigned_cents"] == 70_000
 
@@ -137,7 +147,7 @@ async def test_assign_can_reduce_to_zero(client: AsyncClient):
     await _assign(client, headers, "2026-04", cat, 0)
 
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 100_000
+    assert await ready_to_assign(client, headers, body) == 100_000
     assert body["groups"][0]["categories"][0]["assigned_cents"] == 0
 
 
@@ -181,7 +191,7 @@ async def test_multi_group_budget_response_shape(client: AsyncClient):
     await _assign(client, headers, "2026-04", concerts, 20_000)
 
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 110_000
+    assert await ready_to_assign(client, headers, body) == 110_000
 
     groups = {g["name"]: g for g in body["groups"]}
     assert set(groups) == {"Bills", "Fun"}
@@ -372,31 +382,38 @@ async def test_future_assignment_reduces_past_month_ready_to_assign(client: Asyn
 
     april = (await client.get("/api/budget/2026-04", headers=headers)).json()
     may = (await client.get("/api/budget/2026-05", headers=headers)).json()
-    assert april["personal_ready_to_assign_cents"] == 60_000
-    assert may["personal_ready_to_assign_cents"] == 60_000
+    assert await ready_to_assign(client, headers, april) == 60_000
+    assert await ready_to_assign(client, headers, may) == 60_000
 
 
 @pytest.mark.asyncio
-async def test_budget_response_carries_both_rta_fields_and_group_scope(client: AsyncClient):
+async def test_budget_response_carries_one_rta_entry_per_scope_and_group_scope(
+    client: AsyncClient,
+):
     headers = await register_user(client)
-    await create_group(client, headers, "Hobbies", scope="personal")
-    await create_group(client, headers, "Family", scope="shared")
+    await create_group(client, headers, "Hobbies", scope=PERSONAL)
+    await create_group(client, headers, "Family", scope=FAMILY)
 
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 0
-    assert body["shared_ready_to_assign_cents"] == 0
+    assert await ready_to_assign(client, headers, body) == 0
+    assert await ready_to_assign(client, headers, body, FAMILY) == 0
+    scopes = await scope_ids(client, headers)
+    assert [row["scope_id"] for row in body["ready_to_assign"]] == [
+        scopes[PERSONAL],
+        scopes[FAMILY],
+    ]
     by_name = {g["name"]: g for g in body["groups"]}
-    assert by_name["Hobbies"]["scope"] == "personal"
-    assert by_name["Family"]["scope"] == "shared"
+    assert by_name["Hobbies"]["scope_id"] == scopes[PERSONAL]
+    assert by_name["Family"]["scope_id"] == scopes[FAMILY]
 
 
 @pytest.mark.asyncio
 async def test_personal_and_shared_rta_are_independent_pools(client: AsyncClient):
     headers = await register_user(client)
-    personal_account = await create_account(client, headers, "Personal", scope="personal")
-    shared_account = await create_account(client, headers, "Joint", scope="shared")
-    personal_group = await create_group(client, headers, "Hobbies", scope="personal")
-    shared_group = await create_group(client, headers, "Family", scope="shared")
+    personal_account = await create_account(client, headers, "Personal", scope=PERSONAL)
+    shared_account = await create_account(client, headers, "Joint", scope=FAMILY)
+    personal_group = await create_group(client, headers, "Hobbies", scope=PERSONAL)
+    shared_group = await create_group(client, headers, "Family", scope=FAMILY)
     hobbies = await create_category(client, headers, personal_group, "Hobbies")
     groceries = await create_category(client, headers, shared_group, "Groceries")
 
@@ -406,15 +423,15 @@ async def test_personal_and_shared_rta_are_independent_pools(client: AsyncClient
     await _assign(client, headers, "2026-04", groceries, 50_000)
 
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 70_000
-    assert body["shared_ready_to_assign_cents"] == 30_000
+    assert await ready_to_assign(client, headers, body) == 70_000
+    assert await ready_to_assign(client, headers, body, FAMILY) == 30_000
 
 
 @pytest.mark.asyncio
 async def test_transfer_pair_moves_money_between_pools(client: AsyncClient):
     headers = await register_user(client)
-    personal_account = await create_account(client, headers, "Personal", scope="personal")
-    shared_account = await create_account(client, headers, "Joint", scope="shared")
+    personal_account = await create_account(client, headers, "Personal", scope=PERSONAL)
+    shared_account = await create_account(client, headers, "Joint", scope=FAMILY)
 
     await _add_inflow(client, headers, personal_account, 100_000, "2026-04-01")
     # Transfer pair: -600 from personal, +600 into shared, both uncategorized.
@@ -422,15 +439,15 @@ async def test_transfer_pair_moves_money_between_pools(client: AsyncClient):
     await _add_inflow(client, headers, shared_account, 60_000, "2026-04-02")
 
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 40_000
-    assert body["shared_ready_to_assign_cents"] == 60_000
+    assert await ready_to_assign(client, headers, body) == 40_000
+    assert await ready_to_assign(client, headers, body, FAMILY) == 60_000
 
 
 @pytest.mark.asyncio
 async def test_cross_scope_transaction_is_rejected(client: AsyncClient):
     headers = await register_user(client)
-    personal_account = await create_account(client, headers, "Personal", scope="personal")
-    shared_group = await create_group(client, headers, "Family", scope="shared")
+    personal_account = await create_account(client, headers, "Personal", scope=PERSONAL)
+    shared_group = await create_group(client, headers, "Family", scope=FAMILY)
     groceries = await create_category(client, headers, shared_group, "Groceries")
 
     r = await client.post(
@@ -454,7 +471,7 @@ async def test_uncategorized_transaction_across_scopes_is_allowed(client: AsyncC
     """The strict scope guard must not break inflows or transfers, which are
     intentionally uncategorized."""
     headers = await register_user(client)
-    shared_account = await create_account(client, headers, "Joint", scope="shared")
+    shared_account = await create_account(client, headers, "Joint", scope=FAMILY)
 
     r = await client.post(
         "/api/transactions",
@@ -474,8 +491,8 @@ async def test_uncategorized_transaction_across_scopes_is_allowed(client: AsyncC
 @pytest.mark.asyncio
 async def test_account_scope_change_blocked_when_categorized_txns_exist(client: AsyncClient):
     headers = await register_user(client)
-    account = await create_account(client, headers, "A", scope="personal")
-    group = await create_group(client, headers, "G", scope="personal")
+    account = await create_account(client, headers, "A", scope=PERSONAL)
+    group = await create_group(client, headers, "G", scope=PERSONAL)
     cat = await create_category(client, headers, group)
 
     r = await client.post(
@@ -493,7 +510,9 @@ async def test_account_scope_change_blocked_when_categorized_txns_exist(client: 
     assert r.status_code == 201
 
     r = await client.patch(
-        f"/api/accounts/{account}", json={"scope": "shared"}, headers=headers
+        f"/api/accounts/{account}",
+        json={"scope_id": await scope_id(client, headers, FAMILY)},
+        headers=headers,
     )
     assert r.status_code == 400
     assert "categorized" in r.json()["detail"].lower()
@@ -502,28 +521,31 @@ async def test_account_scope_change_blocked_when_categorized_txns_exist(client: 
 @pytest.mark.asyncio
 async def test_account_scope_change_allowed_when_only_uncategorized_txns(client: AsyncClient):
     headers = await register_user(client)
-    account = await create_account(client, headers, "A", scope="personal")
+    account = await create_account(client, headers, "A", scope=PERSONAL)
     await _add_inflow(client, headers, account, 50_000, "2026-04-01")
 
+    family = await scope_id(client, headers, FAMILY)
     r = await client.patch(
-        f"/api/accounts/{account}", json={"scope": "shared"}, headers=headers
+        f"/api/accounts/{account}", json={"scope_id": family}, headers=headers
     )
     assert r.status_code == 200, r.text
-    assert r.json()["scope"] == "shared"
+    assert r.json()["scope_id"] == family
 
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 0
-    assert body["shared_ready_to_assign_cents"] == 50_000
+    assert await ready_to_assign(client, headers, body) == 0
+    assert await ready_to_assign(client, headers, body, FAMILY) == 50_000
 
 
 @pytest.mark.asyncio
 async def test_group_scope_change_blocked_when_categories_exist(client: AsyncClient):
     headers = await register_user(client)
-    group = await create_group(client, headers, "G", scope="personal")
+    group = await create_group(client, headers, "G", scope=PERSONAL)
     await create_category(client, headers, group)
 
     r = await client.patch(
-        f"/api/category-groups/{group}", json={"scope": "shared"}, headers=headers
+        f"/api/category-groups/{group}",
+        json={"scope_id": await scope_id(client, headers, FAMILY)},
+        headers=headers,
     )
     assert r.status_code == 400
 
@@ -538,7 +560,7 @@ async def test_uncategorized_inflow_to_a_savings_account_does_not_raise_ready_to
     await _add_inflow(client, headers, savings, 100_000, "2026-04-01")
 
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 0
+    assert await ready_to_assign(client, headers, body) == 0
 
 
 @pytest.mark.asyncio
@@ -551,12 +573,12 @@ async def test_transfer_from_checking_to_savings_reduces_ready_to_assign(
 
     await _add_inflow(client, headers, checking, 100_000, "2026-04-01")
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 100_000
+    assert await ready_to_assign(client, headers, body) == 100_000
 
     await _transfer(client, headers, checking, savings, 60_000, "2026-04-02")
 
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 40_000
+    assert await ready_to_assign(client, headers, body) == 40_000
 
 
 @pytest.mark.asyncio
@@ -569,12 +591,12 @@ async def test_transfer_from_savings_to_checking_raises_ready_to_assign(
 
     await _add_inflow(client, headers, savings, 100_000, "2026-04-01")
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 0
+    assert await ready_to_assign(client, headers, body) == 0
 
     await _transfer(client, headers, savings, checking, 60_000, "2026-04-02")
 
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
-    assert body["personal_ready_to_assign_cents"] == 60_000
+    assert await ready_to_assign(client, headers, body) == 60_000
 
 
 @pytest.mark.asyncio

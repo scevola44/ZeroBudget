@@ -3,8 +3,8 @@
 This module is the single source of truth for:
 
 - **Ready to Assign** — money the user has in their accounts that hasn't been
-  handed to a category yet, computed *per scope* (``"personal"`` and
-  ``"shared"`` are independent pools).
+  handed to a category yet, computed *per scope* (each scope is an independent
+  pool).
 - **Category balance** — how much is still available to spend on a category,
   including rollover from prior months.
 
@@ -54,10 +54,10 @@ class TxnRow:
     category_id: int | None
     date: date
     amount_cents: int  # signed
-    scope: str  # account scope: "personal" | "shared"
+    scope_id: int  # the account's scope
     # Scope of the account holding this row's transfer peer; None when the row
     # isn't a transfer leg. See ``feeds_ready_to_assign``.
-    transfer_peer_scope: str | None = None
+    transfer_peer_scope_id: int | None = None
     # Whether this row's account feeds Ready to Assign — False for savings
     # accounts. See ``feeds_ready_to_assign``.
     on_budget: bool = True
@@ -73,8 +73,8 @@ def feeds_ready_to_assign(txn: TxnRow) -> bool:
 
     Uncategorized rows are the sole source of Ready to Assign. Transfer legs
     are uncategorized too, but only legs that actually move money between
-    pools count: a *cross-scope* transfer moves money between the personal and
-    shared pools, and a same-scope transfer that crosses the on-budget/
+    pools count: a *cross-scope* transfer moves money between two pools, and a
+    same-scope transfer that crosses the on-budget/
     off-budget boundary moves money into or out of the budget entirely (e.g.
     checking -> savings). A same-scope transfer between two accounts with the
     same on-budget status is just one pool's money changing accounts, so both
@@ -98,7 +98,7 @@ def feeds_ready_to_assign(txn: TxnRow) -> bool:
     if not txn.on_budget:
         return False
     return (
-        txn.transfer_peer_scope != txn.scope
+        txn.transfer_peer_scope_id != txn.scope_id
         or txn.transfer_peer_on_budget != txn.on_budget
     )
 
@@ -108,7 +108,7 @@ class AssignmentRow:
     category_id: int
     month: date  # first of month
     amount_cents: int
-    scope: str  # category-group scope: "personal" | "shared"
+    scope_id: int  # the scope of the category's group
 
 
 @dataclass(frozen=True)
@@ -123,9 +123,9 @@ def compute_ready_to_assign(
     transactions: list[TxnRow],
     assignments: list[AssignmentRow],
     through_month: date,
-    scope: str,
+    scope_id: int,
 ) -> int:
-    """Money on hand in ``scope`` that has not yet been assigned to any category.
+    """Money on hand in ``scope_id`` that has not yet been assigned to any category.
 
     Inflows are scoped to ``through_month`` and earlier. Assignments from
     future months reduce the pool when they exceed future inflows — the
@@ -138,23 +138,23 @@ def compute_ready_to_assign(
     inflow_through_month = sum(
         t.amount_cents
         for t in transactions
-        if t.scope == scope and feeds_ready_to_assign(t) and t.date < boundary
+        if t.scope_id == scope_id and feeds_ready_to_assign(t) and t.date < boundary
     )
     assigned_through_month = sum(
         a.amount_cents
         for a in assignments
-        if a.scope == scope and a.month < boundary
+        if a.scope_id == scope_id and a.month < boundary
     )
 
     future_inflow = sum(
         t.amount_cents
         for t in transactions
-        if t.scope == scope and feeds_ready_to_assign(t) and t.date >= boundary
+        if t.scope_id == scope_id and feeds_ready_to_assign(t) and t.date >= boundary
     )
     future_assigned = sum(
         a.amount_cents
         for a in assignments
-        if a.scope == scope and a.month >= boundary
+        if a.scope_id == scope_id and a.month >= boundary
     )
     future_overdraft = max(0, future_assigned - future_inflow)
 
