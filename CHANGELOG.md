@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.6.1-beta.10...v0.6.2-beta.10) (2026-08-13)
+
+
+### Bug Fixes
+
+* attach setNodeRef to sortable category rows so drag actually moves ([#131](https://github.com/scevola44/ZeroBudget/issues/131)) ([5727a41](https://github.com/scevola44/ZeroBudget/commit/5727a416e254ef71a6b4a3a5a36e9615aa989020))
+
 ## [0.6.1-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.6.0-beta.10...v0.6.1-beta.10) (2026-08-13)
 
 
