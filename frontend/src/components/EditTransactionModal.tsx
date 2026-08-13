@@ -151,7 +151,6 @@ export function EditTransactionModal({
           <div className="space-y-1">
             <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Date</label>
             <input
-              autoFocus
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
@@ -169,6 +168,7 @@ export function EditTransactionModal({
           <div className="space-y-1">
             <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Payee</label>
             <input
+              autoFocus
               value={payee}
               onChange={(e) => setPayee(e.target.value)}
               disabled={isPending}
