@@ -10,6 +10,7 @@ import { BankingCallbackPage } from "./pages/BankingCallbackPage";
 import { BudgetPage } from "./pages/BudgetPage";
 import { CategoriesPage } from "./pages/CategoriesPage";
 import { InsightsPage } from "./pages/InsightsPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
 import { PrivacyPage } from "./legal/PrivacyPage";
 import { TermsPage } from "./legal/TermsPage";
@@ -97,6 +98,16 @@ export default function App() {
           <RequireAuth>
             <Layout>
               <InsightsPage />
+            </Layout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <RequireAuth>
+            <Layout>
+              <SettingsPage />
             </Layout>
           </RequireAuth>
         }
