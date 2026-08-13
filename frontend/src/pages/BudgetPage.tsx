@@ -31,6 +31,9 @@ const VALUE_COL_PADDING = "md:px-5";
 const TABLE_VALUE_COL_WIDTH = "w-28 md:w-36";
 const TABLE_VALUE_COL_PADDING = "px-2 md:px-5";
 
+const STEPPER_BUTTON_CLASS =
+  "px-3 py-2 rounded-lg border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 hover:bg-stone-100 dark:hover:bg-stone-800";
+
 function loadCollapsedGroups(): Set<number> {
   try {
     const raw = localStorage.getItem(COLLAPSED_GROUPS_STORAGE_KEY);
@@ -111,31 +114,41 @@ export function BudgetPage() {
 
   return (
     <div className="max-w-4xl space-y-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Budget</h1>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setMonth((m) => shiftMonth(m, -1))}
-            className="px-3 py-2 rounded-lg border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 hover:bg-stone-100 dark:hover:bg-stone-800"
-          >
-            ←
-          </button>
-          <div className="min-w-[8rem] text-center font-medium">{monthLabel(month)}</div>
-          <button
-            onClick={() => setMonth((m) => shiftMonth(m, 1))}
-            className="px-3 py-2 rounded-lg border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 hover:bg-stone-100 dark:hover:bg-stone-800"
-          >
-            →
-          </button>
-          {month !== currentMonth() && (
+      <header className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl font-semibold">Budget</h1>
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setMonth(currentMonth())}
-              className="px-3 py-2 rounded-lg border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 hover:bg-stone-100 dark:hover:bg-stone-800"
+              onClick={() => setMonth((m) => shiftMonth(m, -1))}
+              className={STEPPER_BUTTON_CLASS}
             >
-              Today
+              ←
             </button>
-          )}
+            <div className="min-w-[8rem] text-center font-medium">{monthLabel(month)}</div>
+            <button
+              onClick={() => setMonth((m) => shiftMonth(m, 1))}
+              className={STEPPER_BUTTON_CLASS}
+            >
+              →
+            </button>
+            {month !== currentMonth() && (
+              <button
+                onClick={() => setMonth(currentMonth())}
+                className={`hidden md:inline-flex ${STEPPER_BUTTON_CLASS}`}
+              >
+                Today
+              </button>
+            )}
+          </div>
         </div>
+        {month !== currentMonth() && (
+          <button
+            onClick={() => setMonth(currentMonth())}
+            className="md:hidden w-full py-1.5 rounded-lg border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 hover:bg-stone-100 dark:hover:bg-stone-800 text-sm font-medium"
+          >
+            Today
+          </button>
+        )}
       </header>
 
       <UnassignedTransactionsIsland />
