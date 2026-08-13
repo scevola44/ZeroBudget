@@ -4,15 +4,21 @@ import { useSearchParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import type { Account, CategoryGroup, Transaction } from "../api/types";
+import {
+  AddTransactionModal,
+  type TransactionCreateInput,
+} from "../components/AddTransactionModal";
 import { BulkDeleteTransactionsConfirmModal } from "../components/BulkDeleteTransactionsConfirmModal";
+import { CategoryBadge, needsCategory } from "../components/CategoryBadge";
 import {
   EditTransactionModal,
   type TransactionEdit,
 } from "../components/EditTransactionModal";
 import { LinkTransferModal } from "../components/LinkTransferModal";
+import { MobileTransactionRow } from "../components/MobileTransactionRow";
 import { TransferSuggestionsBanner } from "../components/TransferSuggestionsBanner";
 import { UnassignedTransactionsIsland } from "../components/UnassignedTransactionsIsland";
-import { currentMonth } from "../lib/dates";
+import { currentMonth, formatDateHeading } from "../lib/dates";
 import { formatCents } from "../lib/money";
 import { YnabTransactionImportModal, type ImportRow } from "./YnabTransactionImportModal";
 
@@ -38,6 +44,9 @@ export function TransactionsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
   // The existing row being linked to a transfer, and the account holding its
   // other leg — set together when "Transfer : <account>" is picked in the
   // edit modal.
@@ -124,6 +133,17 @@ export function TransactionsPage() {
       void qc.invalidateQueries({ queryKey: ["budget"] });
     },
     onError: (err) => setEditError(err instanceof Error ? err.message : "Update failed"),
+  });
+
+  const createTxn = useMutation({
+    mutationFn: (input: TransactionCreateInput) =>
+      api<Transaction>("/api/transactions", { method: "POST", body: input }),
+    onSuccess: () => {
+      setAddOpen(false);
+      setAddError(null);
+      invalidateAfterLink();
+    },
+    onError: (err) => setAddError(err instanceof Error ? err.message : "Could not add transaction"),
   });
 
   const deleteTxn = useMutation({
@@ -216,6 +236,19 @@ export function TransactionsPage() {
 
   const accountById = Object.fromEntries(accounts.map((a) => [a.id, a]));
   const categoryById = Object.fromEntries(flatCategories.map((c) => [c.id, c]));
+
+  // filteredTxns already arrives in date-desc order from the API, so grouping
+  // just needs to notice when the date changes, not re-sort anything.
+  const dateGroups: { date: string; txns: Transaction[] }[] = [];
+  for (const t of filteredTxns) {
+    const lastGroup = dateGroups[dateGroups.length - 1];
+    if (lastGroup && lastGroup.date === t.date) {
+      lastGroup.txns.push(t);
+    } else {
+      dateGroups.push({ date: t.date, txns: [t] });
+    }
+  }
+
   const editingTransaction =
     editingTxnId === null
       ? undefined
@@ -228,13 +261,35 @@ export function TransactionsPage() {
     <div className="max-w-5xl space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Transactions</h1>
-        <button
-          type="button"
-          onClick={() => setImportOpen(true)}
-          className="border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-4 py-2 text-sm"
-        >
-          Import YNAB
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setSelectionMode((prev) => !prev);
+              setSelectedIds(new Set());
+            }}
+            className="md:hidden border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-4 py-2 text-sm"
+          >
+            {selectionMode ? "Done" : "Select"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAddError(null);
+              setAddOpen(true);
+            }}
+            className="hidden md:inline-flex bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white rounded-lg px-4 py-2 text-sm font-medium"
+          >
+            Add transaction
+          </button>
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            className="border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-4 py-2 text-sm"
+          >
+            Import YNAB
+          </button>
+        </div>
       </div>
 
       {/* Both of these render nothing when there's nothing to show, so
@@ -351,7 +406,7 @@ export function TransactionsPage() {
         </div>
       )}
 
-      {/* Transaction table */}
+      {/* Transaction list */}
       <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl overflow-hidden">
         {txnsQuery.isLoading && (
           <div className="p-5 text-stone-500 dark:text-stone-400">Loading…</div>
@@ -359,12 +414,50 @@ export function TransactionsPage() {
         {!txnsQuery.isLoading && filteredTxns.length === 0 && (
           <div className="p-5 text-stone-500 dark:text-stone-400">No transactions found.</div>
         )}
+
+        {/* Mobile: date-grouped, tappable cards */}
         {filteredTxns.length > 0 && (
-          <div className="overflow-x-auto">
+          <div className="md:hidden">
+            {dateGroups.map((group) => (
+              <div key={group.date}>
+                <div className="px-4 py-2 text-xs font-semibold uppercase text-stone-500 dark:text-stone-400 bg-stone-50 dark:bg-stone-800/50">
+                  {formatDateHeading(group.date)}
+                </div>
+                {group.txns.map((t) => {
+                  const account = accountById[t.account_id];
+                  const cat = t.category_id !== null ? categoryById[t.category_id] : null;
+                  const peerAccountName =
+                    t.transfer_peer_account_id !== null
+                      ? accountById[t.transfer_peer_account_id]?.name
+                      : undefined;
+                  return (
+                    <MobileTransactionRow
+                      key={t.id}
+                      transaction={t}
+                      account={account}
+                      category={cat}
+                      peerAccountName={peerAccountName}
+                      selectionMode={selectionMode}
+                      selected={selectedIds.has(t.id)}
+                      onToggleSelect={() => toggleSelected(t.id)}
+                      onOpen={() => {
+                        setEditError(null);
+                        setEditingTxnId(t.id);
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {filteredTxns.length > 0 && (
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-xs uppercase text-stone-500 dark:text-stone-400">
                 <tr>
-                  <th className="px-5 py-2">
+                  <th className="pl-4 pr-1 py-2">
                     <input
                       ref={selectAllRef}
                       type="checkbox"
@@ -387,9 +480,18 @@ export function TransactionsPage() {
                 {filteredTxns.map((t) => {
                   const account = accountById[t.account_id];
                   const cat = t.category_id !== null ? categoryById[t.category_id] : null;
+                  const peerAccountName =
+                    t.transfer_peer_account_id !== null
+                      ? accountById[t.transfer_peer_account_id]?.name
+                      : undefined;
+                  const accentClass = needsCategory(t)
+                    ? "border-l-4 border-amber-400 dark:border-amber-600"
+                    : "border-l-4 border-indigo-200 dark:border-indigo-800";
                   return (
                     <tr key={t.id} className="border-t border-stone-100 dark:border-stone-800">
-                      <td className="px-5 py-2">
+                      {/* The accent lives on this cell, not the <tr>: table rows don't
+                          paint left borders under the default (non-collapsed) border model. */}
+                      <td className={`pl-4 pr-1 py-2 border-l-4 ${accentClass}`}>
                         <input
                           type="checkbox"
                           checked={selectedIds.has(t.id)}
@@ -406,20 +508,11 @@ export function TransactionsPage() {
                         {t.payee || <span className="text-stone-400 dark:text-stone-500">—</span>}
                       </td>
                       <td className="px-5 py-2">
-                        {t.transfer_peer_id !== null ? (
-                          <span className="text-stone-600 dark:text-stone-300">
-                            Transfer :{" "}
-                            {(t.transfer_peer_account_id !== null
-                              ? accountById[t.transfer_peer_account_id]?.name
-                              : undefined) ?? "another account"}
-                          </span>
-                        ) : cat ? (
-                          `${cat.groupName} › ${cat.name}`
-                        ) : t.is_ready_to_assign ? (
-                          <span className="text-stone-400 dark:text-stone-500">Ready to Assign</span>
-                        ) : (
-                          <span className="text-stone-400 dark:text-stone-500">Unassigned</span>
-                        )}
+                        <CategoryBadge
+                          transaction={t}
+                          category={cat}
+                          peerAccountName={peerAccountName}
+                        />
                       </td>
                       <td className="hidden sm:table-cell px-5 py-2 text-stone-500 dark:text-stone-400">
                         {t.memo}
@@ -504,7 +597,9 @@ export function TransactionsPage() {
             setLinking({ txnId: editingTransaction.id, accountId: targetAccountId });
           }}
           onUnlinkTransfer={() => unlinkTransfer.mutate(editingTransaction.id)}
+          onDelete={() => deleteTxn.mutate(editingTransaction.id)}
           isPending={updateTxn.isPending || unlinkTransfer.isPending}
+          isDeletePending={deleteTxn.isPending}
           error={editError}
         />
       )}
@@ -530,6 +625,32 @@ export function TransactionsPage() {
           onClose={() => setImportOpen(false)}
         />
       )}
+
+      <AddTransactionModal
+        accounts={accounts}
+        categoriesByScope={flatCategories}
+        isOpen={addOpen}
+        onClose={() => {
+          setAddOpen(false);
+          setAddError(null);
+        }}
+        onSave={(input) => createTxn.mutate(input)}
+        isPending={createTxn.isPending}
+        error={addError}
+      />
+
+      {/* Mobile-only quick add, kept clear of any bottom chrome since the app has no bottom nav. */}
+      <button
+        type="button"
+        onClick={() => {
+          setAddError(null);
+          setAddOpen(true);
+        }}
+        aria-label="Add transaction"
+        className="md:hidden fixed bottom-6 right-6 z-20 h-14 w-14 rounded-full bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white text-3xl leading-none shadow-lg flex items-center justify-center"
+      >
+        +
+      </button>
     </div>
   );
 }

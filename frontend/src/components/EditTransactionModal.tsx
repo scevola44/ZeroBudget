@@ -34,7 +34,9 @@ export function EditTransactionModal({
   onSave,
   onPickTransferTarget,
   onUnlinkTransfer,
+  onDelete,
   isPending,
+  isDeletePending,
   error,
 }: {
   transaction: Transaction;
@@ -51,7 +53,10 @@ export function EditTransactionModal({
   onPickTransferTarget?: (accountId: number) => void;
   /** Break the pair, keeping both transactions. Only shown for transfer legs. */
   onUnlinkTransfer?: () => void;
+  /** Deletes this transaction (both legs, if a transfer). Omit to hide the button. */
+  onDelete?: () => void;
   isPending: boolean;
+  isDeletePending?: boolean;
   error: string | null;
 }) {
   const [date, setDate] = useState(transaction.date);
@@ -278,22 +283,41 @@ export function EditTransactionModal({
             </div>
           )}
 
-          <div className="flex justify-end gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isPending}
-              className="border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isPending}
-              className="bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg px-4 py-2 text-sm font-medium"
-            >
-              {isPending ? "Saving…" : "Save"}
-            </button>
+          <div className="flex items-center justify-between gap-3 pt-4">
+            {onDelete ? (
+              <button
+                type="button"
+                onClick={onDelete}
+                disabled={isPending || isDeletePending}
+                title={
+                  transaction.transfer_peer_id !== null
+                    ? "Deletes both legs of the transfer"
+                    : undefined
+                }
+                className="text-sm text-red-600 dark:text-red-400 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDeletePending ? "Deleting…" : "Delete"}
+              </button>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={isPending}
+                className="border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-4 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isPending}
+                className="bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg px-4 py-2 text-sm font-medium"
+              >
+                {isPending ? "Saving…" : "Save"}
+              </button>
+            </div>
           </div>
         </form>
       </div>

@@ -24,6 +24,13 @@ export function todayISO(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// "2026-08-12" -> "August 12, 2026", for grouping a transaction list by day.
+export function formatDateHeading(iso: string): string {
+  const [y, m, day] = iso.split("-").map(Number);
+  const d = new Date(y, m - 1, day);
+  return d.toLocaleDateString("en-GB", { month: "long", day: "numeric", year: "numeric" });
+}
+
 function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
