@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import type { BudgetCategoryRow, BudgetGroupRow, BudgetMonth, Scope } from "../api/types";
 import { scopeLabel } from "../api/types";
 import { UnassignedTransactionsIsland } from "../components/UnassignedTransactionsIsland";
+import { availablePillClass } from "../lib/budgetAvailability";
 import { currentMonth, monthLabel, shiftMonth } from "../lib/dates";
 import { formatGoal, monthlyGoalCents } from "../lib/goal";
 import { formatCents, parseAmountToCents } from "../lib/money";
@@ -40,19 +41,6 @@ function loadCollapsedGroups(): Set<number> {
   } catch {
     return new Set();
   }
-}
-
-function availablePillClass(assignedCents: number, balanceCents: number): string {
-  if (balanceCents < 0) {
-    return "bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-200";
-  }
-  if (assignedCents === 0) {
-    return "bg-stone-200 text-stone-600 dark:bg-stone-800 dark:text-stone-300";
-  }
-  if (balanceCents >= assignedCents) {
-    return "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200";
-  }
-  return "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200";
 }
 
 function readyToAssignBoxClass(readyCents: number, neededCents: number): string {
