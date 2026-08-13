@@ -77,6 +77,8 @@ function SortableCategoryItem({
   category,
   isEditing,
   editingDraft,
+  groupOptions,
+  editError,
   onEditStart,
   onDraftChange,
   onEditSave,
@@ -86,6 +88,8 @@ function SortableCategoryItem({
   category: Category;
   isEditing: boolean;
   editingDraft: NewCategoryDraft;
+  groupOptions: CategoryGroup[];
+  editError: string | null;
   onEditStart: () => void;
   onDraftChange: (patch: Partial<NewCategoryDraft>) => void;
   onEditSave: () => void;
@@ -122,7 +126,7 @@ function SortableCategoryItem({
       </div>
       {isEditing ? (
         <form
-          className="flex-1 grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto] gap-2 items-center"
+          className="flex-1 flex flex-col gap-2"
           onSubmit={(e) => {
             e.preventDefault();
             if (canSave) onEditSave();
@@ -131,60 +135,85 @@ function SortableCategoryItem({
             if (e.key === "Escape") onEditCancel();
           }}
         >
-          <input
-            autoFocus
-            value={editingDraft.name}
-            onChange={(e) => onDraftChange({ name: e.target.value })}
-            placeholder="Category name"
-            className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-          <div className="relative">
-            <select
-              value={editingDraft.kind}
-              onChange={(e) => onDraftChange({ kind: e.target.value as GoalKind })}
-              className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg pl-2 pr-6 text-sm"
-            >
-              <option value="monthly">Monthly</option>
-              <option value="yearly">Yearly</option>
-              <option value="target_date">By a specific month</option>
-            </select>
-            <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center text-stone-400 dark:text-stone-500">
-              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 6l4 4 4-4" />
-              </svg>
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto_auto] gap-2 items-center">
+            <input
+              autoFocus
+              value={editingDraft.name}
+              onChange={(e) => onDraftChange({ name: e.target.value })}
+              placeholder="Category name"
+              className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <div className="relative">
+              <select
+                value={editingDraft.kind}
+                onChange={(e) => onDraftChange({ kind: e.target.value as GoalKind })}
+                className="h-9 w-full appearance-none border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg pl-2 pr-6 text-sm"
+              >
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+                <option value="target_date">By a specific month</option>
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center text-stone-400 dark:text-stone-500">
+                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </div>
+            </div>
+            <input
+              value={editingDraft.amount}
+              onChange={(e) => onDraftChange({ amount: e.target.value })}
+              inputMode="decimal"
+              placeholder="Amount"
+              className="h-9 w-28 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 tabular-nums"
+            />
+            {needsMonth && (
+              <input
+                type="month"
+                value={editingDraft.targetMonth}
+                onChange={(e) => onDraftChange({ targetMonth: e.target.value })}
+                className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5"
+              />
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <select
+                value={editingDraft.groupId}
+                onChange={(e) => onDraftChange({ groupId: Number(e.target.value) })}
+                className="h-9 appearance-none border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg pl-2 pr-6 text-sm"
+              >
+                {groupOptions.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-1 flex items-center text-stone-400 dark:text-stone-500">
+                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </div>
+            </div>
+            <div className="flex gap-1">
+              <button
+                type="submit"
+                disabled={!canSave}
+                className="h-9 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg px-3 py-1.5"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={onEditCancel}
+                className="h-9 border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-3 py-1.5"
+              >
+                Cancel
+              </button>
             </div>
           </div>
-          <input
-            value={editingDraft.amount}
-            onChange={(e) => onDraftChange({ amount: e.target.value })}
-            inputMode="decimal"
-            placeholder="Amount"
-            className="h-9 w-28 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5 tabular-nums"
-          />
-          {needsMonth && (
-            <input
-              type="month"
-              value={editingDraft.targetMonth}
-              onChange={(e) => onDraftChange({ targetMonth: e.target.value })}
-              className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-1.5"
-            />
+          {editError && (
+            <div className="text-sm text-red-600 dark:text-red-400">{editError}</div>
           )}
-          <div className="flex gap-1">
-            <button
-              type="submit"
-              disabled={!canSave}
-              className="h-9 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg px-3 py-1.5"
-            >
-              Save
-            </button>
-            <button
-              type="button"
-              onClick={onEditCancel}
-              className="h-9 border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-3 py-1.5"
-            >
-              Cancel
-            </button>
-          </div>
         </form>
       ) : (
         <>
@@ -221,6 +250,7 @@ type NewCategoryDraft = {
   kind: GoalKind;
   amount: string;
   targetMonth: string;
+  groupId: number;
 };
 
 const EMPTY_DRAFT: NewCategoryDraft = {
@@ -228,6 +258,7 @@ const EMPTY_DRAFT: NewCategoryDraft = {
   kind: "monthly",
   amount: "",
   targetMonth: "",
+  groupId: 0,
 };
 
 export function CategoriesPage() {
@@ -254,6 +285,7 @@ export function CategoriesPage() {
   const [deletingCategoryId, setDeletingCategoryId] = useState<number | null>(null);
   const [deleteCategoryError, setDeleteCategoryError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [editCategoryError, setEditCategoryError] = useState<string | null>(null);
 
   // Reassignment can only target the same scope — the server rejects the rest,
   // and a cross-scope move would strand transactions in the wrong pool.
@@ -335,6 +367,7 @@ export function CategoriesPage() {
       goalKind: GoalKind;
       goalAmountCents: number;
       goalTargetMonth: string | null;
+      groupId: number;
     }) =>
       api(`/api/categories/${vars.categoryId}`, {
         method: "PATCH",
@@ -343,12 +376,18 @@ export function CategoriesPage() {
           goal_kind: vars.goalKind,
           goal_amount_cents: vars.goalAmountCents,
           goal_target_month: vars.goalTargetMonth,
+          group_id: vars.groupId,
         },
       }),
     onSuccess: () => {
       setEditingCategoryId(null);
+      setEditCategoryError(null);
       void qc.invalidateQueries({ queryKey: ["category-groups"] });
       void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : "Failed to update category";
+      setEditCategoryError(message);
     },
   });
 
@@ -573,13 +612,17 @@ export function CategoriesPage() {
                       category={c}
                       isEditing={editingCategoryId === c.id}
                       editingDraft={editingDraft}
+                      groupOptions={(groupsQuery.data ?? []).filter((g) => g.scope === group.scope)}
+                      editError={editCategoryError}
                       onEditStart={() => {
                         setEditingCategoryId(c.id);
+                        setEditCategoryError(null);
                         setEditingDraft({
                           name: c.name,
                           kind: c.goal_kind,
                           amount: (c.goal_amount_cents / 100).toFixed(2),
                           targetMonth: c.goal_target_month?.slice(0, 7) ?? "",
+                          groupId: c.group_id,
                         });
                       }}
                       onDraftChange={(patch) => setEditingDraft((d) => ({ ...d, ...patch }))}
@@ -599,9 +642,13 @@ export function CategoriesPage() {
                           goalKind: editingDraft.kind,
                           goalAmountCents: amountCents,
                           goalTargetMonth: needsMonth ? `${editingDraft.targetMonth}-01` : null,
+                          groupId: editingDraft.groupId,
                         });
                       }}
-                      onEditCancel={() => setEditingCategoryId(null)}
+                      onEditCancel={() => {
+                        setEditingCategoryId(null);
+                        setEditCategoryError(null);
+                      }}
                       onDeleteClick={() => {
                         setDeleteCategoryError(null);
                         setDeletingCategoryId(c.id);
