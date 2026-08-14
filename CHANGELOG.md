@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.11.0-beta.10...v0.11.1-beta.10) (2026-08-14)
+
+
+### Bug Fixes
+
+* exclude Ready to Assign transactions from the Unassigned filter ([#146](https://github.com/scevola44/ZeroBudget/issues/146)) ([0c02cda](https://github.com/scevola44/ZeroBudget/commit/0c02cdaaf9ba5b93872b008c138387bc73384b32))
+
 ## [0.11.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.10.0-beta.10...v0.11.0-beta.10) (2026-08-14)
 
 
