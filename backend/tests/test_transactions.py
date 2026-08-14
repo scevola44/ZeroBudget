@@ -797,6 +797,20 @@ async def test_list_unassigned_filter_excludes_transfer_legs(client: AsyncClient
 
 
 @pytest.mark.asyncio
+async def test_list_unassigned_filter_excludes_ready_to_assign(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    plain_unassigned = await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=-500)
+    await _add_txn(
+        client, headers, account_id=a, date="2026-04-02", amount=1000, is_ready_to_assign=True
+    )
+
+    rows = await list_transactions(client, headers, unassigned=True)
+    ids = {row["id"] for row in rows}
+    assert ids == {plain_unassigned}
+
+
+@pytest.mark.asyncio
 async def test_list_ready_to_assign_filter(client: AsyncClient):
     headers = await register_user(client)
     a = await create_account(client, headers)
