@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.8.0-beta.10...v0.9.0-beta.10) (2026-08-14)
+
+
+### Features
+
+* payees, split transactions, and transactions-page search/pagination ([#137](https://github.com/scevola44/ZeroBudget/issues/137)) ([35b0062](https://github.com/scevola44/ZeroBudget/commit/35b0062c10628733854dd56cd2dbf22e7f288d10))
+
+
+### Bug Fixes
+
+* Claude/phase 2 roadmap planning j2qa5y ([#139](https://github.com/scevola44/ZeroBudget/issues/139)) ([e4dc49f](https://github.com/scevola44/ZeroBudget/commit/e4dc49f3d7b1895ad652865bc915505a41bed4db))
+
 ## [0.8.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.7.0-beta.10...v0.8.0-beta.10) (2026-08-13)
 
 
