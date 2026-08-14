@@ -42,3 +42,23 @@ class BudgetMonthResponse(BaseModel):
 class AssignRequest(BaseModel):
     category_id: int
     amount_cents: int
+
+
+class FundGoalsRequest(BaseModel):
+    scope_id: int
+
+
+class FundGoalsEntryResponse(BaseModel):
+    category_id: int
+    category_name: str
+    # Full suggested amount vs. what will actually be assigned — differ when
+    # the scope's Ready to Assign ran out partway through the plan.
+    needed_cents: int
+    amount_cents: int
+
+
+class FundGoalsPreviewResponse(BaseModel):
+    scope_id: int
+    ready_to_assign_cents: int
+    entries: list[FundGoalsEntryResponse]
+    total_amount_cents: int

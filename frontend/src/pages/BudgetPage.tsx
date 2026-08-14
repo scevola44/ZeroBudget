@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "../api/client";
+import { budgetApi } from "../api/budget";
 import type { BudgetCategoryRow, BudgetGroupRow, BudgetMonth, Scope } from "../api/types";
+import { FundGoalsPreviewModal } from "../components/FundGoalsPreviewModal";
 import { UnassignedTransactionsIsland } from "../components/UnassignedTransactionsIsland";
 import { availablePillClass } from "../lib/budgetAvailability";
 import { currentMonth, monthLabel, shiftMonth } from "../lib/dates";
@@ -65,6 +66,7 @@ function scopeHeaderClass(assignedCents: number, goalCents: number): string {
 export function BudgetPage() {
   const [month, setMonth] = useState<string>(currentMonth);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(loadCollapsedGroups);
+  const [fundGoalsScopeId, setFundGoalsScopeId] = useState<number | null>(null);
   const qc = useQueryClient();
 
   useEffect(() => {
@@ -85,17 +87,28 @@ export function BudgetPage() {
 
   const budgetQuery = useQuery<BudgetMonth>({
     queryKey: ["budget", month],
-    queryFn: () => api<BudgetMonth>(`/api/budget/${month}`),
+    queryFn: () => budgetApi.get(month),
   });
 
   const assignMutation = useMutation({
     mutationFn: (vars: { categoryId: number; cents: number }) =>
-      api(`/api/budget/${month}/assign`, {
-        method: "POST",
-        body: { category_id: vars.categoryId, amount_cents: vars.cents },
-      }),
+      budgetApi.assign(month, vars.categoryId, vars.cents),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["budget"] });
+    },
+  });
+
+  const fundGoalsPreviewQuery = useQuery({
+    queryKey: ["budget", month, "fund-goals-preview", fundGoalsScopeId],
+    queryFn: () => budgetApi.previewFundGoals(month, fundGoalsScopeId!),
+    enabled: fundGoalsScopeId !== null,
+  });
+
+  const fundGoalsCommitMutation = useMutation({
+    mutationFn: () => budgetApi.commitFundGoals(month, fundGoalsScopeId!),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+      setFundGoalsScopeId(null);
     },
   });
 
@@ -195,8 +208,20 @@ export function BudgetPage() {
           collapsedGroups={collapsedGroups}
           toggleGroup={toggleGroup}
           onAssign={(categoryId, cents) => assignMutation.mutate({ categoryId, cents })}
+          onFundGoals={() => setFundGoalsScopeId(scope.id)}
         />
       ))}
+
+      <FundGoalsPreviewModal
+        scopeName={scopes.find((s) => s.id === fundGoalsScopeId)?.name ?? ""}
+        preview={fundGoalsPreviewQuery.data ?? null}
+        isLoading={fundGoalsPreviewQuery.isLoading}
+        isOpen={fundGoalsScopeId !== null}
+        onClose={() => setFundGoalsScopeId(null)}
+        onConfirm={() => fundGoalsCommitMutation.mutate()}
+        isPending={fundGoalsCommitMutation.isPending}
+        error={fundGoalsCommitMutation.isError ? "Failed to fund goals." : null}
+      />
     </div>
   );
 }
@@ -227,18 +252,24 @@ function ScopeSection({
   collapsedGroups,
   toggleGroup,
   onAssign,
+  onFundGoals,
 }: {
   scope: Scope;
   groups: BudgetGroupRow[];
   collapsedGroups: Set<number>;
   toggleGroup: (groupId: number) => void;
   onAssign: (categoryId: number, cents: number) => void;
+  onFundGoals: () => void;
 }) {
   const allCategories = groups.flatMap((g) => g.categories);
   const totalGoalCents = allCategories.reduce((s, c) => s + monthlyGoalCents(c), 0);
   const totalAssignedCents = allCategories.reduce((s, c) => s + c.assigned_cents, 0);
   const totalActivityCents = allCategories.reduce((s, c) => s + c.activity_cents, 0);
   const totalAvailableCents = allCategories.reduce((s, c) => s + c.balance_cents, 0);
+  const totalNeededCents = allCategories.reduce(
+    (s, c) => s + (c.needed_this_month_cents ?? 0),
+    0,
+  );
 
   return (
     <section className="space-y-3">
@@ -246,9 +277,20 @@ function ScopeSection({
         className={`flex items-center justify-between rounded-xl px-4 py-2 ${scopeHeaderClass(totalAssignedCents, totalGoalCents)}`}
       >
         <h2 className="text-sm font-semibold uppercase tracking-wide">{scope.name}</h2>
-        <span className="text-xs font-medium tabular-nums">
-          Needed {formatCents(totalGoalCents)}/mo
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-medium tabular-nums">
+            Needed {formatCents(totalGoalCents)}/mo
+          </span>
+          {totalNeededCents > 0 && (
+            <button
+              type="button"
+              onClick={onFundGoals}
+              className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold"
+            >
+              Fund goals
+            </button>
+          )}
+        </div>
       </div>
       {groups.length === 0 ? (
         <div className="bg-white dark:bg-stone-900 border border-dashed border-stone-300 dark:border-stone-700 rounded-2xl p-6 text-center text-sm text-stone-500 dark:text-stone-400">

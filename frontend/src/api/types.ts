@@ -156,6 +156,22 @@ export type BudgetMonth = {
   groups: BudgetGroupRow[];
 };
 
+export type FundGoalsEntry = {
+  category_id: number;
+  category_name: string;
+  // Full suggested amount vs. what will actually be assigned — differ when
+  // the scope's Ready to Assign ran out partway through the plan.
+  needed_cents: number;
+  amount_cents: number;
+};
+
+export type FundGoalsPreview = {
+  scope_id: number;
+  ready_to_assign_cents: number;
+  entries: FundGoalsEntry[];
+  total_amount_cents: number;
+};
+
 export type InsightsPeriod = {
   start_month: string;
   end_month: string;
