@@ -62,7 +62,7 @@ them. Do not "fix" them to match YNAB.
    `budget_calc.py`; `frontend/src/lib/dates.ts`).
 8. **Conventions to follow** (see CLAUDE.md for the full list):
    - One Alembic migration per schema change (`backend/alembic/versions/`,
-     linear chain, currently `0001`–`0011`).
+     linear chain, currently `0001`–`0014`).
    - Frontend patterns: TanStack Query with array keys + broad prefix
      invalidation, inline-edit (click → input, Enter/blur commits, Escape
      cancels), Tailwind utility classes with `dark:` variants, money via
@@ -107,8 +107,8 @@ Implemented:
   `frontend/src/pages/InsightsPage.tsx`). See Phase 5.
 - Responsive layout with dark mode (`darkMode: "media"`), mobile off-canvas nav.
 
-Not implemented (the gap this roadmap closes): payees, splits,
-search/bulk edit, move-money/auto-assign, scheduled transactions, net worth
+Not implemented (the gap this roadmap closes):
+move-money/auto-assign, scheduled transactions, net worth
 over time, generic CSV import, import matching, settings/auth hardening,
 cleared/reconciliation, credit-card budgeting.
 
@@ -117,6 +117,10 @@ Phase 1 closed the rest: transfers are linked transaction pairs
 field is editable from both transaction surfaces, accounts can be renamed,
 retyped, rescoped and closed, and categories can be deleted with optional
 reassignment of their transactions.
+
+Phase 2 closed payees (entity + autocomplete + rename/merge +
+auto-categorize rules), split transactions, and transactions-page
+server-side search/pagination/bulk-category-set.
 
 ---
 
@@ -211,7 +215,11 @@ a typo) is the most painful daily friction.
 
 ---
 
-## Phase 2 — Daily-entry ergonomics: payees, split transactions, search & bulk edit
+## Phase 2 — Daily-entry ergonomics: payees, split transactions, search & bulk edit ✅ **Done**
+
+> Shipped in the release cut from the PR that closed this phase. Several
+> decisions were settled during implementation and are recorded under
+> "Decisions taken" below.
 
 **Goal**: entering and finding transactions is as fast as YNAB.
 
@@ -224,15 +232,28 @@ daily use of a budgeting app.
    (`id`, `user_id`, `name`, unique per user) with `payee_id` FK on
    transactions (keep the string column during migration, backfill, then
    drop). API: list payees, rename (updates all transactions), merge.
+   Shipped as specced: `payees` table + `payee_id` FK (migration `0012`,
+   backfills existing free-text values grouped case/whitespace-insensitively,
+   keeping the most-recently-dated original casing).
+   `GET/PATCH /api/payees` (autocomplete + O(1) rename — renaming touches
+   only the `Payee` row, not every transaction) and
+   `POST /api/payees/{id}/merge`.
    - Autocomplete in transaction forms (datalist or small combobox following
-     existing hand-rolled select pattern).
+     existing hand-rolled select pattern). Shipped as
+     `frontend/src/components/PayeeAutocomplete.tsx`.
    - **Last-used-category suggestion**: when a payee is picked, pre-select
      the category from that payee's most recent categorized transaction
      (YNAB behavior). Respect scope: only suggest categories whose group
-     scope matches the account scope.
+     scope matches the account scope. **Already shipped before this phase**
+     (`services/category_suggest.py`,
+     `GET /api/transactions/category-suggestions`) — excluded from this
+     phase's work.
    - *Stretch (Actual Budget-inspired)*: simple auto-categorization rules
      (payee-contains → category), applied to bank-synced and imported
-     transactions only, never overwriting a user-set category.
+     transactions only, never overwriting a user-set category. **Included**
+     (owner decision, see below): `payee_category_rules` table
+     (migration `0013`), pure matcher in `services/payee_rules.py`, applied
+     only at bank-sync/import time when a row arrives with no category.
 2. **Split transactions**: sub-line model — `transaction_splits` table
    (`transaction_id` FK, `category_id`, `amount_cents`, `memo`) where split
    amounts must sum to the parent amount (validate at the API boundary). A
@@ -240,6 +261,15 @@ daily use of a budgeting app.
    budget activity math (`compute_category_balances`) consumes split lines.
    Scope rule applies per line. UI: expandable split editor in the
    transaction form, following YNAB's remaining-amount pattern.
+   Shipped as specced: `transaction_splits` table (migration `0014`),
+   amounts validated to sum to the parent (422 on mismatch), scope enforced
+   per line. The integration point turned out to be
+   `services/txn_rows.py::build_txn_rows` (a split transaction expands into
+   one `TxnRow` per line before reaching `budget_calc.py`) rather than
+   `compute_category_balances` directly — see "Decisions taken". UI:
+   split-mode toggle in `AddTransactionModal.tsx` / `EditTransactionModal.tsx`
+   (`frontend/src/components/SplitEditor.tsx`) with a live remaining
+   indicator.
 3. **Transactions page, full-capability**
    (`frontend/src/pages/TransactionsPage.tsx` + `routers/transactions.py`):
    - Server-side filtering for account/category (currently client-side) and
@@ -249,14 +279,62 @@ daily use of a budgeting app.
      (bulk endpoints or sequential PATCH — prefer one bulk endpoint each).
    - Inline editing parity with `AccountDetailPage.tsx` (shipped in Phase 1).
 
+   Shipped with one deliberate deviation from the literal text: pagination
+   is **keyset** (cursor on `(date, id)`), not offset — offset paging breaks
+   under concurrent inserts on a list the user is actively editing. This
+   forced `GET /api/transactions`'s response to become an envelope
+   (`{items, next_cursor}`) instead of a bare array — a breaking change,
+   applied to both of its only two call sites (`TransactionsPage.tsx`,
+   `AccountDetailPage.tsx`) in the same change. Filters shipped: `account_id`
+   (now multi-value), `category_id` (matches split lines too), `unassigned`,
+   `ready_to_assign`, free-text `q` over payee/memo. Bulk actions:
+   `POST /api/transactions/bulk-set-category` (new; bulk-delete already
+   existed from earlier work) — mirrors bulk-delete's permissive philosophy,
+   silently skipping transfer legs, split transactions, and scope-mismatched
+   rows rather than erroring.
+
+### Decisions taken
+
+1. **Payees: first-class entity, not free text — [owner decision].** Before
+   implementation, a lighter alternative was proposed: keep `payee` as a
+   free-text column and implement rename/merge as a bulk `UPDATE`, with
+   autocomplete as a grouped prefix query — no migration, no dual-write.
+   The owner chose the ROADMAP's original entity design instead, accepting
+   the larger blast radius that came with it: every call site that read or
+   wrote `Transaction.payee` as a string (`bank_sync.py`,
+   `transfer_match.py`, the transactions router's create/update/list/import
+   paths, `accounts.py`'s balance-adjustment writer) moved to `payee_id` +
+   a shared `services/payees.py::resolve_payee` find-or-create helper.
+2. **Auto-categorize rules shipped now, not deferred.** ROADMAP marked this
+   a "stretch" goal separate from the core payee item; the owner chose to
+   include it in this pass rather than push it to a later one.
+3. **Split expansion lives in `txn_rows.py`, not `budget_calc.py`.**
+   ROADMAP's text said "budget activity math (`compute_category_balances`)
+   consumes split lines" — in practice, `compute_category_balances` never
+   changed. `TxnRow` is already the DB-free boundary both `routers/budget.py`
+   and `routers/insights.py` build through, so expanding one split
+   transaction into N `TxnRow`s at that boundary kept the pure calc module
+   (and its exhaustive pinned tests) untouched, which is a stronger
+   guarantee than the original text implied.
+4. **Migration numbers**: `0012` (payees), `0013` (payee_category_rules),
+   `0014` (transaction_splits) — the chain was at `0011` going into this
+   phase.
+
 ### Acceptance criteria
 
-- Typing a known payee autofills its last category; renaming/merging payees
-  updates history.
+- Typing a known payee autofills its last category (pre-existing,
+  unaffected); renaming/merging payees updates every referencing
+  transaction's displayed name with no transaction rows touched
+  (`test_payees.py`).
 - A split transaction budgets each line to its own category; parent amount
-  integrity enforced (422 on mismatch); budget page activity reflects lines.
-- `/transactions` can search, paginate, filter server-side, and bulk-edit.
-- Migration backfills payees from existing strings without data loss.
+  integrity enforced (422 on mismatch); budget page activity reflects lines
+  (`test_transaction_splits.py`, `test_txn_rows.py`,
+  `test_insights_reconciles_with_the_budget_page_when_a_transaction_is_split`).
+- `/transactions` searches, paginates (keyset), filters server-side, and
+  bulk-edits category or deletes (`test_transactions.py`).
+- Migration `0012` backfills payees from existing strings without data loss,
+  verified case-insensitively (merges "Amazon"/"amazon"/"AMAZON" into one
+  `Payee`, keeping the most-recently-dated casing).
 
 ---
 
