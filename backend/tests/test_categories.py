@@ -9,6 +9,7 @@ from tests.conftest import (
     create_account,
     create_category,
     create_group,
+    list_transactions,
     register_user,
 )
 
@@ -196,7 +197,7 @@ async def test_deleting_a_category_can_rehome_its_transactions(client: AsyncClie
     )
     assert r.status_code == 204, r.text
 
-    rows = (await client.get("/api/transactions", headers=headers)).json()
+    rows = await list_transactions(client, headers)
     assert [row["category_id"] for row in rows] == [groceries]
 
 
@@ -223,7 +224,7 @@ async def test_deleting_a_category_without_reassignment_uncategorizes(client: As
     r = await client.delete(f"/api/categories/{dining}", headers=headers)
     assert r.status_code == 204, r.text
 
-    rows = (await client.get("/api/transactions", headers=headers)).json()
+    rows = await list_transactions(client, headers)
     assert [row["category_id"] for row in rows] == [None]
 
 

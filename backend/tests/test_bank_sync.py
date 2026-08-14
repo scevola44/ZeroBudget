@@ -24,6 +24,7 @@ from app.models import (
     Account,
     BankConnection,
     DeletedExternalTransaction,
+    Payee,
     SyncRun,
     Transaction,
     User,
@@ -107,6 +108,18 @@ async def _seed(db: AsyncSession) -> tuple[User, BankConnection, Account]:
     return user, connection, account
 
 
+async def _rows_with_payee_name(db: AsyncSession, name: str) -> list[Transaction]:
+    """Transactions whose resolved payee name is ``name`` — the join a raw
+    ``Transaction.payee == name`` filter used to do before payee became an
+    entity."""
+    result = await db.execute(
+        select(Transaction).join(Payee, Transaction.payee_id == Payee.id).where(
+            Payee.name == name
+        )
+    )
+    return list(result.scalars().all())
+
+
 def _txn(
     amount: str,
     indicator: str,
@@ -144,7 +157,8 @@ async def test_booked_eur_debit_is_imported(db_session):
     assert len(rows) == 1
     assert rows[0].amount_cents == -4250
     assert rows[0].external_transaction_id == f"{account.id}:ref-1"
-    assert rows[0].payee == "Coffee Shop"
+    payee = await db_session.get(Payee, rows[0].payee_id)
+    assert payee is not None and payee.name == "Coffee Shop"
     assert connection.last_synced_at is not None
     assert connection.last_error_code is None
 
@@ -214,12 +228,15 @@ async def test_missing_entry_reference_uses_hash_fallback(db_session):
 @pytest.mark.asyncio
 async def test_update_preserves_user_owned_fields(db_session):
     user, connection, account = await _seed(db_session)
+    payee = Payee(user_id=user.id, name="Coffee Shop")
+    db_session.add(payee)
+    await db_session.flush()
     db_session.add(
         Transaction(
             user_id=user.id,
             account_id=account.id,
             date=date(2026, 7, 1),
-            payee="Coffee Shop",
+            payee_id=payee.id,
             memo="my notes",
             amount_cents=-500,
             external_transaction_id=f"{account.id}:ref-1",
@@ -241,7 +258,7 @@ async def test_update_preserves_user_owned_fields(db_session):
     assert row.date == date(2026, 7, 2)
     # ...user-owned fields preserved.
     assert row.memo == "my notes"
-    assert row.payee == "Coffee Shop"
+    assert row.payee_id == payee.id
 
 
 @pytest.mark.asyncio
@@ -329,15 +346,7 @@ async def test_opening_balance_imported_on_first_sync(db_session):
     await sync_connection(db_session, connection, client)
     await db_session.commit()
 
-    rows = (
-        (
-            await db_session.execute(
-                select(Transaction).where(Transaction.payee == "Opening Balance")
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await _rows_with_payee_name(db_session, "Opening Balance")
     assert len(rows) == 1
     # Bank balance (100000) minus the one imported transaction (-4250).
     assert rows[0].amount_cents == 104_250
@@ -371,15 +380,7 @@ async def test_opening_balance_not_reimported_on_later_sync(db_session):
     await sync_connection(db_session, connection, client)
     await sync_connection(db_session, connection, client)
 
-    rows = (
-        (
-            await db_session.execute(
-                select(Transaction).where(Transaction.payee == "Opening Balance")
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await _rows_with_payee_name(db_session, "Opening Balance")
     assert len(rows) == 1
 
 
@@ -437,11 +438,7 @@ async def test_opening_balance_prefers_eur_among_same_type(db_session):
 
     await sync_connection(db_session, connection, client)
 
-    row = (
-        await db_session.execute(
-            select(Transaction).where(Transaction.payee == "Opening Balance")
-        )
-    ).scalar_one()
+    [row] = await _rows_with_payee_name(db_session, "Opening Balance")
     assert row.amount_cents == 100_000
 
 
@@ -456,11 +453,7 @@ async def test_opening_balance_prefers_closing_booked(db_session):
 
     await sync_connection(db_session, connection, client)
 
-    row = (
-        await db_session.execute(
-            select(Transaction).where(Transaction.payee == "Opening Balance")
-        )
-    ).scalar_one()
+    [row] = await _rows_with_payee_name(db_session, "Opening Balance")
     assert row.amount_cents == 100_000
 
 
@@ -477,11 +470,7 @@ async def test_opening_balance_falls_back_to_closing_available(db_session):
 
     await sync_connection(db_session, connection, client)
 
-    row = (
-        await db_session.execute(
-            select(Transaction).where(Transaction.payee == "Opening Balance")
-        )
-    ).scalar_one()
+    [row] = await _rows_with_payee_name(db_session, "Opening Balance")
     assert row.amount_cents == 123
 
 

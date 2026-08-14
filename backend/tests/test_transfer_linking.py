@@ -13,6 +13,7 @@ from tests.conftest import (
     create_account,
     create_category,
     create_group,
+    list_transactions,
     ready_to_assign,
     register_user,
 )
@@ -59,7 +60,7 @@ async def _link(client: AsyncClient, headers: dict, txn_id: int, peer_id: int):
 
 
 async def _rows_by_id(client: AsyncClient, headers: dict) -> dict:
-    rows = (await client.get("/api/transactions", headers=headers)).json()
+    rows = await list_transactions(client, headers)
     return {row["id"]: row for row in rows}
 
 

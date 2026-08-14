@@ -3,10 +3,13 @@ import type { Transaction } from "../api/types";
 type CategoryLike = { name: string };
 
 /** Whether a row is the one "needs attention" state: no category, not a
- * transfer, not Ready to Assign. Mirrors the predicate TransactionsPage uses
- * to filter/count unassigned transactions, so the color accent and the badge
+ * transfer, not Ready to Assign — or, for a split transaction (whose own
+ * category_id is always null by design), at least one split line with no
+ * category. Mirrors the predicate TransactionsPage/the backend use to
+ * filter/count unassigned transactions, so the color accent and the badge
  * always agree with that count. */
 export function needsCategory(t: Transaction): boolean {
+  if (t.splits.length > 0) return t.splits.some((s) => s.category_id === null);
   return t.category_id === null && t.transfer_peer_id === null && !t.is_ready_to_assign;
 }
 
@@ -28,6 +31,16 @@ export function CategoryBadge({
         className={`${pillClass} bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-200`}
       >
         Transfer : {peerAccountName ?? "another account"}
+      </span>
+    );
+  }
+
+  if (transaction.splits.length > 0) {
+    return (
+      <span
+        className={`${pillClass} bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-200`}
+      >
+        Split ({transaction.splits.length} categories)
       </span>
     );
   }

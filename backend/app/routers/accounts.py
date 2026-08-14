@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from app.deps import CurrentUser, DbSession, owned_scope
 from app.models import Account, BankConnection, Transaction
 from app.schemas.account import AccountBalanceUpdate, AccountCreate, AccountResponse, AccountUpdate
+from app.services.payees import resolve_payee
 from app.services.synthetic_payees import BALANCE_ADJUSTMENT_PAYEE
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
@@ -186,12 +187,13 @@ async def set_account_balance(
     current_total = await _account_total(db, account.id)
     delta = payload.balance_cents - current_total
     if delta != 0:
+        payee = await resolve_payee(db, current_user.id, BALANCE_ADJUSTMENT_PAYEE)
         db.add(
             Transaction(
                 user_id=current_user.id,
                 account_id=account.id,
                 date=date.today(),
-                payee=BALANCE_ADJUSTMENT_PAYEE,
+                payee_id=payee.id if payee is not None else None,
                 memo="Manual balance correction",
                 amount_cents=delta,
             )

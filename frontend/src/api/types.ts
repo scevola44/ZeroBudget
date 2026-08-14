@@ -51,6 +51,13 @@ export type CategoryGroup = {
   categories: Category[];
 };
 
+export type TransactionSplit = {
+  id: number;
+  category_id: number | null;
+  amount_cents: number;
+  memo: string;
+};
+
 export type Transaction = {
   id: number;
   account_id: number;
@@ -60,13 +67,35 @@ export type Transaction = {
   // together with a non-null category_id.
   is_ready_to_assign: boolean;
   date: string;
+  // Denormalized display name — resolved server-side from payee_id, the same
+  // way transfer_peer_account_id is denormalized from transfer_peer_id.
   payee: string;
+  payee_id: number | null;
   memo: string;
   amount_cents: number;
   // Set on both legs of a transfer, each pointing at the other.
   transfer_peer_id: number | null;
   // The account holding the other leg, for labelling transfer rows.
   transfer_peer_account_id: number | null;
+  // Non-empty means this transaction is split across categories; category_id
+  // is then always null at the parent level — see SplitEditor.
+  splits: TransactionSplit[];
+};
+
+/** GET /api/transactions' response envelope: a page of rows plus a cursor to
+ * fetch the next one, when there is one. */
+export type TransactionPage = {
+  items: Transaction[];
+  next_cursor: string | null;
+};
+
+export type Payee = { id: number; name: string };
+
+export type PayeeCategoryRule = {
+  id: number;
+  category_id: number;
+  contains_text: string;
+  sort_order: number;
 };
 
 export type Transfer = {

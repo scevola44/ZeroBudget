@@ -21,6 +21,8 @@ from app.routers import (
     budget,
     categories,
     insights,
+    payee_rules,
+    payees,
     scopes,
     transactions,
 )
@@ -100,6 +102,8 @@ app.include_router(scopes.router)
 app.include_router(accounts.router)
 app.include_router(categories.router)
 app.include_router(transactions.router)
+app.include_router(payees.router)
+app.include_router(payee_rules.router)
 app.include_router(budget.router)
 app.include_router(insights.router)
 app.include_router(banking.router)
