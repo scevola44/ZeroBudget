@@ -521,14 +521,29 @@ still counts as that scope's income, same as any other unassigned inflow.
    Still open: matching synced rows against *manual* entries the user typed
    ahead of the sync (the double-counting half of this item).
 
-   **[owner decision] TODO**: replace (or supplement) the stateless
-   `transfer_match.py` heuristic with a real lookup/linking table that
-   connects transfer pairs more durably, instead of recomputing candidates
-   fresh on every call. Raised after Phase 5's Insights change made *all*
-   unassigned outflow invisible on the assumption it's mostly transfers — a
-   more reliable matcher would let that exclusion be precise instead of
-   blanket. Adopting this means revisiting the **[decision]** above against a
-   staging table.
+   **[done]** Replaced the stateless `transfer_match.py` recompute-per-call
+   heuristic with a persisted `transfer_match_candidates` table (migration
+   `0015`), maintained incrementally by
+   `services/transfer_candidate_store.py::sync_candidates_for` at every write
+   chokepoint that can change whether a pair matches (create, edit
+   date/amount/account/category, link, unlink; plain deletes need no extra
+   code since both FK columns cascade). `transfer_match.py` still owns the
+   *decision* of what a match is (`is_match`, `is_linkable`,
+   `find_candidates`) — the store only caches its output, so `GET
+   /transfer-candidates` and `GET /transfer-suggestions` read an indexed
+   lookup instead of re-scanning a date window on every request.
+   `test_transfer_candidate_store.py` pins the persisted table against a
+   fresh from-scratch recompute (the same reconciliation pattern
+   `test_insights_calc.py` uses) so a chokepoint that forgets to call
+   `sync_candidates_for` fails a test instead of silently drifting.
+
+   This does **not** revisit the **[decision]** above: the new table stores
+   only "these two rows could be a transfer's two legs," never a verdict, and
+   nothing in `budget_calc.py`/`insights_calc.py` reads it — so it can't
+   become a second source of truth for the budget math. Whether
+   `insights_calc`'s blanket unassigned-outflow exclusion should become
+   precise using this table is a separate, still-open product decision, not
+   assumed by this change.
 3. ~~Plaid webhooks~~ **Done differently**: Plaid was replaced by Enable
    Banking (PSD2, redirect consent), which has no webhook/delta API. Instead
    of webhooks, automatic sync is an in-process scheduler (`SYNC_MODE=auto`)

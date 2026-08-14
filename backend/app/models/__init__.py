@@ -15,6 +15,7 @@ from app.models.scope import Scope
 from app.models.sync_run import SyncRun
 from app.models.transaction import Transaction
 from app.models.transaction_split import TransactionSplit
+from app.models.transfer_match_candidate import TransferMatchCandidate
 from app.models.user import User
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     "SyncRun",
     "Transaction",
     "TransactionSplit",
+    "TransferMatchCandidate",
     "User",
 ]

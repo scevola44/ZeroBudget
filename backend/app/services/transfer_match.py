@@ -10,20 +10,18 @@ or not).
 This module is the single place that decides which rows *could* be halves of the
 same transfer, so the "link these two" picker and the post-sync suggestion list
 can never disagree about what a match is. It is pure over its inputs — the ORM
-join happens in the router, mirroring how ``budget_calc`` and ``txn_rows`` are
+join happens in the caller, mirroring how ``budget_calc`` and ``txn_rows`` are
 split.
 
 Matching is deliberately strict. Linking is destructive to the budget: both legs
 drop out of Ready to Assign on the assumption that they cancel out, so a false
 pair silently invents or destroys money.
 
-TODO: the matching above is computed statelessly, fresh from ``transactions``
-on every call — nothing about a candidate match is persisted until the user
-confirms a link. The owner would like a real lookup/linking table to connect
-transfer pairs more durably instead of (or alongside) this point-in-time
-heuristic. Note this would revisit the explicit decision in ROADMAP.md
-(Phase 6, "Import matching / approval") against a staging table, made to avoid
-a second source of truth for ``budget_calc``'s inputs.
+``services/transfer_candidate_store.py`` is what keeps a persisted record of
+which pairs match — this module still owns the *decision* of what a match is
+(``is_match``, ``is_linkable``, ``find_candidates``), so the store, the "link
+these two" picker and the suggestion list can never disagree about what a
+match is even though the store no longer recomputes one fresh per request.
 """
 
 from __future__ import annotations
@@ -125,6 +123,40 @@ def find_candidates(target: MatchRow, rows: Iterable[MatchRow]) -> list[MatchRow
     return sorted(matches, key=lambda row: (abs((row.date - target.date).days), row.id))
 
 
+def select_disjoint_pairs(matched: Iterable[tuple[MatchRow, MatchRow]]) -> list[SuggestedPair]:
+    """Greedily reduce already-matched (outflow, inflow) pairs to a disjoint set,
+    most confident first.
+
+    Split out of ``suggest_pairs`` so a caller that already knows which pairs
+    satisfy ``is_match`` — e.g. one reading precomputed candidates back out of
+    ``transfer_match_candidates`` — can reuse the exact same selection and
+    tie-break rules without re-deriving the matches themselves.
+
+    Every returned pair is disjoint: a row that could pair with two others is
+    offered once, against its closest match. That keeps the list honest (the
+    same transaction never appears twice) and makes confirming the suggestions
+    in any order always succeed.
+    """
+    scored = sorted(
+        matched,
+        key=lambda pair: (
+            abs((pair[1].date - pair[0].date).days),
+            -abs(pair[0].amount_cents),
+            pair[0].id,
+            pair[1].id,
+        ),
+    )
+
+    claimed: set[int] = set()
+    suggestions: list[SuggestedPair] = []
+    for outflow, inflow in scored:
+        if outflow.id in claimed or inflow.id in claimed:
+            continue
+        claimed.update((outflow.id, inflow.id))
+        suggestions.append(SuggestedPair(outflow_id=outflow.id, inflow_id=inflow.id))
+    return suggestions
+
+
 def suggest_pairs(rows: Sequence[MatchRow]) -> list[SuggestedPair]:
     """Disjoint suggested transfer pairs, most confident first.
 
@@ -132,11 +164,6 @@ def suggest_pairs(rows: Sequence[MatchRow]) -> list[SuggestedPair]:
     statement that the row is spending, and a suggestion should never invite the
     user to undo their own intent with one click — explicit linking may still
     override it.
-
-    Every returned pair is disjoint: a row that could pair with two others is
-    offered once, against its closest match. That keeps the list honest (the
-    same transaction never appears twice) and makes confirming the suggestions
-    in any order always succeed.
     """
     candidates = [row for row in rows if is_linkable(row) and row.category_id is None]
 
@@ -147,33 +174,16 @@ def suggest_pairs(rows: Sequence[MatchRow]) -> list[SuggestedPair]:
     for row in candidates:
         by_magnitude[abs(row.amount_cents)].append(row)
 
-    scored: list[tuple[int, MatchRow, MatchRow]] = []
+    matched: list[tuple[MatchRow, MatchRow]] = []
     for bucket in by_magnitude.values():
         outflows = [row for row in bucket if row.amount_cents < 0]
         inflows = [row for row in bucket if row.amount_cents > 0]
         for outflow in outflows:
             for inflow in inflows:
                 if is_match(outflow, inflow):
-                    days_apart = abs((inflow.date - outflow.date).days)
-                    scored.append((days_apart, outflow, inflow))
+                    matched.append((outflow, inflow))
 
-    scored.sort(
-        key=lambda entry: (
-            entry[0],
-            -abs(entry[1].amount_cents),
-            entry[1].id,
-            entry[2].id,
-        )
-    )
-
-    claimed: set[int] = set()
-    suggestions: list[SuggestedPair] = []
-    for _, outflow, inflow in scored:
-        if outflow.id in claimed or inflow.id in claimed:
-            continue
-        claimed.update((outflow.id, inflow.id))
-        suggestions.append(SuggestedPair(outflow_id=outflow.id, inflow_id=inflow.id))
-    return suggestions
+    return select_disjoint_pairs(matched)
 
 
 def _normalized_for_account_match(text: str) -> str:
