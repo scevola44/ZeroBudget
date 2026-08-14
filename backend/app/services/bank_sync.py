@@ -47,6 +47,7 @@ from app.services.encryption import decrypt
 from app.services.payee_rules import CategoryRule, match_rule
 from app.services.payees import resolve_payee
 from app.services.synthetic_payees import OPENING_BALANCE_PAYEE
+from app.services.transfer_candidate_store import sync_candidates_for
 
 logger = logging.getLogger(__name__)
 
@@ -392,18 +393,19 @@ async def sync_connection(
                     and category_scope_id.get(matched_category_id) != account.scope_id
                 ):
                     matched_category_id = None
-                db.add(
-                    Transaction(
-                        user_id=connection.user_id,
-                        account_id=account.id,
-                        category_id=matched_category_id,
-                        date=txn_date,
-                        payee_id=payee.id if payee is not None else None,
-                        memo="",
-                        amount_cents=amount_cents,
-                        external_transaction_id=external_id,
-                    )
+                new_txn = Transaction(
+                    user_id=connection.user_id,
+                    account_id=account.id,
+                    category_id=matched_category_id,
+                    date=txn_date,
+                    payee_id=payee.id if payee is not None else None,
+                    memo="",
+                    amount_cents=amount_cents,
+                    external_transaction_id=external_id,
                 )
+                db.add(new_txn)
+                await db.flush()  # new_txn.id, needed by sync_candidates_for
+                await sync_candidates_for(db, connection.user_id, new_txn.id)
                 summary.added += 1
                 touched.add(account.id)
             elif existing.date != txn_date or existing.amount_cents != amount_cents:
@@ -411,6 +413,7 @@ async def sync_connection(
                 # Update only what the bank authoritatively owns.
                 existing.date = txn_date
                 existing.amount_cents = amount_cents
+                await sync_candidates_for(db, connection.user_id, existing.id)
                 summary.modified += 1
                 touched.add(existing.account_id)
 

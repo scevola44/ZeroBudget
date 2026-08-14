@@ -40,13 +40,17 @@ from app.services.budget_calc import month_start, next_month_start, parse_month
 from app.services.category_suggest import PayeeHistoryRow, suggest_categories
 from app.services.payee_rules import CategoryRule, match_rule
 from app.services.payees import resolve_payee
+from app.services.transfer_candidate_store import (
+    linkable_transactions_between,
+    suggested_transfer_pairs_between,
+    sync_candidates_for,
+    to_match_row,
+)
 from app.services.transfer_match import (
     SUGGESTION_DEFAULT_DAYS,
     TRANSFER_MATCH_WINDOW_DAYS,
     AccountRef,
-    MatchRow,
     find_candidates,
-    suggest_pairs,
     suggest_payee_matched_transfers,
 )
 from app.services.txn_rows import (
@@ -65,18 +69,6 @@ NO_PAYEE_NAMES: dict[int, str] = {}
 # For call sites that can never involve a split transaction (transfer legs,
 # freshly created rows), so ``_to_response`` has nothing to look up.
 NO_SPLITS: dict[int, list[TransactionSplit]] = {}
-
-
-def _to_match_row(txn: Transaction, payee_names: dict[int, str]) -> MatchRow:
-    return MatchRow(
-        id=txn.id,
-        account_id=txn.account_id,
-        category_id=txn.category_id,
-        date=txn.date,
-        amount_cents=txn.amount_cents,
-        payee=payee_names.get(txn.payee_id, "") if txn.payee_id is not None else "",
-        transfer_peer_id=txn.transfer_peer_id,
-    )
 
 
 def _to_response(
@@ -407,6 +399,9 @@ async def import_transactions_from_ynab(
         )
 
     db.add_all(transactions)
+    await db.flush()  # ids, needed by sync_candidates_for below
+    for txn in transactions:
+        await sync_candidates_for(db, current_user.id, txn.id)
     await db.commit()
     return TransactionImportResponse(imported=len(transactions))
 
@@ -465,36 +460,6 @@ async def create_transfer(
     )
 
 
-async def _linkable_rows_between(
-    db, user_id: int, start_date: date, end_date: date
-) -> list[Transaction]:
-    """Unlinked, unsplit transactions in a date window, the raw material for
-    matching.
-
-    Narrowed in SQL only by ownership, date and split status — all cheap
-    filters that are purely about not loading the whole ledger and not
-    offering rows that could never legally become a transfer leg. Which of
-    the rest actually pair is ``transfer_match``'s call alone, so the rule
-    lives in exactly one place. A split transaction is excluded outright: it
-    already has its category-free line-items, and letting it become a
-    transfer would require reasoning about splits inside every transfer
-    response shape.
-    """
-    has_splits = (
-        select(TransactionSplit.id)
-        .where(TransactionSplit.transaction_id == Transaction.id)
-        .exists()
-    )
-    stmt = select(Transaction).where(
-        Transaction.user_id == user_id,
-        Transaction.transfer_peer_id.is_(None),
-        Transaction.date >= start_date,
-        Transaction.date <= end_date,
-        ~has_splits,
-    )
-    return list((await db.execute(stmt)).scalars().all())
-
-
 @router.get("/transfer-candidates", response_model=list[TransferCandidate])
 async def list_transfer_candidates(
     db: DbSession,
@@ -507,7 +472,7 @@ async def list_transfer_candidates(
     """Transactions that could be ``transaction_id``'s other leg, best first."""
     target = await _owned_transaction(db, current_user.id, transaction_id)
     window = timedelta(days=TRANSFER_MATCH_WINDOW_DAYS)
-    rows = await _linkable_rows_between(
+    rows = await linkable_transactions_between(
         db, current_user.id, target.date - window, target.date + window
     )
     by_id = {row.id: row for row in rows}
@@ -515,8 +480,15 @@ async def list_transfer_candidates(
         rows = [row for row in rows if row.account_id == account_id]
     payee_names = await load_payee_names(db, [target, *rows])
 
+    # Recomputed fresh from ``transfer_match`` rather than read from
+    # ``transfer_match_candidates``: this is the manual "link these two"
+    # picker, and unlike the automatic suggestion lists it must also offer
+    # already-categorized rows (the user may deliberately relabel a spend as a
+    # transfer), which the persisted table's categorized-rows-included storage
+    # still supports — but doing so here needs no join, since ``target`` and
+    # its ``account_id`` filter are already narrow.
     matches = find_candidates(
-        _to_match_row(target, payee_names), [_to_match_row(r, payee_names) for r in rows]
+        to_match_row(target, payee_names), [to_match_row(r, payee_names) for r in rows]
     )
     # Candidates are unlinked by definition, so none of them has a peer account
     # to denormalize.
@@ -540,30 +512,24 @@ async def list_transfer_suggestions(
 
     Only ever a suggestion: a sync writes each account's side independently and
     can't know they belong together, and neither can this — so the user confirms
-    each pair. See ``transfer_match.suggest_pairs`` for what "look like" means.
+    each pair. Read from the persisted ``transfer_match_candidates`` table
+    (kept in sync by ``transfer_candidate_store.sync_candidates_for`` at write
+    time) instead of recomputed fresh — see
+    ``transfer_candidate_store.suggested_transfer_pairs_between`` for what
+    "look like" means.
     """
     resolved_end = end_date or date.today()
     resolved_start = start_date or resolved_end - timedelta(days=SUGGESTION_DEFAULT_DAYS)
-    # Fetched wider than requested, then filtered back down below: a transfer
-    # dated right at the edge of the caller's range (e.g. the last day of a
-    # month view) can have its other leg just outside it, and that leg would
-    # never be pulled in to pair against otherwise.
-    window = timedelta(days=TRANSFER_MATCH_WINDOW_DAYS)
-    rows = await _linkable_rows_between(
-        db, current_user.id, resolved_start - window, resolved_end + window
+    pairs = await suggested_transfer_pairs_between(
+        db, current_user.id, resolved_start, resolved_end
     )
-    by_id = {row.id: row for row in rows}
-    payee_names = await load_payee_names(db, rows)
-
-    pairs = suggest_pairs([_to_match_row(row, payee_names) for row in rows])
+    payee_names = await load_payee_names(db, [txn for pair in pairs for txn in pair])
     return [
         TransferSuggestion(
-            outflow=_to_response(by_id[pair.outflow_id], NO_PEER_ACCOUNTS, payee_names),
-            inflow=_to_response(by_id[pair.inflow_id], NO_PEER_ACCOUNTS, payee_names),
+            outflow=_to_response(outflow, NO_PEER_ACCOUNTS, payee_names),
+            inflow=_to_response(inflow, NO_PEER_ACCOUNTS, payee_names),
         )
-        for pair in pairs
-        if resolved_start <= by_id[pair.outflow_id].date <= resolved_end
-        or resolved_start <= by_id[pair.inflow_id].date <= resolved_end
+        for outflow, inflow in pairs
     ]
 
 
@@ -581,20 +547,23 @@ async def list_transfer_payee_suggestions(
     ``transfer-suggestions`` (amount+date pairing) has nothing to find there.
     When the payee itself names that account, that's confirmation enough to
     offer creating the missing leg directly, one click, never automatically.
+
+    This heuristic is per-row, not pairwise, so it still scans its date window
+    fresh rather than reading ``transfer_match_candidates`` — see
+    ``transfer_match.suggest_payee_matched_transfers``.
     """
     resolved_end = end_date or date.today()
     resolved_start = start_date or resolved_end - timedelta(days=SUGGESTION_DEFAULT_DAYS)
-    # See list_transfer_suggestions: fetched wider than requested so a row
-    # just outside the caller's range can still be claimed by an
-    # amount/date match whose partner sits inside it, then filtered back
-    # down below.
+    # Fetched wider than requested: a row just outside the caller's range can
+    # still be claimed by an amount/date match whose partner sits inside it,
+    # then filtered back down below.
     window = timedelta(days=TRANSFER_MATCH_WINDOW_DAYS)
-    rows = await _linkable_rows_between(
+    rows = await linkable_transactions_between(
         db, current_user.id, resolved_start - window, resolved_end + window
     )
     by_id = {row.id: row for row in rows}
     payee_names = await load_payee_names(db, rows)
-    match_rows = [_to_match_row(row, payee_names) for row in rows]
+    match_rows = [to_match_row(row, payee_names) for row in rows]
 
     accounts_result = await db.execute(
         select(Account).where(Account.user_id == current_user.id, Account.closed.is_(False))
@@ -605,11 +574,10 @@ async def list_transfer_payee_suggestions(
     ]
     account_names = {a.id: a.name for a in accounts}
 
-    claimed_ids = {
-        row_id
-        for pair in suggest_pairs(match_rows)
-        for row_id in (pair.outflow_id, pair.inflow_id)
-    }
+    claimed_pairs = await suggested_transfer_pairs_between(
+        db, current_user.id, resolved_start - window, resolved_end + window
+    )
+    claimed_ids = {txn.id for pair in claimed_pairs for txn in pair}
     suggestions = suggest_payee_matched_transfers(match_rows, accounts, claimed_ids)
     return [
         PayeeTransferSuggestion(
@@ -708,6 +676,10 @@ async def link_transfer(
     peer.is_ready_to_assign = False
     txn.transfer_peer_id = peer.id
     peer.transfer_peer_id = txn.id
+    # Both legs just stopped being linkable, so neither belongs in
+    # transfer_match_candidates any more.
+    await sync_candidates_for(db, current_user.id, txn.id)
+    await sync_candidates_for(db, current_user.id, peer.id)
     await db.commit()
     await db.refresh(txn)
     await db.refresh(peer)
@@ -742,6 +714,10 @@ async def unlink_transfer(
     txn.transfer_peer_id = None
     if peer is not None:
         peer.transfer_peer_id = None
+    # Both legs just became linkable again, so each may now match other rows.
+    await sync_candidates_for(db, current_user.id, txn.id)
+    if peer is not None:
+        await sync_candidates_for(db, current_user.id, peer.id)
     await db.commit()
 
 
@@ -826,9 +802,10 @@ async def create_transaction(
         amount_cents=payload.amount_cents,
     )
     db.add(txn)
+    await db.flush()  # txn.id, needed by the split rows and sync_candidates_for
     if payload.splits:
-        await db.flush()  # txn.id, needed by the split rows
         await _persist_splits(db, txn.id, payload.splits)
+    await sync_candidates_for(db, current_user.id, txn.id)
     await db.commit()
     await db.refresh(txn)
     payee_names = {payee.id: payee.name} if payee is not None else {}
@@ -938,6 +915,7 @@ async def update_transaction(
         if payload.splits:
             await _persist_splits(db, txn.id, payload.splits)
 
+    await sync_candidates_for(db, current_user.id, txn.id)
     await db.commit()
     await db.refresh(txn)
     return _to_response(
@@ -1034,6 +1012,13 @@ async def bulk_set_category(
     account_scope_id = {a.id: a.scope_id for a in accounts_result.scalars().all()}
     splits_by_txn_id = await load_splits_by_transaction_id(db, txns)
 
+    # No transfer_match_candidates maintenance needed below: category_id and
+    # is_ready_to_assign (the only fields this endpoint ever touches) don't
+    # participate in ``is_linkable``/``is_match``, so a stored pair's validity
+    # never depends on them — the persisted candidates stay correct as-is, and
+    # the "uncategorized only" rule for automatic suggestions is applied fresh
+    # against the live category_id at read time (see
+    # ``suggested_transfer_pairs_between``).
     updated = 0
     for txn in txns:
         if txn.transfer_peer_id is not None:
