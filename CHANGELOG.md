@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.10.0-beta.10...v0.11.0-beta.10) (2026-08-14)
+
+
+### Features
+
+* **transactions:** persist transfer-match candidates instead of recomputing on every call ([#144](https://github.com/scevola44/ZeroBudget/issues/144)) ([db51d4b](https://github.com/scevola44/ZeroBudget/commit/db51d4bd35fb99b038e88dce66d25e7041e4f338))
+
+
+### Bug Fixes
+
+* don't miss transfer suggestions whose legs straddle the queried date range ([#142](https://github.com/scevola44/ZeroBudget/issues/142)) ([00aa16d](https://github.com/scevola44/ZeroBudget/commit/00aa16d3e8683282864cebac8fa9f4d5d8ea3cfb))
+* exclude transfer legs from the Unassigned transactions filter ([#145](https://github.com/scevola44/ZeroBudget/issues/145)) ([ad0ee7c](https://github.com/scevola44/ZeroBudget/commit/ad0ee7cfacd168420231f0877f1c03cd3b9cf664))
+
 ## [0.10.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.9.0-beta.10...v0.10.0-beta.10) (2026-08-14)
 
 
