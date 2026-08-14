@@ -119,6 +119,13 @@ class CategoryBalance:
     balance_cents: int  # prior rollover + assigned + activity
 
 
+@dataclass(frozen=True)
+class FundGoalsEntry:
+    category_id: int
+    needed_cents: int  # full suggested amount, for display
+    amount_cents: int  # actually funded, capped by the available pool
+
+
 def compute_ready_to_assign(
     transactions: list[TxnRow],
     assignments: list[AssignmentRow],
@@ -203,3 +210,35 @@ def compute_category_balances(
             balance_cents=balance,
         )
     return result
+
+
+def compute_fund_goals_plan(
+    needed_by_category: list[tuple[int, int]],
+    available_cents: int,
+) -> list[FundGoalsEntry]:
+    """Fund each underfunded category (``needed_cents > 0``) in the given
+    order until ``available_cents`` runs out.
+
+    Sequential, not proportional: earlier categories are funded in full;
+    once the pool is exhausted the current category gets whatever remains
+    and every later one gets 0. ``needed_by_category`` should already be in
+    the order the user sees on the budget page (group then category sort
+    order) so a partially-funded plan reads predictably. Entries with
+    ``needed_cents <= 0`` are excluded — they're not underfunded. The sum of
+    every returned ``amount_cents`` never exceeds ``max(0, available_cents)``.
+    """
+    remaining = max(0, available_cents)
+    entries: list[FundGoalsEntry] = []
+    for category_id, needed_cents in needed_by_category:
+        if needed_cents <= 0:
+            continue
+        amount_cents = min(needed_cents, remaining)
+        entries.append(
+            FundGoalsEntry(
+                category_id=category_id,
+                needed_cents=needed_cents,
+                amount_cents=amount_cents,
+            )
+        )
+        remaining -= amount_cents
+    return entries

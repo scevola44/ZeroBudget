@@ -10,8 +10,10 @@ from datetime import date
 
 from app.services.budget_calc import (
     AssignmentRow,
+    FundGoalsEntry,
     TxnRow,
     compute_category_balances,
+    compute_fund_goals_plan,
     compute_ready_to_assign,
     month_start,
     next_month_start,
@@ -393,3 +395,47 @@ def test_categorized_transaction_in_off_budget_account_still_reduces_category_ba
     b = balances[cat]
     assert b.activity_cents == -15_000
     assert b.balance_cents == 45_000
+
+
+# --- Fund goals plan -----------------------------------------------------------
+
+
+def test_fund_goals_plan_funds_everything_when_pool_covers_the_total():
+    plan = compute_fund_goals_plan([(1, 10_000), (2, 20_000)], available_cents=50_000)
+    assert [(e.category_id, e.needed_cents, e.amount_cents) for e in plan] == [
+        (1, 10_000, 10_000),
+        (2, 20_000, 20_000),
+    ]
+
+
+def test_fund_goals_plan_fills_sequentially_and_stops_when_pool_runs_out():
+    # First category funded in full, second gets the remainder, third gets 0.
+    plan = compute_fund_goals_plan(
+        [(1, 10_000), (2, 20_000), (3, 15_000)], available_cents=25_000
+    )
+    assert [(e.category_id, e.needed_cents, e.amount_cents) for e in plan] == [
+        (1, 10_000, 10_000),
+        (2, 20_000, 15_000),
+        (3, 15_000, 0),
+    ]
+
+
+def test_fund_goals_plan_excludes_categories_that_are_not_underfunded():
+    plan = compute_fund_goals_plan([(1, 0), (2, -500), (3, 10_000)], available_cents=100_000)
+    assert [e.category_id for e in plan] == [3]
+
+
+def test_fund_goals_plan_treats_negative_pool_as_nothing_available():
+    plan = compute_fund_goals_plan([(1, 10_000)], available_cents=-5_000)
+    assert plan == [FundGoalsEntry(category_id=1, needed_cents=10_000, amount_cents=0)]
+
+
+def test_fund_goals_plan_empty_input_yields_empty_plan():
+    assert compute_fund_goals_plan([], available_cents=50_000) == []
+
+
+def test_fund_goals_plan_never_exceeds_available_cents():
+    plan = compute_fund_goals_plan(
+        [(1, 10_000), (2, 20_000), (3, 15_000)], available_cents=25_000
+    )
+    assert sum(e.amount_cents for e in plan) == 25_000

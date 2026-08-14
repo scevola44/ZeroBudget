@@ -1,9 +1,10 @@
+from dataclasses import dataclass
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from app.deps import CurrentUser, DbSession
+from app.deps import CurrentUser, DbSession, owned_scope
 from app.models import (
     Account,
     Category,
@@ -18,18 +19,28 @@ from app.schemas.budget import (
     BudgetCategoryRow,
     BudgetGroupRow,
     BudgetMonthResponse,
+    FundGoalsEntryResponse,
+    FundGoalsPreviewResponse,
+    FundGoalsRequest,
     ScopeReadyToAssign,
 )
 from app.services.budget_calc import (
     AssignmentRow,
     CategoryBalance,
+    FundGoalsEntry,
+    TxnRow,
     compute_category_balances,
+    compute_fund_goals_plan,
     compute_ready_to_assign,
     format_month,
     month_start,
     parse_month,
 )
-from app.services.txn_rows import build_txn_rows, load_peer_account_ids, load_splits_by_transaction_id
+from app.services.txn_rows import (
+    build_txn_rows,
+    load_peer_account_ids,
+    load_splits_by_transaction_id,
+)
 
 
 def _needed_this_month(
@@ -75,12 +86,20 @@ def _parse_month_or_400(value: str):
         ) from exc
 
 
-@router.get("/{month}", response_model=BudgetMonthResponse)
-async def get_budget_month(
-    month: str, db: DbSession, current_user: CurrentUser
-) -> BudgetMonthResponse:
-    target_month = _parse_month_or_400(month)
+@dataclass
+class _BudgetMonthData:
+    groups: list[CategoryGroup]
+    categories: list[Category]
+    scopes: list[Scope]
+    category_scope_id: dict[int, int]
+    txns: list[TxnRow]
+    assignments: list[AssignmentRow]
+    balances: dict[int, CategoryBalance]
 
+
+async def _load_budget_month_data(
+    db: DbSession, current_user: CurrentUser, target_month: date
+) -> _BudgetMonthData:
     groups = (
         (
             await db.execute(
@@ -172,9 +191,27 @@ async def get_budget_month(
     cat_ids = [c.id for c in categories]
     balances = compute_category_balances(cat_ids, txns, assignments, target_month)
 
+    return _BudgetMonthData(
+        groups=groups,
+        categories=categories,
+        scopes=scopes,
+        category_scope_id=category_scope_id,
+        txns=txns,
+        assignments=assignments,
+        balances=balances,
+    )
+
+
+@router.get("/{month}", response_model=BudgetMonthResponse)
+async def get_budget_month(
+    month: str, db: DbSession, current_user: CurrentUser
+) -> BudgetMonthResponse:
+    target_month = _parse_month_or_400(month)
+    data = await _load_budget_month_data(db, current_user, target_month)
+
     cats_by_group: dict[int, list[BudgetCategoryRow]] = {}
-    for c in categories:
-        b = balances[c.id]
+    for c in data.categories:
+        b = data.balances[c.id]
         cats_by_group.setdefault(c.group_id, []).append(
             BudgetCategoryRow(
                 id=c.id,
@@ -195,10 +232,10 @@ async def get_budget_month(
             ScopeReadyToAssign(
                 scope_id=scope.id,
                 ready_to_assign_cents=compute_ready_to_assign(
-                    txns, assignments, target_month, scope.id
+                    data.txns, data.assignments, target_month, scope.id
                 ),
             )
-            for scope in scopes
+            for scope in data.scopes
         ],
         groups=[
             BudgetGroupRow(
@@ -207,7 +244,7 @@ async def get_budget_month(
                 scope_id=g.scope_id,
                 categories=cats_by_group.get(g.id, []),
             )
-            for g in groups
+            for g in data.groups
         ],
     )
 
@@ -243,4 +280,94 @@ async def upsert_assignment(
         )
     else:
         existing.amount_cents = payload.amount_cents
+    await db.commit()
+
+
+async def _compute_fund_goals_plan_for_scope(
+    db: DbSession, current_user: CurrentUser, target_month: date, scope_id: int
+) -> tuple[_BudgetMonthData, list[FundGoalsEntry], dict[int, str], int]:
+    """Shared by the preview and commit endpoints so both always see the same
+    plan for the same DB state — the commit endpoint calls this itself right
+    before writing rather than trusting a client-supplied preview, since a
+    stale preview must never be allowed to move money."""
+    data = await _load_budget_month_data(db, current_user, target_month)
+    scope_categories = [c for c in data.categories if data.category_scope_id[c.id] == scope_id]
+    needed_by_category = [
+        (c.id, _needed_this_month(c, data.balances[c.id], target_month) or 0)
+        for c in scope_categories
+    ]
+    ready_to_assign_cents = compute_ready_to_assign(
+        data.txns, data.assignments, target_month, scope_id
+    )
+    plan = compute_fund_goals_plan(needed_by_category, ready_to_assign_cents)
+    names_by_id = {c.id: c.name for c in scope_categories}
+    return data, plan, names_by_id, ready_to_assign_cents
+
+
+@router.post("/{month}/fund-goals/preview", response_model=FundGoalsPreviewResponse)
+async def preview_fund_goals(
+    month: str,
+    payload: FundGoalsRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> FundGoalsPreviewResponse:
+    target_month = _parse_month_or_400(month)
+    await owned_scope(db, current_user.id, payload.scope_id)
+
+    _data, plan, names_by_id, ready_to_assign_cents = await _compute_fund_goals_plan_for_scope(
+        db, current_user, target_month, payload.scope_id
+    )
+    entries = [
+        FundGoalsEntryResponse(
+            category_id=entry.category_id,
+            category_name=names_by_id[entry.category_id],
+            needed_cents=entry.needed_cents,
+            amount_cents=entry.amount_cents,
+        )
+        for entry in plan
+    ]
+    return FundGoalsPreviewResponse(
+        scope_id=payload.scope_id,
+        ready_to_assign_cents=ready_to_assign_cents,
+        entries=entries,
+        total_amount_cents=sum(e.amount_cents for e in entries),
+    )
+
+
+@router.post("/{month}/fund-goals", status_code=status.HTTP_204_NO_CONTENT)
+async def commit_fund_goals(
+    month: str,
+    payload: FundGoalsRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> None:
+    target_month = _parse_month_or_400(month)
+    await owned_scope(db, current_user.id, payload.scope_id)
+
+    data, plan, _names_by_id, _ready_to_assign_cents = await _compute_fund_goals_plan_for_scope(
+        db, current_user, target_month, payload.scope_id
+    )
+
+    for entry in plan:
+        if entry.amount_cents <= 0:
+            continue
+        new_total = data.balances[entry.category_id].assigned_cents + entry.amount_cents
+        existing = await db.scalar(
+            select(MonthlyAssignment).where(
+                MonthlyAssignment.user_id == current_user.id,
+                MonthlyAssignment.category_id == entry.category_id,
+                MonthlyAssignment.month == target_month,
+            )
+        )
+        if existing is None:
+            db.add(
+                MonthlyAssignment(
+                    user_id=current_user.id,
+                    category_id=entry.category_id,
+                    month=target_month,
+                    amount_cents=new_total,
+                )
+            )
+        else:
+            existing.amount_cents = new_total
     await db.commit()

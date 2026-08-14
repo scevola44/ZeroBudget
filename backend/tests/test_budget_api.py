@@ -50,6 +50,27 @@ async def _assign(client: AsyncClient, headers: dict, month: str, category_id: i
     assert r.status_code == 204, r.text
 
 
+async def _preview_fund_goals(
+    client: AsyncClient, headers: dict, month: str, scope_id: int
+) -> dict:
+    r = await client.post(
+        f"/api/budget/{month}/fund-goals/preview",
+        json={"scope_id": scope_id},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def _commit_fund_goals(client: AsyncClient, headers: dict, month: str, scope_id: int):
+    r = await client.post(
+        f"/api/budget/{month}/fund-goals",
+        json={"scope_id": scope_id},
+        headers=headers,
+    )
+    assert r.status_code == 204, r.text
+
+
 async def _add_outflow(
     client: AsyncClient, headers: dict, account_id: int, category_id: int, amount: int, date: str
 ):
@@ -615,3 +636,195 @@ async def test_categorized_transaction_in_savings_account_still_funds_its_catego
     row = body["groups"][0]["categories"][0]
     assert row["activity_cents"] == -15_000
     assert row["balance_cents"] == 45_000
+
+
+# --- Fund goals (auto-assign underfunded) --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fund_goals_preview_funds_everything_when_rta_covers_it(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent", goal_amount_cents=10_000)
+    power = await create_category(client, headers, group, "Electricity", goal_amount_cents=20_000)
+    personal = await scope_id(client, headers, PERSONAL)
+
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+
+    preview = await _preview_fund_goals(client, headers, "2026-04", personal)
+    assert preview["scope_id"] == personal
+    assert preview["ready_to_assign_cents"] == 100_000
+    assert preview["total_amount_cents"] == 30_000
+    entries = {e["category_id"]: e for e in preview["entries"]}
+    assert entries[rent]["needed_cents"] == entries[rent]["amount_cents"] == 10_000
+    assert entries[power]["needed_cents"] == entries[power]["amount_cents"] == 20_000
+
+    # Preview never writes.
+    budget = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    assert all(c["assigned_cents"] == 0 for g in budget["groups"] for c in g["categories"])
+
+
+@pytest.mark.asyncio
+async def test_fund_goals_preview_caps_sequentially_when_rta_is_short(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent", goal_amount_cents=10_000)
+    power = await create_category(client, headers, group, "Electricity", goal_amount_cents=20_000)
+    fun = await create_category(client, headers, group, "Fun", goal_amount_cents=15_000)
+    personal = await scope_id(client, headers, PERSONAL)
+
+    await _add_inflow(client, headers, account, 25_000, "2026-04-01")
+
+    preview = await _preview_fund_goals(client, headers, "2026-04", personal)
+    assert preview["ready_to_assign_cents"] == 25_000
+    assert preview["total_amount_cents"] == 25_000
+    entries = {e["category_id"]: e for e in preview["entries"]}
+    assert entries[rent]["amount_cents"] == 10_000
+    assert entries[power]["amount_cents"] == 15_000  # only 15_000 of the 20_000 it needs
+    assert entries[fun]["amount_cents"] == 0  # pool exhausted before this one
+
+
+@pytest.mark.asyncio
+async def test_fund_goals_preview_excludes_already_funded_categories(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent", goal_amount_cents=10_000)
+    power = await create_category(client, headers, group, "Electricity", goal_amount_cents=20_000)
+    personal = await scope_id(client, headers, PERSONAL)
+
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", rent, 10_000)
+
+    preview = await _preview_fund_goals(client, headers, "2026-04", personal)
+    assert [e["category_id"] for e in preview["entries"]] == [power]
+
+
+@pytest.mark.asyncio
+async def test_fund_goals_preview_empty_when_nothing_is_underfunded(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent", goal_amount_cents=10_000)
+    personal = await scope_id(client, headers, PERSONAL)
+
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", rent, 10_000)
+
+    preview = await _preview_fund_goals(client, headers, "2026-04", personal)
+    assert preview["entries"] == []
+    assert preview["total_amount_cents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_fund_goals_preview_only_considers_categories_in_the_requested_scope(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    personal_account = await create_account(client, headers, "Personal", scope=PERSONAL)
+    shared_account = await create_account(client, headers, "Joint", scope=FAMILY)
+    personal_group = await create_group(client, headers, "Hobbies", scope=PERSONAL)
+    shared_group = await create_group(client, headers, "Family", scope=FAMILY)
+    hobbies = await create_category(client, headers, personal_group, "Hobbies", goal_amount_cents=5_000)
+    groceries = await create_category(client, headers, shared_group, "Groceries", goal_amount_cents=8_000)
+    personal = await scope_id(client, headers, PERSONAL)
+    family = await scope_id(client, headers, FAMILY)
+
+    await _add_inflow(client, headers, personal_account, 100_000, "2026-04-01")
+    await _add_inflow(client, headers, shared_account, 100_000, "2026-04-01")
+
+    personal_preview = await _preview_fund_goals(client, headers, "2026-04", personal)
+    assert [e["category_id"] for e in personal_preview["entries"]] == [hobbies]
+
+    family_preview = await _preview_fund_goals(client, headers, "2026-04", family)
+    assert [e["category_id"] for e in family_preview["entries"]] == [groceries]
+
+
+@pytest.mark.asyncio
+async def test_fund_goals_preview_404s_for_a_scope_owned_by_another_user(client: AsyncClient):
+    alice = await register_user(client, "alice@example.com")
+    bob = await register_user(client, "bob@example.com")
+    alice_scope = await scope_id(client, alice, PERSONAL)
+
+    r = await client.post(
+        "/api/budget/2026-04/fund-goals/preview",
+        json={"scope_id": alice_scope},
+        headers=bob,
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_fund_goals_commit_404s_for_a_scope_owned_by_another_user(client: AsyncClient):
+    alice = await register_user(client, "alice@example.com")
+    bob = await register_user(client, "bob@example.com")
+    alice_scope = await scope_id(client, alice, PERSONAL)
+
+    r = await client.post(
+        "/api/budget/2026-04/fund-goals",
+        json={"scope_id": alice_scope},
+        headers=bob,
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_fund_goals_commit_matches_the_previewed_sequential_split(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent", goal_amount_cents=10_000)
+    power = await create_category(client, headers, group, "Electricity", goal_amount_cents=20_000)
+    fun = await create_category(client, headers, group, "Fun", goal_amount_cents=15_000)
+    personal = await scope_id(client, headers, PERSONAL)
+
+    await _add_inflow(client, headers, account, 25_000, "2026-04-01")
+
+    await _commit_fund_goals(client, headers, "2026-04", personal)
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    assert await ready_to_assign(client, headers, body) == 0
+    rows = {c["id"]: c for g in body["groups"] for c in g["categories"]}
+    assert rows[rent]["assigned_cents"] == 10_000
+    assert rows[power]["assigned_cents"] == 15_000
+    assert rows[fun]["assigned_cents"] == 0
+
+
+@pytest.mark.asyncio
+async def test_fund_goals_commit_adds_on_top_of_an_existing_partial_assignment(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent", goal_amount_cents=10_000)
+    personal = await scope_id(client, headers, PERSONAL)
+
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", rent, 4_000)
+
+    await _commit_fund_goals(client, headers, "2026-04", personal)
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    row = body["groups"][0]["categories"][0]
+    assert row["assigned_cents"] == 10_000  # 4_000 existing + 6_000 needed, not 4_000 + 10_000
+
+
+@pytest.mark.asyncio
+async def test_fund_goals_commit_is_a_noop_when_nothing_is_underfunded(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent", goal_amount_cents=10_000)
+    personal = await scope_id(client, headers, PERSONAL)
+
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", rent, 10_000)
+
+    await _commit_fund_goals(client, headers, "2026-04", personal)
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    assert await ready_to_assign(client, headers, body) == 90_000
+    assert body["groups"][0]["categories"][0]["assigned_cents"] == 10_000
