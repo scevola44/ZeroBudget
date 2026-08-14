@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.9.0-beta.10...v0.10.0-beta.10) (2026-08-14)
+
+
+### Features
+
+* per-scope Fund goals auto-assign with preview ([#140](https://github.com/scevola44/ZeroBudget/issues/140)) ([269ac96](https://github.com/scevola44/ZeroBudget/commit/269ac96fcf26829bffd6ed2217f19146c15fb925))
+
 ## [0.9.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.8.0-beta.10...v0.9.0-beta.10) (2026-08-14)
 
 
