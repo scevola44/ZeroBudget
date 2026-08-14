@@ -544,8 +544,13 @@ async def list_transfer_suggestions(
     """
     resolved_end = end_date or date.today()
     resolved_start = start_date or resolved_end - timedelta(days=SUGGESTION_DEFAULT_DAYS)
+    # Fetched wider than requested, then filtered back down below: a transfer
+    # dated right at the edge of the caller's range (e.g. the last day of a
+    # month view) can have its other leg just outside it, and that leg would
+    # never be pulled in to pair against otherwise.
+    window = timedelta(days=TRANSFER_MATCH_WINDOW_DAYS)
     rows = await _linkable_rows_between(
-        db, current_user.id, resolved_start, resolved_end
+        db, current_user.id, resolved_start - window, resolved_end + window
     )
     by_id = {row.id: row for row in rows}
     payee_names = await load_payee_names(db, rows)
@@ -557,6 +562,8 @@ async def list_transfer_suggestions(
             inflow=_to_response(by_id[pair.inflow_id], NO_PEER_ACCOUNTS, payee_names),
         )
         for pair in pairs
+        if resolved_start <= by_id[pair.outflow_id].date <= resolved_end
+        or resolved_start <= by_id[pair.inflow_id].date <= resolved_end
     ]
 
 
@@ -577,7 +584,14 @@ async def list_transfer_payee_suggestions(
     """
     resolved_end = end_date or date.today()
     resolved_start = start_date or resolved_end - timedelta(days=SUGGESTION_DEFAULT_DAYS)
-    rows = await _linkable_rows_between(db, current_user.id, resolved_start, resolved_end)
+    # See list_transfer_suggestions: fetched wider than requested so a row
+    # just outside the caller's range can still be claimed by an
+    # amount/date match whose partner sits inside it, then filtered back
+    # down below.
+    window = timedelta(days=TRANSFER_MATCH_WINDOW_DAYS)
+    rows = await _linkable_rows_between(
+        db, current_user.id, resolved_start - window, resolved_end + window
+    )
     by_id = {row.id: row for row in rows}
     payee_names = await load_payee_names(db, rows)
     match_rows = [_to_match_row(row, payee_names) for row in rows]
@@ -604,6 +618,7 @@ async def list_transfer_payee_suggestions(
             to_account_name=account_names[s.to_account_id],
         )
         for s in suggestions
+        if resolved_start <= by_id[s.transaction_id].date <= resolved_end
     ]
 
 

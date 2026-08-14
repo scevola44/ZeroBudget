@@ -398,6 +398,54 @@ async def test_a_linked_pair_stops_being_suggested(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_suggestions_surface_a_pair_straddling_the_queried_range(
+    client: AsyncClient,
+):
+    # Querying a single month, as the Transactions page does by default, must
+    # not blind the matcher to a leg dated just outside that month.
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    outflow = await _add_transaction(
+        client, headers, checking, -TRANSFER_CENTS, date="2026-03-31"
+    )
+    inflow = await _add_transaction(
+        client, headers, savings, TRANSFER_CENTS, date="2026-04-02"
+    )
+
+    r = await client.get(
+        "/api/transactions/transfer-suggestions"
+        "?start_date=2026-04-01&end_date=2026-04-30",
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["outflow"]["id"] == outflow
+    assert body[0]["inflow"]["id"] == inflow
+
+
+@pytest.mark.asyncio
+async def test_suggestions_ignore_a_pair_entirely_outside_the_queried_range(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    await _add_transaction(client, headers, checking, -TRANSFER_CENTS, date="2026-02-10")
+    await _add_transaction(client, headers, savings, TRANSFER_CENTS, date="2026-02-11")
+
+    r = await client.get(
+        "/api/transactions/transfer-suggestions"
+        "?start_date=2026-04-01&end_date=2026-04-30",
+        headers=headers,
+    )
+
+    assert r.json() == []
+
+
+@pytest.mark.asyncio
 async def test_linking_to_an_account_creates_the_missing_leg(client: AsyncClient):
     # Stands in for a manual savings account: a bank sync never writes anything
     # there, so there's nothing for transfer-candidates to ever find.
@@ -572,6 +620,50 @@ async def test_payee_suggestions_stop_once_the_row_is_linked(client: AsyncClient
     )
 
     assert r.json() == []
+
+
+@pytest.mark.asyncio
+async def test_payee_suggestions_exclude_a_row_claimed_by_a_cross_boundary_match(
+    client: AsyncClient,
+):
+    # The outflow's payee happens to name an unsynced account too, but it's
+    # really the near leg of an amount/date match whose partner sits just
+    # outside the queried range — it must not also be offered as a payee
+    # match, the same as it wouldn't be if both legs were in range.
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    await create_account(client, headers, "Manual Savings")
+    outflow = await _add_transaction(
+        client,
+        headers,
+        checking,
+        -TRANSFER_CENTS,
+        date="2026-04-01",
+        payee="To Manual Savings",
+    )
+    await _add_transaction(
+        client, headers, savings, TRANSFER_CENTS, date="2026-03-30"
+    )
+
+    r = await client.get(
+        "/api/transactions/transfer-payee-suggestions"
+        "?start_date=2026-04-01&end_date=2026-04-30",
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == []
+
+    # Sanity check: the amount/date pair itself is still surfaced.
+    pairs = (
+        await client.get(
+            "/api/transactions/transfer-suggestions"
+            "?start_date=2026-04-01&end_date=2026-04-30",
+            headers=headers,
+        )
+    ).json()
+    assert len(pairs) == 1
+    assert pairs[0]["outflow"]["id"] == outflow
 
 
 @pytest.mark.asyncio
