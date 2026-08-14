@@ -775,6 +775,28 @@ async def test_list_unassigned_filter_accounts_for_split_transactions_with_a_nul
 
 
 @pytest.mark.asyncio
+async def test_list_unassigned_filter_excludes_transfer_legs(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers, "A1")
+    b = await create_account(client, headers, "A2")
+    plain_unassigned = await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=-500)
+
+    # A transfer pair: uncategorized on both legs, but never "needs a category".
+    outflow = await _add_txn(client, headers, account_id=a, date="2026-04-02", amount=-300)
+    inflow = await _add_txn(client, headers, account_id=b, date="2026-04-02", amount=300)
+    link = await client.post(
+        f"/api/transactions/{outflow}/transfer-link",
+        json={"peer_transaction_id": inflow},
+        headers=headers,
+    )
+    assert link.status_code == 200, link.text
+
+    rows = await list_transactions(client, headers, unassigned=True)
+    ids = {row["id"] for row in rows}
+    assert ids == {plain_unassigned}
+
+
+@pytest.mark.asyncio
 async def test_list_ready_to_assign_filter(client: AsyncClient):
     headers = await register_user(client)
     a = await create_account(client, headers)

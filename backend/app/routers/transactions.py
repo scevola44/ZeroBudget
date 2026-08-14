@@ -221,7 +221,10 @@ async def list_transactions(
         )
         stmt = stmt.where(or_(Transaction.category_id == category_id, has_split_category))
     if unassigned:
-        stmt = stmt.where(_needs_category_clause())
+        # Transfer legs are always uncategorized by design (see create_transfer),
+        # but they aren't spending that needs a category — same exclusion as
+        # /unassigned-count.
+        stmt = stmt.where(_needs_category_clause(), Transaction.transfer_peer_id.is_(None))
     if ready_to_assign:
         stmt = stmt.where(Transaction.is_ready_to_assign.is_(True))
     if q:
