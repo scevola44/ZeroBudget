@@ -6,8 +6,16 @@ import type { Account, Transaction } from "../api/types";
 import { type CategoryBudgetInfo, CategoryPicker, type CategoryChoice } from "./CategoryPicker";
 import { parseAmountToCents } from "../lib/money";
 import { categorySelectValue, parseCategorySelectValue } from "../lib/readyToAssignOption";
+import { isSplitComplete } from "../lib/splitRemaining";
 import { transferTargetId } from "../lib/transferOption";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
+import { PayeeAutocomplete } from "./PayeeAutocomplete";
+import {
+  blankSplitLine,
+  SplitEditor,
+  type SplitLineDraft,
+  type TransactionSplitPayload,
+} from "./SplitEditor";
 
 export type TransactionEdit = {
   date: string;
@@ -16,6 +24,7 @@ export type TransactionEdit = {
   amount_cents: number;
   category_id: number | null;
   is_ready_to_assign: boolean;
+  splits: TransactionSplitPayload[];
 };
 
 export function EditTransactionModal({
@@ -65,6 +74,8 @@ export function EditTransactionModal({
   // Whether the user has picked a category themselves since opening the
   // modal, so a suggestion arriving afterward never overrides that choice.
   const [categoryTouched, setCategoryTouched] = useState(false);
+  const [splitLines, setSplitLines] = useState<SplitLineDraft[] | null>(null);
+  const isSplitting = splitLines !== null;
 
   const isTransfer = transaction.transfer_peer_id !== null;
 
@@ -77,6 +88,15 @@ export function EditTransactionModal({
     setCategoryId(categorySelectValue(transaction.category_id, transaction.is_ready_to_assign));
     setAmountError(null);
     setCategoryTouched(false);
+    setSplitLines(
+      transaction.splits.length > 0
+        ? transaction.splits.map((s) => ({
+            categoryId: s.category_id === null ? "" : String(s.category_id),
+            amount: (s.amount_cents / 100).toFixed(2),
+            memo: s.memo,
+          }))
+        : null,
+    );
   }, [isOpen, transaction]);
 
   // Only suggest once the payee is actually edited away from its saved value —
@@ -113,6 +133,30 @@ export function EditTransactionModal({
       setAmountError("Enter a valid amount (use '-' for outflow).");
       return;
     }
+
+    if (isSplitting) {
+      const lineCents = splitLines.map((l) => parseAmountToCents(l.amount));
+      if (lineCents.some((c) => c === null) || !isSplitComplete(cents, lineCents as number[])) {
+        setAmountError("Split amounts must sum to the transaction amount.");
+        return;
+      }
+      setAmountError(null);
+      onSave({
+        date,
+        payee,
+        memo,
+        amount_cents: cents,
+        category_id: null,
+        is_ready_to_assign: false,
+        splits: splitLines.map((line, i) => ({
+          category_id: line.categoryId === "" ? null : Number(line.categoryId),
+          amount_cents: lineCents[i] as number,
+          memo: line.memo,
+        })),
+      });
+      return;
+    }
+
     setAmountError(null);
     onSave({
       date,
@@ -120,7 +164,29 @@ export function EditTransactionModal({
       memo,
       amount_cents: cents,
       ...parseCategorySelectValue(categoryId),
+      splits: [],
     });
+  }
+
+  // Seeds line 1 from whatever's picked so far; a blank line 2 is where the
+  // user starts typing the split. Dropping back to one line (or none) exits
+  // split mode, carrying that line's category/amount back to the plain fields.
+  function startSplitting() {
+    setSplitLines([{ categoryId, amount, memo: "" }, blankSplitLine()]);
+  }
+
+  function onSplitLinesChange(lines: SplitLineDraft[]) {
+    if (lines.length >= 2) {
+      setSplitLines(lines);
+      return;
+    }
+    const [only] = lines;
+    setSplitLines(null);
+    if (only) {
+      setCategoryTouched(true);
+      setCategoryId(only.categoryId);
+      if (only.amount) setAmount(only.amount);
+    }
   }
 
   return (
@@ -165,19 +231,30 @@ export function EditTransactionModal({
 
           <div className="space-y-1">
             <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Payee</label>
-            <input
-              autoFocus
+            <PayeeAutocomplete
               value={payee}
-              onChange={(e) => setPayee(e.target.value)}
+              onChange={setPayee}
               disabled={isPending}
-              className="w-full border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+              autoFocus
             />
           </div>
 
           <div className="space-y-1">
-            <label className="text-sm font-medium text-stone-700 dark:text-stone-300">
-              Category
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-stone-700 dark:text-stone-300">
+                Category
+              </label>
+              {!isTransfer && !isSplitting && (
+                <button
+                  type="button"
+                  onClick={startSplitting}
+                  disabled={isPending}
+                  className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50"
+                >
+                  Split
+                </button>
+              )}
+            </div>
             {isTransfer ? (
               <div className="w-full border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 rounded-lg px-3 py-2 text-sm text-stone-600 dark:text-stone-400 flex items-center justify-between gap-3">
                 <span>Transfer : {peerAccount?.name ?? "another account"}</span>
@@ -193,6 +270,15 @@ export function EditTransactionModal({
                   </button>
                 )}
               </div>
+            ) : isSplitting ? (
+              <SplitEditor
+                totalAmountCents={parseAmountToCents(amount)}
+                lines={splitLines}
+                onChange={onSplitLinesChange}
+                categories={categories}
+                budgetByCategoryId={budgetByCategoryId}
+                disabled={isPending}
+              />
             ) : (
               <CategoryPicker
                 value={categoryId}

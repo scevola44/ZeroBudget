@@ -21,6 +21,7 @@ from tests.conftest import (
     create_account,
     create_category,
     create_group,
+    list_transactions,
     register_user,
 )
 
@@ -56,9 +57,7 @@ async def _add_txn(
 @pytest.mark.asyncio
 async def test_list_empty(client: AsyncClient):
     headers = await register_user(client)
-    r = await client.get("/api/transactions", headers=headers)
-    assert r.status_code == 200
-    assert r.json() == []
+    assert await list_transactions(client, headers) == []
 
 
 @pytest.mark.asyncio
@@ -71,9 +70,8 @@ async def test_filter_by_account(client: AsyncClient):
     await _add_txn(client, headers, account_id=a1, date="2026-04-02", amount=2000)
     await _add_txn(client, headers, account_id=a2, date="2026-04-03", amount=3000)
 
-    r = await client.get(f"/api/transactions?account_id={a1}", headers=headers)
-    assert r.status_code == 200
-    amounts = sorted(t["amount_cents"] for t in r.json())
+    rows = await list_transactions(client, headers, account_id=a1)
+    amounts = sorted(t["amount_cents"] for t in rows)
     assert amounts == [1000, 2000]
 
 
@@ -88,8 +86,8 @@ async def test_filter_by_month(client: AsyncClient):
     await _add_txn(client, headers, account_id=a, date="2026-04-30", amount=400)
     await _add_txn(client, headers, account_id=a, date="2026-05-01", amount=500)
 
-    r = await client.get("/api/transactions?month=2026-04", headers=headers)
-    amounts = sorted(t["amount_cents"] for t in r.json())
+    rows = await list_transactions(client, headers, month="2026-04")
+    amounts = sorted(t["amount_cents"] for t in rows)
     assert amounts == [200, 300, 400]
 
 
@@ -254,7 +252,7 @@ async def test_delete_transaction(client: AsyncClient):
 
     r = await client.delete(f"/api/transactions/{txn_id}", headers=headers)
     assert r.status_code == 204
-    assert (await client.get("/api/transactions", headers=headers)).json() == []
+    assert await list_transactions(client, headers) == []
 
 
 @pytest_asyncio.fixture
@@ -354,7 +352,7 @@ async def test_bulk_delete_removes_selected_transactions(client: AsyncClient):
     assert r.status_code == 200, r.text
     assert r.json() == {"deleted": 2}
 
-    remaining = (await client.get("/api/transactions", headers=headers)).json()
+    remaining = await list_transactions(client, headers)
     assert [t["id"] for t in remaining] == [keep]
 
 
@@ -379,7 +377,7 @@ async def test_bulk_delete_cascades_to_transfer_peer(client: AsyncClient):
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"deleted": 2}
-    assert (await client.get("/api/transactions", headers=headers)).json() == []
+    assert await list_transactions(client, headers) == []
 
 
 @pytest.mark.asyncio
@@ -404,7 +402,7 @@ async def test_bulk_delete_both_transfer_legs_does_not_double_delete(client: Asy
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"deleted": 2}
-    assert (await client.get("/api/transactions", headers=headers)).json() == []
+    assert await list_transactions(client, headers) == []
 
 
 @pytest.mark.asyncio
@@ -423,8 +421,8 @@ async def test_bulk_delete_ignores_other_users_ids(client: AsyncClient):
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"deleted": 1}
-    assert (await client.get("/api/transactions", headers=alice)).json() == []
-    remaining_bob = (await client.get("/api/transactions", headers=bob)).json()
+    assert await list_transactions(client, alice) == []
+    remaining_bob = await list_transactions(client, bob)
     assert [t["id"] for t in remaining_bob] == [bob_txn]
 
 
@@ -540,8 +538,8 @@ async def test_create_ready_to_assign_transaction(client: AsyncClient):
         client, headers, account_id=a, date="2026-04-01", amount=50000,
         is_ready_to_assign=True,
     )
-    r = await client.get("/api/transactions", headers=headers)
-    txn = next(t for t in r.json() if t["id"] == txn_id)
+    rows = await list_transactions(client, headers)
+    txn = next(t for t in rows if t["id"] == txn_id)
     assert txn["category_id"] is None
     assert txn["is_ready_to_assign"] is True
 
@@ -675,3 +673,378 @@ async def test_ready_to_assign_rows_excluded_from_category_suggestion_history(cl
     )
     assert r.status_code == 200
     assert r.json() == []
+
+
+# ---------------------------------------------------------------------------
+# List filters, pagination, and bulk-set-category
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_filters_by_category_id(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    groceries = await create_category(client, headers, g, "Groceries")
+    fun = await create_category(client, headers, g, "Fun")
+
+    wanted = await _add_txn(
+        client, headers, account_id=a, date="2026-04-01", amount=-100, category_id=groceries
+    )
+    await _add_txn(client, headers, account_id=a, date="2026-04-02", amount=-200, category_id=fun)
+
+    rows = await list_transactions(client, headers, category_id=groceries)
+    assert [r["id"] for r in rows] == [wanted]
+
+
+@pytest.mark.asyncio
+async def test_list_category_id_filter_matches_split_lines_too(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    groceries = await create_category(client, headers, g, "Groceries")
+    fun = await create_category(client, headers, g, "Fun")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -1000,
+            "splits": [
+                {"category_id": groceries, "amount_cents": -400},
+                {"category_id": fun, "amount_cents": -600},
+            ],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    split_txn_id = r.json()["id"]
+
+    rows = await list_transactions(client, headers, category_id=groceries)
+    assert [row["id"] for row in rows] == [split_txn_id]
+
+
+@pytest.mark.asyncio
+async def test_list_unassigned_filter_accounts_for_split_transactions_with_a_null_line(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    groceries = await create_category(client, headers, g, "Groceries")
+
+    fully_categorized = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -1000,
+            "splits": [
+                {"category_id": groceries, "amount_cents": -400},
+                {"category_id": groceries, "amount_cents": -600},
+            ],
+        },
+        headers=headers,
+    )
+    has_null_line = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "date": "2026-04-02",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -1000,
+            "splits": [
+                {"category_id": groceries, "amount_cents": -400},
+                {"category_id": None, "amount_cents": -600},
+            ],
+        },
+        headers=headers,
+    )
+    plain_unassigned = await _add_txn(client, headers, account_id=a, date="2026-04-03", amount=-500)
+
+    rows = await list_transactions(client, headers, unassigned=True)
+    ids = {row["id"] for row in rows}
+    assert ids == {has_null_line.json()["id"], plain_unassigned}
+    assert fully_categorized.json()["id"] not in ids
+
+
+@pytest.mark.asyncio
+async def test_list_ready_to_assign_filter(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    rta = await _add_txn(
+        client, headers, account_id=a, date="2026-04-01", amount=1000, is_ready_to_assign=True
+    )
+    await _add_txn(client, headers, account_id=a, date="2026-04-02", amount=-200)
+
+    rows = await list_transactions(client, headers, ready_to_assign=True)
+    assert [r["id"] for r in rows] == [rta]
+
+
+@pytest.mark.asyncio
+async def test_list_free_text_search_matches_payee_or_memo(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    payee_match = await _add_txn(
+        client, headers, account_id=a, date="2026-04-01", amount=-100, payee="Coffee Shop"
+    )
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "date": "2026-04-02",
+            "payee": "",
+            "memo": "Bought coffee beans",
+            "amount_cents": -200,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    memo_match = r.json()["id"]
+    await _add_txn(client, headers, account_id=a, date="2026-04-03", amount=-300, payee="Rent")
+
+    rows = await list_transactions(client, headers, q="coffee")
+    assert {row["id"] for row in rows} == {payee_match, memo_match}
+
+
+@pytest.mark.asyncio
+async def test_list_search_is_case_insensitive(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    wanted = await _add_txn(
+        client, headers, account_id=a, date="2026-04-01", amount=-100, payee="AMAZON"
+    )
+
+    rows = await list_transactions(client, headers, q="amazon")
+    assert [r["id"] for r in rows] == [wanted]
+
+
+@pytest.mark.asyncio
+async def test_list_account_id_accepts_multiple_values(client: AsyncClient):
+    headers = await register_user(client)
+    a1 = await create_account(client, headers, "A1")
+    a2 = await create_account(client, headers, "A2")
+    a3 = await create_account(client, headers, "A3")
+    t1 = await _add_txn(client, headers, account_id=a1, date="2026-04-01", amount=100)
+    t2 = await _add_txn(client, headers, account_id=a2, date="2026-04-02", amount=200)
+    await _add_txn(client, headers, account_id=a3, date="2026-04-03", amount=300)
+
+    r = await client.get(
+        "/api/transactions", params=[("account_id", a1), ("account_id", a2)], headers=headers
+    )
+    assert r.status_code == 200, r.text
+    assert {row["id"] for row in r.json()["items"]} == {t1, t2}
+
+
+@pytest.mark.asyncio
+async def test_list_without_limit_returns_everything_unpaginated(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    for i in range(5):
+        await _add_txn(client, headers, account_id=a, date=f"2026-04-{i + 1:02d}", amount=100)
+
+    r = await client.get("/api/transactions", headers=headers)
+    body = r.json()
+    assert len(body["items"]) == 5
+    assert body["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_pagination_returns_next_cursor_when_more_rows_exist(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    for i in range(5):
+        await _add_txn(client, headers, account_id=a, date=f"2026-04-{i + 1:02d}", amount=100)
+
+    r = await client.get("/api/transactions", params={"limit": 3}, headers=headers)
+    body = r.json()
+    assert len(body["items"]) == 3
+    assert body["next_cursor"] is not None
+
+
+@pytest.mark.asyncio
+async def test_list_pagination_second_page_has_no_overlap_or_gap_with_the_first(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    ids = [
+        await _add_txn(client, headers, account_id=a, date=f"2026-04-{i + 1:02d}", amount=100)
+        for i in range(5)
+    ]
+
+    first = (
+        await client.get("/api/transactions", params={"limit": 3}, headers=headers)
+    ).json()
+    second = (
+        await client.get(
+            "/api/transactions",
+            params={"limit": 3, "cursor": first["next_cursor"]},
+            headers=headers,
+        )
+    ).json()
+
+    first_ids = [row["id"] for row in first["items"]]
+    second_ids = [row["id"] for row in second["items"]]
+    assert set(first_ids) & set(second_ids) == set()
+    assert sorted(first_ids + second_ids) == sorted(ids)
+    assert second["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_pagination_rejects_malformed_cursor(client: AsyncClient):
+    headers = await register_user(client)
+    r = await client.get(
+        "/api/transactions", params={"limit": 5, "cursor": "not-a-cursor"}, headers=headers
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_bulk_set_category_updates_selected_transactions(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    groceries = await create_category(client, headers, g, "Groceries")
+    t1 = await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=-100)
+    t2 = await _add_txn(client, headers, account_id=a, date="2026-04-02", amount=-200)
+
+    r = await client.post(
+        "/api/transactions/bulk-set-category",
+        json={"ids": [t1, t2], "category_id": groceries},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"updated": 2}
+
+    rows = await list_transactions(client, headers)
+    assert {row["category_id"] for row in rows} == {groceries}
+
+
+@pytest.mark.asyncio
+async def test_bulk_set_category_clears_to_unassigned(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    groceries = await create_category(client, headers, g, "Groceries")
+    t1 = await _add_txn(
+        client, headers, account_id=a, date="2026-04-01", amount=-100, category_id=groceries
+    )
+
+    r = await client.post(
+        "/api/transactions/bulk-set-category",
+        json={"ids": [t1], "category_id": None},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"updated": 1}
+
+    [row] = await list_transactions(client, headers)
+    assert row["category_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_bulk_set_category_skips_transfer_legs(client: AsyncClient):
+    headers = await register_user(client)
+    a1 = await create_account(client, headers, "A1")
+    a2 = await create_account(client, headers, "A2")
+    g = await create_group(client, headers)
+    groceries = await create_category(client, headers, g, "Groceries")
+
+    r = await client.post(
+        "/api/transactions/transfer",
+        json={
+            "from_account_id": a1,
+            "to_account_id": a2,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": 1000,
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    leg_id = r.json()["from_transaction"]["id"]
+
+    r = await client.post(
+        "/api/transactions/bulk-set-category",
+        json={"ids": [leg_id], "category_id": groceries},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"updated": 0}
+
+
+@pytest.mark.asyncio
+async def test_bulk_set_category_skips_split_transactions(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    g = await create_group(client, headers)
+    c1 = await create_category(client, headers, g, "A")
+    c2 = await create_category(client, headers, g, "B")
+    c3 = await create_category(client, headers, g, "C")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": a,
+            "date": "2026-04-01",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -1000,
+            "splits": [
+                {"category_id": c1, "amount_cents": -400},
+                {"category_id": c2, "amount_cents": -600},
+            ],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    split_txn_id = r.json()["id"]
+
+    r = await client.post(
+        "/api/transactions/bulk-set-category",
+        json={"ids": [split_txn_id], "category_id": c3},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"updated": 0}
+
+
+@pytest.mark.asyncio
+async def test_bulk_set_category_skips_rows_outside_the_categorys_scope(client: AsyncClient):
+    headers = await register_user(client)
+    personal_account = await create_account(client, headers, "Checking", scope=PERSONAL)
+    shared_group = await create_group(client, headers, "Bills", scope=FAMILY)
+    shared_category = await create_category(client, headers, shared_group, "Rent")
+    t1 = await _add_txn(
+        client, headers, account_id=personal_account, date="2026-04-01", amount=-1000
+    )
+
+    r = await client.post(
+        "/api/transactions/bulk-set-category",
+        json={"ids": [t1], "category_id": shared_category},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"updated": 0}
+
+
+@pytest.mark.asyncio
+async def test_bulk_set_category_rejects_unknown_category_id(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    t1 = await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=-100)
+
+    r = await client.post(
+        "/api/transactions/bulk-set-category",
+        json={"ids": [t1], "category_id": 999_999},
+        headers=headers,
+    )
+    assert r.status_code == 400

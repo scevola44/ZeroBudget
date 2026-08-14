@@ -29,7 +29,7 @@ from app.services.budget_calc import (
     month_start,
     parse_month,
 )
-from app.services.txn_rows import build_txn_rows, load_peer_account_ids
+from app.services.txn_rows import build_txn_rows, load_peer_account_ids, load_splits_by_transaction_id
 
 
 def _needed_this_month(
@@ -151,8 +151,13 @@ async def get_budget_month(
     category_scope_id: dict[int, int] = {c.id: group_scope_id[c.group_id] for c in categories}
 
     peer_account_id = await load_peer_account_ids(db, txn_rows_db)
+    splits_by_transaction_id = await load_splits_by_transaction_id(db, txn_rows_db)
     txns = build_txn_rows(
-        txn_rows_db, account_scope_id, account_on_budget_map, peer_account_id
+        txn_rows_db,
+        account_scope_id,
+        account_on_budget_map,
+        peer_account_id,
+        splits_by_transaction_id,
     )
     assignments = [
         AssignmentRow(

@@ -6,8 +6,16 @@ import type { Account } from "../api/types";
 import { parseAmountToCents } from "../lib/money";
 import { todayISO } from "../lib/dates";
 import { parseCategorySelectValue } from "../lib/readyToAssignOption";
+import { isSplitComplete } from "../lib/splitRemaining";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
 import { type CategoryBudgetInfo, type CategoryChoice, CategoryPicker } from "./CategoryPicker";
+import { PayeeAutocomplete } from "./PayeeAutocomplete";
+import {
+  blankSplitLine,
+  SplitEditor,
+  type SplitLineDraft,
+  type TransactionSplitPayload,
+} from "./SplitEditor";
 
 export type TransactionCreateInput = {
   account_id: number;
@@ -17,6 +25,7 @@ export type TransactionCreateInput = {
   amount_cents: number;
   category_id: number | null;
   is_ready_to_assign: boolean;
+  splits: TransactionSplitPayload[];
 };
 
 export function AddTransactionModal({
@@ -51,6 +60,8 @@ export function AddTransactionModal({
   // Whether the user has picked a category themselves this entry, so a
   // suggestion arriving afterward never overrides that choice.
   const [categoryTouched, setCategoryTouched] = useState(false);
+  const [splitLines, setSplitLines] = useState<SplitLineDraft[] | null>(null);
+  const isSplitting = splitLines !== null;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -62,6 +73,7 @@ export function AddTransactionModal({
     setCategoryId("");
     setCategoryTouched(false);
     setAmountError(null);
+    setSplitLines(null);
     // openAccounts is derived from `accounts` each render; only re-seed when the modal opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
@@ -99,6 +111,31 @@ export function AddTransactionModal({
       setAmountError("Enter a valid amount (use '-' for outflow).");
       return;
     }
+
+    if (isSplitting) {
+      const lineCents = splitLines.map((l) => parseAmountToCents(l.amount));
+      if (lineCents.some((c) => c === null) || !isSplitComplete(cents, lineCents as number[])) {
+        setAmountError("Split amounts must sum to the transaction amount.");
+        return;
+      }
+      setAmountError(null);
+      onSave({
+        account_id: selectedAccount.id,
+        date,
+        payee,
+        memo,
+        amount_cents: cents,
+        category_id: null,
+        is_ready_to_assign: false,
+        splits: splitLines.map((line, i) => ({
+          category_id: line.categoryId === "" ? null : Number(line.categoryId),
+          amount_cents: lineCents[i] as number,
+          memo: line.memo,
+        })),
+      });
+      return;
+    }
+
     setAmountError(null);
     onSave({
       account_id: selectedAccount.id,
@@ -107,7 +144,29 @@ export function AddTransactionModal({
       memo,
       amount_cents: cents,
       ...parseCategorySelectValue(categoryId),
+      splits: [],
     });
+  }
+
+  // Seeds line 1 from whatever's picked so far; a blank line 2 is where the
+  // user starts typing the split. Dropping back to one line (or none) exits
+  // split mode, carrying that line's category/amount back to the plain fields.
+  function startSplitting() {
+    setSplitLines([{ categoryId, amount, memo: "" }, blankSplitLine()]);
+  }
+
+  function onSplitLinesChange(lines: SplitLineDraft[]) {
+    if (lines.length >= 2) {
+      setSplitLines(lines);
+      return;
+    }
+    const [only] = lines;
+    setSplitLines(null);
+    if (only) {
+      setCategoryTouched(true);
+      setCategoryId(only.categoryId);
+      if (only.amount) setAmount(only.amount);
+    }
   }
 
   return (
@@ -168,29 +227,47 @@ export function AddTransactionModal({
 
           <div className="space-y-1">
             <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Payee</label>
-            <input
-              value={payee}
-              onChange={(e) => setPayee(e.target.value)}
-              disabled={isPending}
-              className="w-full border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-            />
+            <PayeeAutocomplete value={payee} onChange={setPayee} disabled={isPending} />
           </div>
 
           <div className="space-y-1">
-            <label className="text-sm font-medium text-stone-700 dark:text-stone-300">
-              Category
-            </label>
-            <CategoryPicker
-              value={categoryId}
-              onChange={(newValue) => {
-                setCategoryTouched(true);
-                setCategoryId(newValue);
-              }}
-              categories={categories}
-              suggestedCategoryIds={suggestedCategoryIds}
-              budgetByCategoryId={budgetByCategoryId}
-              disabled={isPending}
-            />
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-stone-700 dark:text-stone-300">
+                Category
+              </label>
+              {!isSplitting && (
+                <button
+                  type="button"
+                  onClick={startSplitting}
+                  disabled={isPending}
+                  className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50"
+                >
+                  Split
+                </button>
+              )}
+            </div>
+            {isSplitting ? (
+              <SplitEditor
+                totalAmountCents={parseAmountToCents(amount)}
+                lines={splitLines}
+                onChange={onSplitLinesChange}
+                categories={categories}
+                budgetByCategoryId={budgetByCategoryId}
+                disabled={isPending}
+              />
+            ) : (
+              <CategoryPicker
+                value={categoryId}
+                onChange={(newValue) => {
+                  setCategoryTouched(true);
+                  setCategoryId(newValue);
+                }}
+                categories={categories}
+                suggestedCategoryIds={suggestedCategoryIds}
+                budgetByCategoryId={budgetByCategoryId}
+                disabled={isPending}
+              />
+            )}
           </div>
 
           <div className="space-y-1">

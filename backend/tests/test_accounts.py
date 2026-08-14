@@ -7,6 +7,7 @@ from tests.conftest import (
     FAMILY,
     PERSONAL,
     create_account,
+    list_transactions,
     register_user,
     scope_id,
 )
@@ -193,9 +194,7 @@ async def test_set_balance_creates_adjustment_transaction(client: AsyncClient):
     assert r.status_code == 200
     assert r.json()["balance_cents"] == 50_000
 
-    txns = (
-        await client.get(f"/api/transactions?account_id={account_id}", headers=headers)
-    ).json()
+    txns = await list_transactions(client, headers, account_id=account_id)
     assert len(txns) == 1
     assert txns[0]["payee"] == "Balance Adjustment"
     assert txns[0]["amount_cents"] == 50_000
@@ -217,9 +216,7 @@ async def test_set_balance_is_noop_when_already_matching(client: AsyncClient):
     )
     assert r.status_code == 200
 
-    txns = (
-        await client.get(f"/api/transactions?account_id={account_id}", headers=headers)
-    ).json()
+    txns = await list_transactions(client, headers, account_id=account_id)
     assert txns == []
 
 

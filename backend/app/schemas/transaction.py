@@ -3,6 +3,21 @@ from datetime import date as DateType
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class TransactionSplitInput(BaseModel):
+    category_id: int | None = None
+    amount_cents: int
+    memo: str = Field(default="", max_length=500)
+
+
+class TransactionSplitResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    category_id: int | None
+    amount_cents: int
+    memo: str
+
+
 class TransactionCreate(BaseModel):
     account_id: int
     category_id: int | None = None
@@ -11,6 +26,7 @@ class TransactionCreate(BaseModel):
     payee: str = Field(default="", max_length=255)
     memo: str = Field(default="", max_length=500)
     amount_cents: int  # signed: positive = inflow, negative = outflow
+    splits: list[TransactionSplitInput] = Field(default_factory=list)
 
 
 class TransactionUpdate(BaseModel):
@@ -21,6 +37,10 @@ class TransactionUpdate(BaseModel):
     payee: str | None = Field(default=None, max_length=255)
     memo: str | None = Field(default=None, max_length=500)
     amount_cents: int | None = None
+    # None = leave splits unchanged. [] = clear splits, reverting to a plain
+    # category. Non-empty = replace wholesale (delete + recreate — split
+    # counts are small, so diffing buys nothing).
+    splits: list[TransactionSplitInput] | None = None
 
 
 class TransactionResponse(BaseModel):
@@ -32,12 +52,14 @@ class TransactionResponse(BaseModel):
     is_ready_to_assign: bool
     date: DateType
     payee: str
+    payee_id: int | None = None
     memo: str
     amount_cents: int
     transfer_peer_id: int | None = None
     # The account holding the other leg. Denormalized onto the response so a
     # transaction list can label transfers without fetching the peer rows.
     transfer_peer_account_id: int | None = None
+    splits: list[TransactionSplitResponse] = Field(default_factory=list)
 
 
 class TransferCreate(BaseModel):
@@ -111,3 +133,21 @@ class BulkDeleteRequest(BaseModel):
 
 class BulkDeleteResponse(BaseModel):
     deleted: int
+
+
+class BulkSetCategoryRequest(BaseModel):
+    ids: list[int] = Field(min_length=1)
+    # None clears to unassigned.
+    category_id: int | None = None
+
+
+class BulkSetCategoryResponse(BaseModel):
+    updated: int
+
+
+class TransactionPage(BaseModel):
+    items: list[TransactionResponse]
+    # Present when more rows exist past this page; pass back as ``cursor`` to
+    # fetch the next one. None when this page reached the end (or the caller
+    # never asked for pagination via ``limit``).
+    next_cursor: str | None = None

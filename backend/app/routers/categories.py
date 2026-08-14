@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select, update
 
 from app.deps import CurrentUser, DbSession, owned_scope
-from app.models import Category, CategoryGroup, Scope, Transaction
+from app.models import Category, CategoryGroup, Scope, Transaction, TransactionSplit
 from app.schemas.category import (
     CategoryCreate,
     CategoryGroupCreate,
@@ -277,6 +277,18 @@ async def delete_category(
             .where(
                 Transaction.user_id == current_user.id,
                 Transaction.category_id == category_id,
+            )
+            .values(category_id=reassign_to)
+        )
+        # Split lines reference categories independently of their parent
+        # transaction's own (always-NULL, when split) category_id.
+        await db.execute(
+            update(TransactionSplit)
+            .where(
+                TransactionSplit.category_id == category_id,
+                TransactionSplit.transaction_id.in_(
+                    select(Transaction.id).where(Transaction.user_id == current_user.id)
+                ),
             )
             .values(category_id=reassign_to)
         )

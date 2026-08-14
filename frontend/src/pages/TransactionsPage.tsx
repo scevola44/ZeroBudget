@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 
 import { api } from "../api/client";
-import type { Account, BudgetMonth, CategoryGroup, Transaction } from "../api/types";
+import type { Account, BudgetMonth, CategoryGroup, Transaction, TransactionPage } from "../api/types";
 import {
   AddTransactionModal,
   type TransactionCreateInput,
 } from "../components/AddTransactionModal";
 import { BulkDeleteTransactionsConfirmModal } from "../components/BulkDeleteTransactionsConfirmModal";
+import { BulkSetCategoryModal } from "../components/BulkSetCategoryModal";
 import { CategoryBadge, needsCategory } from "../components/CategoryBadge";
 import type { CategoryBudgetInfo } from "../components/CategoryPicker";
 import {
@@ -21,7 +22,10 @@ import { TransferSuggestionsBanner } from "../components/TransferSuggestionsBann
 import { UnassignedTransactionsIsland } from "../components/UnassignedTransactionsIsland";
 import { currentMonth, formatDateHeading } from "../lib/dates";
 import { formatCents } from "../lib/money";
+import { useDebouncedValue } from "../lib/useDebouncedValue";
 import { YnabTransactionImportModal, type ImportRow } from "./YnabTransactionImportModal";
+
+const PAGE_SIZE = 100;
 
 function monthStart(month: string): string {
   return `${month}-01`;
@@ -33,18 +37,44 @@ function monthEnd(month: string): string {
   return `${month}-${String(lastDay).padStart(2, "0")}`;
 }
 
+function fetchTransactionsPage(params: {
+  startDate: string;
+  endDate: string;
+  accountIds: number[];
+  categoryId: string;
+  q: string;
+  cursor?: string;
+}): Promise<TransactionPage> {
+  const search = new URLSearchParams();
+  // Blank means open-ended, not "filter to nothing" — omit rather than send
+  // an empty value FastAPI would fail to parse as a date.
+  if (params.startDate) search.set("start_date", params.startDate);
+  if (params.endDate) search.set("end_date", params.endDate);
+  for (const id of params.accountIds) search.append("account_id", String(id));
+  if (params.categoryId === "null") search.set("unassigned", "true");
+  else if (params.categoryId === "rta") search.set("ready_to_assign", "true");
+  else if (params.categoryId !== "") search.set("category_id", params.categoryId);
+  if (params.q.trim()) search.set("q", params.q.trim());
+  search.set("limit", String(PAGE_SIZE));
+  if (params.cursor) search.set("cursor", params.cursor);
+  return api<TransactionPage>(`/api/transactions?${search.toString()}`);
+}
+
 export function TransactionsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [startDate, setStartDate] = useState(() => monthStart(currentMonth()));
   const [endDate, setEndDate] = useState(() => monthEnd(currentMonth()));
   const [selectedAccountIds, setSelectedAccountIds] = useState(() => new Set<number>());
   const [selectedCategoryId, setSelectedCategoryId] = useState("null");
+  const [searchInput, setSearchInput] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [editingTxnId, setEditingTxnId] = useState<number | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
+  const [bulkSetCategoryOpen, setBulkSetCategoryOpen] = useState(false);
+  const [bulkSetCategoryError, setBulkSetCategoryError] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
@@ -55,6 +85,7 @@ export function TransactionsPage() {
     null,
   );
   const qc = useQueryClient();
+  const debouncedSearch = useDebouncedValue(searchInput, 300);
 
   // Arriving from the unassigned-transactions island's "Review" link. A
   // plain lazy useState initializer wouldn't catch this when the click
@@ -78,11 +109,16 @@ export function TransactionsPage() {
     );
   }, [searchParams, setSearchParams]);
 
+  const accountIdsKey = Array.from(selectedAccountIds).sort((a, b) => a - b);
+
   // A selection describes rows the user can currently see, so it shouldn't
   // silently carry over ids that just scrolled out of the filtered view.
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [startDate, endDate, selectedAccountIds, selectedCategoryId]);
+    // accountIdsKey is a fresh array each render; its *contents* are what
+    // should drive the reset, so it's stringified for a stable dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate, endDate, accountIdsKey.join(","), selectedCategoryId, debouncedSearch]);
 
   const importMutation = useMutation({
     mutationFn: (rows: ImportRow[]) =>
@@ -94,18 +130,32 @@ export function TransactionsPage() {
     },
   });
 
-  const txnsQuery = useQuery<Transaction[]>({
-    queryKey: ["transactions", startDate, endDate],
-    queryFn: () => {
-      // Blank means open-ended, not "filter to nothing" — omit rather than
-      // send an empty value FastAPI would fail to parse as a date.
-      const params = new URLSearchParams();
-      if (startDate) params.set("start_date", startDate);
-      if (endDate) params.set("end_date", endDate);
-      const qs = params.toString();
-      return api<Transaction[]>(`/api/transactions${qs ? `?${qs}` : ""}`);
-    },
+  const txnsQuery = useInfiniteQuery({
+    queryKey: [
+      "transactions",
+      startDate,
+      endDate,
+      accountIdsKey,
+      selectedCategoryId,
+      debouncedSearch,
+    ],
+    queryFn: ({ pageParam }) =>
+      fetchTransactionsPage({
+        startDate,
+        endDate,
+        accountIds: accountIdsKey,
+        categoryId: selectedCategoryId,
+        q: debouncedSearch,
+        cursor: pageParam,
+      }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
   });
+
+  const allTxns = useMemo(
+    () => txnsQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    [txnsQuery.data],
+  );
 
   const accountsQuery = useQuery<Account[]>({
     queryKey: ["accounts"],
@@ -181,6 +231,22 @@ export function TransactionsPage() {
       setBulkDeleteError(err instanceof Error ? err.message : "Delete failed"),
   });
 
+  const bulkSetCategory = useMutation({
+    mutationFn: (categoryId: number | null) =>
+      api<{ updated: number }>("/api/transactions/bulk-set-category", {
+        method: "POST",
+        body: { ids: Array.from(selectedIds), category_id: categoryId },
+      }),
+    onSuccess: () => {
+      setSelectedIds(new Set());
+      setBulkSetCategoryOpen(false);
+      setBulkSetCategoryError(null);
+      invalidateAfterLink();
+    },
+    onError: (err) =>
+      setBulkSetCategoryError(err instanceof Error ? err.message : "Could not set the category"),
+  });
+
   // A transfer touches two accounts, so the broad prefix has to go too.
   function invalidateAfterLink() {
     void qc.invalidateQueries({ queryKey: ["transactions"] });
@@ -219,41 +285,28 @@ export function TransactionsPage() {
     });
   }
 
-  const filteredTxns = (txnsQuery.data ?? []).filter((t) => {
-    if (selectedAccountIds.size > 0 && !selectedAccountIds.has(t.account_id)) return false;
-    if (selectedCategoryId === "null") {
-      if (t.category_id !== null || t.transfer_peer_id !== null || t.is_ready_to_assign) return false;
-    } else if (selectedCategoryId === "rta") {
-      if (!t.is_ready_to_assign) return false;
-    } else if (selectedCategoryId !== "") {
-      if (t.category_id !== Number(selectedCategoryId)) return false;
-    }
-    return true;
-  });
-
-  const allFilteredSelected =
-    filteredTxns.length > 0 && filteredTxns.every((t) => selectedIds.has(t.id));
-  const someFilteredSelected = filteredTxns.some((t) => selectedIds.has(t.id));
+  const allLoadedSelected = allTxns.length > 0 && allTxns.every((t) => selectedIds.has(t.id));
+  const someLoadedSelected = allTxns.some((t) => selectedIds.has(t.id));
   const selectAllRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = someFilteredSelected && !allFilteredSelected;
+      selectAllRef.current.indeterminate = someLoadedSelected && !allLoadedSelected;
     }
-  }, [someFilteredSelected, allFilteredSelected]);
+  }, [someLoadedSelected, allLoadedSelected]);
 
-  function toggleSelectAllFiltered() {
-    setSelectedIds(allFilteredSelected ? new Set() : new Set(filteredTxns.map((t) => t.id)));
+  function toggleSelectAllLoaded() {
+    setSelectedIds(allLoadedSelected ? new Set() : new Set(allTxns.map((t) => t.id)));
   }
 
-  const selectedTransactions = (txnsQuery.data ?? []).filter((t) => selectedIds.has(t.id));
+  const selectedTransactions = allTxns.filter((t) => selectedIds.has(t.id));
 
   const accountById = Object.fromEntries(accounts.map((a) => [a.id, a]));
   const categoryById = Object.fromEntries(flatCategories.map((c) => [c.id, c]));
 
-  // filteredTxns already arrives in date-desc order from the API, so grouping
-  // just needs to notice when the date changes, not re-sort anything.
+  // Rows already arrive in date-desc order from the API, so grouping just
+  // needs to notice when the date changes, not re-sort anything.
   const dateGroups: { date: string; txns: Transaction[] }[] = [];
-  for (const t of filteredTxns) {
+  for (const t of allTxns) {
     const lastGroup = dateGroups[dateGroups.length - 1];
     if (lastGroup && lastGroup.date === t.date) {
       lastGroup.txns.push(t);
@@ -263,11 +316,9 @@ export function TransactionsPage() {
   }
 
   const editingTransaction =
-    editingTxnId === null
-      ? undefined
-      : (txnsQuery.data ?? []).find((t) => t.id === editingTxnId);
+    editingTxnId === null ? undefined : allTxns.find((t) => t.id === editingTxnId);
   const linkingTransaction =
-    linking === null ? undefined : (txnsQuery.data ?? []).find((t) => t.id === linking.txnId);
+    linking === null ? undefined : allTxns.find((t) => t.id === linking.txnId);
   const linkingAccount = linking === null ? undefined : accountById[linking.accountId];
 
   return (
@@ -318,6 +369,20 @@ export function TransactionsPage() {
       {/* Filter panel */}
       <div className="bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl p-5 space-y-4">
         <div className="flex flex-wrap gap-6 items-end">
+          {/* Search */}
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-stone-700 dark:text-stone-300">
+              Search
+            </label>
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Payee or memo"
+              className="h-9 border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 text-sm"
+            />
+          </div>
+
           {/* Date range */}
           <div className="flex gap-3 items-end">
             <div className="space-y-1">
@@ -408,6 +473,16 @@ export function TransactionsPage() {
             <button
               type="button"
               onClick={() => {
+                setBulkSetCategoryError(null);
+                setBulkSetCategoryOpen(true);
+              }}
+              className="border border-stone-300 dark:border-stone-600 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 rounded-lg px-4 py-2 text-sm font-medium"
+            >
+              Set category
+            </button>
+            <button
+              type="button"
+              onClick={() => {
                 setBulkDeleteError(null);
                 setBulkDeleteOpen(true);
               }}
@@ -424,12 +499,12 @@ export function TransactionsPage() {
         {txnsQuery.isLoading && (
           <div className="p-5 text-stone-500 dark:text-stone-400">Loading…</div>
         )}
-        {!txnsQuery.isLoading && filteredTxns.length === 0 && (
+        {!txnsQuery.isLoading && allTxns.length === 0 && (
           <div className="p-5 text-stone-500 dark:text-stone-400">No transactions found.</div>
         )}
 
         {/* Mobile: date-grouped, tappable cards */}
-        {filteredTxns.length > 0 && (
+        {allTxns.length > 0 && (
           <div className="md:hidden">
             {dateGroups.map((group) => (
               <div key={group.date}>
@@ -465,7 +540,7 @@ export function TransactionsPage() {
           </div>
         )}
 
-        {filteredTxns.length > 0 && (
+        {allTxns.length > 0 && (
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-xs uppercase text-stone-500 dark:text-stone-400">
@@ -474,9 +549,9 @@ export function TransactionsPage() {
                     <input
                       ref={selectAllRef}
                       type="checkbox"
-                      checked={allFilteredSelected}
-                      onChange={toggleSelectAllFiltered}
-                      aria-label="Select all filtered transactions"
+                      checked={allLoadedSelected}
+                      onChange={toggleSelectAllLoaded}
+                      aria-label="Select all loaded transactions"
                       className="rounded accent-indigo-600"
                     />
                   </th>
@@ -490,7 +565,7 @@ export function TransactionsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredTxns.map((t) => {
+                {allTxns.map((t) => {
                   const account = accountById[t.account_id];
                   const cat = t.category_id !== null ? categoryById[t.category_id] : null;
                   const peerAccountName =
@@ -568,6 +643,19 @@ export function TransactionsPage() {
             </table>
           </div>
         )}
+
+        {txnsQuery.hasNextPage && (
+          <div className="p-4 text-center border-t border-stone-100 dark:border-stone-800">
+            <button
+              type="button"
+              onClick={() => void txnsQuery.fetchNextPage()}
+              disabled={txnsQuery.isFetchingNextPage}
+              className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50"
+            >
+              {txnsQuery.isFetchingNextPage ? "Loading…" : "Load more"}
+            </button>
+          </div>
+        )}
       </div>
 
       <BulkDeleteTransactionsConfirmModal
@@ -580,6 +668,20 @@ export function TransactionsPage() {
         onConfirm={() => bulkDeleteTxns.mutate(Array.from(selectedIds))}
         isPending={bulkDeleteTxns.isPending}
         error={bulkDeleteError}
+      />
+
+      <BulkSetCategoryModal
+        selectedTransactions={selectedTransactions}
+        categories={flatCategories}
+        budgetByCategoryId={budgetByCategoryId}
+        isOpen={bulkSetCategoryOpen}
+        onClose={() => {
+          setBulkSetCategoryOpen(false);
+          setBulkSetCategoryError(null);
+        }}
+        onConfirm={(categoryId) => bulkSetCategory.mutate(categoryId)}
+        isPending={bulkSetCategory.isPending}
+        error={bulkSetCategoryError}
       />
 
       {editingTransaction && (

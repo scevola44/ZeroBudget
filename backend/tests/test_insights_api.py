@@ -607,3 +607,50 @@ async def test_a_cross_scope_pair_straddling_the_horizon_keeps_its_visible_leg(
     april = (await _get_insights(client, headers, APRIL, APRIL)).json()
 
     assert (await _for_scope(client, headers, april["income_vs_spending"], FAMILY))["income_cents"] == 60_000
+
+
+@pytest.mark.asyncio
+async def test_insights_reconciles_with_the_budget_page_when_a_transaction_is_split(
+    client: AsyncClient,
+):
+    """Extends the pinned reconciliation test with a split transaction: each
+    line's activity must land in its own category on both pages, guarding
+    that build_txn_rows's split expansion doesn't desync budget and insights."""
+    headers = await register_user(client)
+    account = await create_account(client, headers, "Checking")
+    group = await create_group(client, headers, "Daily", scope=PERSONAL)
+    groceries = await create_category(client, headers, group, "Groceries")
+    fun = await create_category(client, headers, group, "Fun")
+
+    r = await client.post(
+        "/api/transactions",
+        json={
+            "account_id": account,
+            "date": "2026-04-10",
+            "payee": "",
+            "memo": "",
+            "amount_cents": -10_000,
+            "splits": [
+                {"category_id": groceries, "amount_cents": -6_000},
+                {"category_id": fun, "amount_cents": -4_000},
+            ],
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+
+    budget = (await client.get(f"/api/budget/{APRIL}", headers=headers)).json()
+    insights = (await _get_insights(client, headers)).json()
+
+    budget_activity = {
+        category["id"]: category["activity_cents"]
+        for group_row in budget["groups"]
+        for category in group_row["categories"]
+    }
+    breakdown = await _for_scope(client, headers, insights["breakdown"]["scopes"])
+    insights_activity = {row["category_id"]: row["activity_cents"] for row in breakdown["categories"]}
+
+    assert budget_activity[groceries] == -6_000
+    assert budget_activity[fun] == -4_000
+    assert insights_activity[groceries] == budget_activity[groceries]
+    assert insights_activity[fun] == budget_activity[fun]

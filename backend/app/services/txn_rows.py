@@ -14,8 +14,38 @@ from collections.abc import Sequence
 
 from sqlalchemy import select
 
-from app.models import Transaction
+from app.models import Payee, Transaction, TransactionSplit
 from app.services.budget_calc import TxnRow
+
+
+async def load_payee_names(db, transactions: Sequence[Transaction]) -> dict[int, str]:
+    """Map ``payee_id`` -> name, for every transaction that has one.
+
+    ``Transaction`` carries only ``payee_id``; every caller that needs a
+    displayable payee name loads it through here so the join lives in one
+    place.
+    """
+    payee_ids = {t.payee_id for t in transactions if t.payee_id is not None}
+    if not payee_ids:
+        return {}
+    result = await db.execute(select(Payee.id, Payee.name).where(Payee.id.in_(payee_ids)))
+    return {row[0]: row[1] for row in result.all()}
+
+
+async def load_splits_by_transaction_id(
+    db, transactions: Sequence[Transaction]
+) -> dict[int, list[TransactionSplit]]:
+    """Map transaction id -> its split lines (empty for an unsplit transaction)."""
+    txn_ids = [t.id for t in transactions]
+    if not txn_ids:
+        return {}
+    result = await db.execute(
+        select(TransactionSplit).where(TransactionSplit.transaction_id.in_(txn_ids))
+    )
+    by_txn_id: dict[int, list[TransactionSplit]] = {}
+    for split in result.scalars().all():
+        by_txn_id.setdefault(split.transaction_id, []).append(split)
+    return by_txn_id
 
 
 async def load_peer_account_ids(
@@ -42,6 +72,7 @@ def build_txn_rows(
     account_scope_id: dict[int, int],
     account_on_budget: dict[int, bool],
     peer_account_id: dict[int, int],
+    splits_by_transaction_id: dict[int, list[TransactionSplit]] | None = None,
 ) -> list[TxnRow]:
     """Join each transaction to its account's scope and its transfer peer's.
 
@@ -50,7 +81,16 @@ def build_txn_rows(
     and ``peer_account_id`` every ``transfer_peer_id`` in ``transactions``, via
     ``load_peer_account_ids``. A missing account is a caller bug and raises
     rather than being silently defaulted into some arbitrary pool.
+
+    A split transaction expands into one ``TxnRow`` per split line instead of
+    one for the whole transaction — each line carries its own category and
+    amount, and the lines sum to the parent's amount, so every sum-based
+    calculation downstream (Ready to Assign, category balances) is unaffected
+    by the expansion. Split parents are never transfer legs (enforced where
+    splits are written), so ``peer_scope_id``/``peer_on_budget`` below stay at
+    their transfer-only defaults for split lines.
     """
+    splits_by_transaction_id = splits_by_transaction_id or {}
     own_scope_id: dict[int, int] = {
         t.id: account_scope_id[t.account_id] for t in transactions
     }
@@ -82,15 +122,32 @@ def build_txn_rows(
             return own_on_budget[txn.id]
         return account_on_budget[account_id]
 
-    return [
-        TxnRow(
-            category_id=t.category_id,
-            date=t.date,
-            amount_cents=t.amount_cents,
-            scope_id=own_scope_id[t.id],
-            transfer_peer_scope_id=peer_scope_id(t),
-            on_budget=own_on_budget[t.id],
-            transfer_peer_on_budget=peer_on_budget(t),
-        )
-        for t in transactions
-    ]
+    rows: list[TxnRow] = []
+    for t in transactions:
+        splits = splits_by_transaction_id.get(t.id, [])
+        if splits:
+            rows.extend(
+                TxnRow(
+                    category_id=split.category_id,
+                    date=t.date,
+                    amount_cents=split.amount_cents,
+                    scope_id=own_scope_id[t.id],
+                    transfer_peer_scope_id=peer_scope_id(t),
+                    on_budget=own_on_budget[t.id],
+                    transfer_peer_on_budget=peer_on_budget(t),
+                )
+                for split in splits
+            )
+        else:
+            rows.append(
+                TxnRow(
+                    category_id=t.category_id,
+                    date=t.date,
+                    amount_cents=t.amount_cents,
+                    scope_id=own_scope_id[t.id],
+                    transfer_peer_scope_id=peer_scope_id(t),
+                    on_budget=own_on_budget[t.id],
+                    transfer_peer_on_budget=peer_on_budget(t),
+                )
+            )
+    return rows

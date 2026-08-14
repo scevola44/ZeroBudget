@@ -185,3 +185,13 @@ async def create_category(
     r = await client.post("/api/categories", json=body, headers=headers)
     assert r.status_code == 201, r.text
     return r.json()["id"]
+
+
+async def list_transactions(
+    client: AsyncClient, headers: dict[str, str], **params
+) -> list[dict]:
+    """``GET /api/transactions``, unwrapping the ``{items, next_cursor}``
+    pagination envelope down to just the list most tests care about."""
+    r = await client.get("/api/transactions", params=params, headers=headers)
+    assert r.status_code == 200, r.text
+    return r.json()["items"]

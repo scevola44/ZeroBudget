@@ -233,7 +233,7 @@ async def test_reconnect_reuses_existing_connection_and_accounts(client):
     assert accounts[0]["balance_cents"] == 100_000
 
     r = await client.get("/api/transactions", headers=headers)
-    payees = [t["payee"] for t in r.json()]
+    payees = [t["payee"] for t in r.json()["items"]]
     assert payees.count("Opening Balance") == 1
 
 

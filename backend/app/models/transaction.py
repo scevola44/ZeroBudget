@@ -30,7 +30,12 @@ class Transaction(Base):
     # "Unassigned" filter shows.
     is_ready_to_assign: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    payee: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # Nullable: no payee typed/matched. Resolved to a Payee row on write via
+    # services.payees.resolve_payee — see that module for why this isn't a
+    # free-text column.
+    payee_id: Mapped[int | None] = mapped_column(
+        ForeignKey("payees.id", ondelete="SET NULL"), index=True, nullable=True
+    )
     memo: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     # Signed integer cents. Positive = inflow, negative = outflow.
     amount_cents: Mapped[int] = mapped_column(BigInteger, nullable=False)

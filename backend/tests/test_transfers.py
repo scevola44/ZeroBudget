@@ -15,6 +15,7 @@ from tests.conftest import (
     create_account,
     create_category,
     create_group,
+    list_transactions,
     ready_to_assign,
     register_user,
 )
@@ -104,7 +105,7 @@ async def test_listing_transactions_reports_each_legs_peer_account(client: Async
     await _transfer(client, headers, checking, savings)
     await _add_inflow(client, headers, checking, SALARY_CENTS, "2026-04-01")
 
-    rows = (await client.get("/api/transactions", headers=headers)).json()
+    rows = await list_transactions(client, headers)
     peer_accounts = {
         row["account_id"]: row["transfer_peer_account_id"]
         for row in rows
@@ -150,7 +151,7 @@ async def test_editing_amount_mirrors_to_the_peer_leg(client: AsyncClient):
     )
     assert r.status_code == 200, r.text
 
-    rows = (await client.get("/api/transactions", headers=headers)).json()
+    rows = await list_transactions(client, headers)
     by_id = {t["id"]: t for t in rows}
     assert by_id[outflow_id]["amount_cents"] == -25_000
     assert by_id[inflow_id]["amount_cents"] == 25_000
@@ -172,7 +173,7 @@ async def test_editing_date_leaves_the_peer_leg_alone(client: AsyncClient):
     )
     assert r.status_code == 200, r.text
 
-    rows = (await client.get("/api/transactions", headers=headers)).json()
+    rows = await list_transactions(client, headers)
     by_id = {t["id"]: t for t in rows}
     assert by_id[inflow_id]["date"] == "2026-04-15"
     assert by_id[outflow_id]["date"] == "2026-04-02"
@@ -194,7 +195,7 @@ async def test_payee_and_memo_stay_on_the_edited_leg(client: AsyncClient):
     )
     assert r.status_code == 200, r.text
 
-    rows = (await client.get("/api/transactions", headers=headers)).json()
+    rows = await list_transactions(client, headers)
     by_id = {t["id"]: t for t in rows}
     assert by_id[outflow_id]["memo"] == "moved for the deposit"
     assert by_id[inflow_id]["memo"] == ""
@@ -246,7 +247,7 @@ async def test_deleting_one_leg_removes_the_pair(client: AsyncClient):
     )
     assert r.status_code == 204, r.text
 
-    rows = (await client.get("/api/transactions", headers=headers)).json()
+    rows = await list_transactions(client, headers)
     assert rows == []
 
 

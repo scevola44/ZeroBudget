@@ -40,6 +40,7 @@ export function CategoryPicker({
   budgetByCategoryId,
   transferTargets,
   unassignedLabel = "— Unassigned (inflow) —",
+  showReadyToAssignOption = true,
   disabled,
 }: {
   id?: string;
@@ -53,6 +54,9 @@ export function CategoryPicker({
   /** Other accounts this transaction could become a transfer with. */
   transferTargets?: Account[];
   unassignedLabel?: string;
+  /** False for a split line: "Ready to Assign" is a whole-transaction flag,
+   * not something one category line of a split can carry. */
+  showReadyToAssignOption?: boolean;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -114,12 +118,16 @@ export function CategoryPicker({
 
   const specialOptions: OptionRow[] = [
     { type: "option" as const, key: "unassigned", value: "", label: unassignedLabel },
-    {
-      type: "option" as const,
-      key: "rta",
-      value: READY_TO_ASSIGN_OPTION_VALUE,
-      label: "Ready to Assign",
-    },
+    ...(showReadyToAssignOption
+      ? [
+          {
+            type: "option" as const,
+            key: "rta",
+            value: READY_TO_ASSIGN_OPTION_VALUE,
+            label: "Ready to Assign",
+          },
+        ]
+      : []),
   ].filter((o) => matches(o.label));
   rows.push(...specialOptions);
 

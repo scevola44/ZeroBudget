@@ -3,13 +3,21 @@ import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import type { Account, BudgetMonth, CategoryGroup, Transaction, Transfer } from "../api/types";
+import type {
+  Account,
+  BudgetMonth,
+  CategoryGroup,
+  Transaction,
+  TransactionPage,
+  Transfer,
+} from "../api/types";
 import type { CategoryBudgetInfo } from "../components/CategoryPicker";
 import {
   EditTransactionModal,
   type TransactionEdit,
 } from "../components/EditTransactionModal";
 import { LinkTransferModal } from "../components/LinkTransferModal";
+import { PayeeAutocomplete } from "../components/PayeeAutocomplete";
 import { ScopeChip } from "../components/ScopeChip";
 import { partitionSuggested } from "../lib/categorySuggestions";
 import { currentMonth, todayISO } from "../lib/dates";
@@ -35,7 +43,8 @@ export function AccountDetailPage() {
 
   const txnsQuery = useQuery<Transaction[]>({
     queryKey: ["transactions", accountId],
-    queryFn: () => api<Transaction[]>(`/api/transactions?account_id=${accountId}`),
+    queryFn: async () =>
+      (await api<TransactionPage>(`/api/transactions?account_id=${accountId}`)).items,
     enabled: Number.isFinite(accountId),
   });
 
@@ -384,12 +393,7 @@ export function AccountDetailPage() {
         </div>
         <div className="space-y-1 md:col-span-2">
           <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Payee</label>
-          <input
-            value={payee}
-            onChange={(e) => setPayee(e.target.value)}
-            placeholder="e.g. Supermarket"
-            className="w-full border border-stone-300 dark:border-stone-600 bg-transparent dark:bg-stone-900 rounded-lg px-3 py-2"
-          />
+          <PayeeAutocomplete value={payee} onChange={setPayee} />
         </div>
         <div className="space-y-1 md:col-span-2">
           <label className="text-sm font-medium text-stone-700 dark:text-stone-300">Category</label>

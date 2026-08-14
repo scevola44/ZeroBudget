@@ -27,7 +27,16 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.models import Account, BankConnection, DeletedExternalTransaction, SyncRun, Transaction
+from app.models import (
+    Account,
+    BankConnection,
+    Category,
+    CategoryGroup,
+    DeletedExternalTransaction,
+    PayeeCategoryRule,
+    SyncRun,
+    Transaction,
+)
 from app.services.bank_amount import (
     NonEurCurrencyError,
     bank_amount_to_cents,
@@ -35,6 +44,8 @@ from app.services.bank_amount import (
 )
 from app.services.banking_client import BankingClient, BankingError
 from app.services.encryption import decrypt
+from app.services.payee_rules import CategoryRule, match_rule
+from app.services.payees import resolve_payee
 from app.services.synthetic_payees import OPENING_BALANCE_PAYEE
 
 logger = logging.getLogger(__name__)
@@ -229,13 +240,14 @@ async def _import_opening_balance(
     if delta == 0:
         return
 
+    payee = await resolve_payee(db, connection.user_id, OPENING_BALANCE_PAYEE)
     db.add(
         Transaction(
             user_id=connection.user_id,
             account_id=account.id,
             # Sorts before every transaction imported by this sync's window.
             date=date_from - timedelta(days=1),
-            payee=OPENING_BALANCE_PAYEE,
+            payee_id=payee.id if payee is not None else None,
             memo=(
                 "Balance imported from the bank on connection; covers transactions "
                 "older than the sync window."
@@ -244,6 +256,27 @@ async def _import_opening_balance(
             external_transaction_id=external_id,
         )
     )
+
+
+async def _load_category_rules(db: AsyncSession, user_id: int) -> list[CategoryRule]:
+    result = await db.execute(
+        select(PayeeCategoryRule)
+        .where(PayeeCategoryRule.user_id == user_id)
+        .order_by(PayeeCategoryRule.sort_order, PayeeCategoryRule.id)
+    )
+    return [
+        CategoryRule(id=r.id, category_id=r.category_id, contains_text=r.contains_text)
+        for r in result.scalars().all()
+    ]
+
+
+async def _load_category_scope_ids(db: AsyncSession, user_id: int) -> dict[int, int]:
+    result = await db.execute(
+        select(Category.id, CategoryGroup.scope_id)
+        .join(CategoryGroup, Category.group_id == CategoryGroup.id)
+        .where(Category.user_id == user_id)
+    )
+    return dict(result.all())
 
 
 async def sync_connection(
@@ -296,6 +329,8 @@ async def sync_connection(
         .all()
     )
     touched: set[int] = set()
+    rules = await _load_category_rules(db, connection.user_id)
+    category_scope_id = await _load_category_scope_ids(db, connection.user_id) if rules else {}
 
     for account in account_rows:
         if not account.bank_account_uid:
@@ -345,12 +380,25 @@ async def sync_connection(
                 if await _is_deleted(db, external_id):
                     summary.skipped_deleted += 1
                     continue
+                payee_text = _payee(txn)
+                payee = await resolve_payee(db, connection.user_id, payee_text)
+                # Silently skip rather than error: this runs unattended, and a
+                # rule matched to a category outside this account's scope would
+                # be rejected by _enforce_scope_match if entered by hand — here
+                # there's no user to ask, so it's left uncategorized instead.
+                matched_category_id = match_rule(payee_text, rules)
+                if (
+                    matched_category_id is not None
+                    and category_scope_id.get(matched_category_id) != account.scope_id
+                ):
+                    matched_category_id = None
                 db.add(
                     Transaction(
                         user_id=connection.user_id,
                         account_id=account.id,
+                        category_id=matched_category_id,
                         date=txn_date,
-                        payee=_payee(txn),
+                        payee_id=payee.id if payee is not None else None,
                         memo="",
                         amount_cents=amount_cents,
                         external_transaction_id=external_id,
@@ -359,7 +407,7 @@ async def sync_connection(
                 summary.added += 1
                 touched.add(account.id)
             elif existing.date != txn_date or existing.amount_cents != amount_cents:
-                # Preserve user-owned fields (category_id, memo, payee).
+                # Preserve user-owned fields (category_id, memo, payee_id).
                 # Update only what the bank authoritatively owns.
                 existing.date = txn_date
                 existing.amount_cents = amount_cents
