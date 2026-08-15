@@ -143,6 +143,10 @@ transfers, payees, split transactions, auto-assign, scheduled transactions,
 reports, import/bank-sync robustness, and more, ordered by priority and
 written to be picked up by a coding agent one phase at a time.
 
+For the mobile client, see [MOBILE_ROADMAP.md](MOBILE_ROADMAP.md) — a phased
+plan for a React Native (Expo) app sharing a TypeScript core with the web app.
+It supersedes the on-hold native-SwiftUI plan in [IOS_ROADMAP.md](IOS_ROADMAP.md).
+
 ## Enable Banking bank sync (PSD2)
 
 Bank connections are wired up in the Accounts page via **Enable Banking**.
