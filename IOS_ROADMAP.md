@@ -1,5 +1,12 @@
 # ZeroBudget iOS Roadmap
 
+> **Status: ON HOLD.** Mobile development is proceeding with React Native —
+> see [`MOBILE_ROADMAP.md`](./MOBILE_ROADMAP.md), which is the live mobile
+> roadmap. This document is kept, not deleted, so the native-SwiftUI path stays
+> documented as a fallback if React Native disappoints. It is **not** being
+> updated; treat everything below as a snapshot of the decision as it stood
+> before the reversal described under "Decisions already made".
+
 A phased plan to build a **native SwiftUI iOS client** for ZeroBudget, able to
 connect to any self-hosted ZeroBudget instance via a user-entered server URL,
 targeting feature parity with the web app.
@@ -33,6 +40,21 @@ agnostic of iOS-specific progress; this file tracks the iOS client only.
 | Parity target | **Today's shipped web feature set**, not `ROADMAP.md`'s full end-state | Budget/RTA, categories+goals, accounts, transactions (incl. transfers), Enable Banking sync, YNAB CSV import, Insights. Backend phases 2–9 are still moving; iOS tracks them as they ship rather than racing ahead. |
 | Auth model | **Add refresh-token support** on the backend, early | Today's JWT is a single 7-day token with no refresh and no password reset (`backend/app/security.py`). Unmodified, iOS would force a full re-login every week with no viable Face ID/persistent-session story. |
 
+> **Reversed — the client-architecture row above no longer holds.** Before any
+> Swift was written, the SwiftUI-over-React-Native choice was revisited and
+> reversed. Its deciding argument was that the backend is a small, clean
+> REST/JSON surface, "so React Native's main edge — TS code-sharing with
+> `frontend/` — matters less than it looks". That understated what is actually
+> shareable: beyond types, the web app holds platform-free TypeScript for the
+> money/date/goal/insights-range domain helpers and their test suites, both YNAB
+> CSV parsers, and the entire TanStack Query server-state layer, none of which
+> is portable to Swift and all of which would have become a second source of
+> truth. The secondary argument — "no Android target to justify
+> cross-platform" — was circular: Android was a non-goal *because* SwiftUI made
+> it impossible. See [`MOBILE_ROADMAP.md`](./MOBILE_ROADMAP.md) for the
+> replacement plan. The other three rows in this table survived the reversal
+> unchanged and were carried over.
+
 ## Non-goals (revisit only on explicit owner request)
 
 - Android / cross-platform — SwiftUI native is iOS-only by construction.
@@ -46,7 +68,9 @@ agnostic of iOS-specific progress; this file tracks the iOS client only.
 
 ## Current state
 
-Not started. No Swift/Xcode project exists in this repository yet.
+Not started, and not planned to start. No Swift/Xcode project exists in this
+repository, and none will be created while this document is on hold. Mobile work
+is tracked in [`MOBILE_ROADMAP.md`](./MOBILE_ROADMAP.md).
 
 ---
 
