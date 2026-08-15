@@ -76,6 +76,9 @@ Not started. No `mobile/` directory, no `packages/` directory, and no monorepo
 wiring exists yet — `frontend/package.json` is still the only `package.json` in
 the repository.
 
+Phase 0 has an implementation plan written and ready to execute:
+[`MOBILE_PHASE_0_PLAN.md`](./MOBILE_PHASE_0_PLAN.md).
+
 ---
 
 ## Target repository layout
@@ -112,9 +115,14 @@ Everything here is platform-free today, or trivially made so:
   `parseYnabTransactionCsv`/`parseCurrencyToCents`/`parseYnabDate` in
   `frontend/src/pages/YnabTransactionImportModal.tsx`. All pure functions over a
   string.
-- **TanStack Query keys and hooks** — v5 runs identically under React Native.
-  This is the single largest win: the whole server-state layer is shared, not
-  reimplemented.
+- **TanStack Query keys and hooks** — v5 runs identically under React Native,
+  so this is the largest *eventual* win. It is not a Phase 0 move, though:
+  there is no server-state layer to lift. 36 raw `api<T>()` calls sit inline
+  in 13 page and component files behind string-literal query keys, and
+  `useScopes.ts` is the only extracted hook in the repository. Phase 0 ships
+  a typed query-key factory and moves `useScopes`; the per-resource hooks are
+  extracted one resource at a time as Phases 2–5 need them, and swept up in
+  Phase 5.5.
 
 **Stays platform-specific:** all UI and routing, plus
 `frontend/src/lib/chartColors.ts` and `scopeColors.ts` — they hold Tailwind
@@ -124,6 +132,11 @@ that validation does not transfer unexamined.
 ---
 
 ## Phase 0 — Backend prep & shared core extraction
+
+> **Implementation plan written**: [`MOBILE_PHASE_0_PLAN.md`](./MOBILE_PHASE_0_PLAN.md).
+> It supersedes this section wherever the two differ — three decisions were
+> settled while writing it (query-layer scope, refresh-token model, web token
+> storage), and two migration hazards missing from the list below were found.
 
 **Goal**: settle the contract and carve out `packages/core`, before any mobile
 code exists.
@@ -140,6 +153,8 @@ mobile work.
    `frontend/src/api/client.ts` simply drops the token on any 401. A native app
    cannot ship on a hard weekly logout with no Face-ID-style resume. Rotate on
    use, pick a reasonable TTL, extend the existing `pytest` auth tests.
+   Settled as **stateless** rotating refresh JWTs — no table, no revocation;
+   Phase 1.5 adds those.
 2. **Backend: OpenAPI as the contract.** Generate `packages/core`'s types from
    FastAPI's live `/openapi.json` (e.g. `openapi-typescript`) and add a CI drift
    check. This deletes a 285-line hand-maintained mirror and benefits the web
@@ -193,6 +208,46 @@ land on a home screen, backed by real network calls.
 - Killing and relaunching preserves the session via the refresh token.
 - `npm run build`-equivalent typecheck passes for `mobile/` on both platforms in
   CI.
+
+---
+
+## Phase 1.5 — Refresh-token hardening: stored tokens, revocation
+
+**Goal**: make the long-lived credential a phone now carries revocable.
+
+**Why it exists**: Phase 0 settled on *stateless* rotating refresh JWTs — the
+smallest change that unblocks a native app. The accepted cost is that a
+rotated-away refresh token stays cryptographically valid until it expires, so
+a lost phone means a live 60-day credential to the owner's finances with no
+way to kill it, and a replayed token is indistinguishable from a legitimate
+one. That is tolerable while the only client is a dev build on the owner's own
+device. It is not tolerable once a build is installable.
+
+**Latest it may land: before Phase 7.** It may be pulled earlier at any point;
+it may not slip past a TestFlight release.
+
+### Work items
+
+1. `refresh_tokens` table (Alembic migration) storing a **hash** of the token,
+   its `jti`, `user_id`, `expires_at`, `revoked_at` and `rotated_to`. Phase 0
+   already puts a `jti` in every refresh token so live tokens don't have to be
+   re-issued.
+2. Rotation with **reuse detection**: presenting a token that was already
+   rotated away revokes the whole family, on the assumption it was stolen.
+3. `POST /api/auth/logout` — the endpoint Phase 0 deliberately did not add,
+   because a stateless token made it a lie.
+4. Per-device session list and individual revocation. **[owner decision]**
+   whether this gets a Settings UI in Phase 6 or stays an API-only capability.
+5. Prune expired rows.
+
+This benefits the web app identically — it is only sequenced here because
+mobile is what makes it urgent.
+
+### Acceptance criteria
+
+- Logging out invalidates the refresh token server-side, pinned by `pytest`.
+- Replaying a rotated token revokes the family and forces a re-login.
+- Expired rows are pruned without manual intervention.
 
 ---
 
@@ -304,6 +359,44 @@ one of them carries real platform-specific risk.
 
 ---
 
+## Phase 5.5 — Shared server-state layer: finish the extraction
+
+**Goal**: one definition of every query key, fetch and invalidation, used by
+both clients.
+
+**Why it exists, and why it is not Phase 0**: `packages/core` was supposed to
+absorb "the whole server-state layer" up front. There was no layer to absorb —
+36 raw `api<T>()` calls inline in 13 page and component files, string-literal
+query keys, ~25 hand-written invalidations. Writing that layer and rewiring the
+five largest pages onto it is a semantic rewrite of a working web app, which is
+exactly what Phase 0 promised not to be. So Phase 0 shipped the key factory,
+and the hooks come out as they are needed.
+
+**The rule that keeps this honest, applied from Phase 2 onward**: when a mobile
+screen needs a resource's server state, extract *that resource's* hooks into
+`packages/core/src/query/` and rewire the web page onto them **in the same
+change**. Never write a second copy on the mobile side. `useScopes` — moved in
+Phase 0 — is the reference shape.
+
+Follow the rule and this phase is a short sweep rather than a project.
+
+### Work items
+
+1. Sweep whatever Phases 2–5 didn't reach: any remaining inline `useQuery` /
+   `useMutation` in `frontend/src/`, and any remaining string-literal query key.
+2. Delete duplicated invalidation lists in favour of the key factory's
+   prefixes.
+3. Record the rule above in `CLAUDE.md` so it outlives this phase.
+
+### Acceptance criteria
+
+- No string-literal query key remains in `frontend/` or `mobile/`.
+- Every server-state read and write in both clients goes through
+  `packages/core`.
+- The web app's behavior is unchanged — same acceptance bar as Phase 0.
+
+---
+
 ## Phase 6 — Settings & native polish
 
 **Goal**: the account-management surface plus the platform-native touches that
@@ -360,7 +453,7 @@ justify shipping an app at all.
 ## Migration hazards
 
 Converting to npm workspaces moves the lockfile to the repository root, which
-breaks three committed files. Each is a one-time fix, but all three must land in
+breaks five committed files. Each is a one-time fix, but all five must land in
 the same change as the conversion or CI and the image build go red.
 
 1. **`Dockerfile`** — stage 1 copies only `frontend/package.json` and
@@ -374,15 +467,23 @@ the same change as the conversion or CI and the image build go red.
 3. **`release-please-config.json`** — `extra-files` points at
    `frontend/package-lock.json` with `$.version` and `$.packages[''].version`
    JSONPaths that will no longer resolve.
+4. **`docker-compose.yml`** — the `frontend` service mounts only
+   `./frontend:/app` and runs `npm install` there. After the conversion that
+   directory has no lockfile and `packages/core` sits outside the mount, so
+   local dev breaks. The repository root has to be the mount and the
+   workspace the target. Phase 0's own acceptance criteria name
+   `docker compose up --build`, so this is not optional.
+5. **`README.md`** — the quickstart tells a contributor to
+   `cd frontend && npm install && npm run dev`, which stops being true.
 
 Two smaller ones, both worth confirming early rather than discovering in Phase 2:
 
-4. **`Intl` on Hermes.** `frontend/src/lib/money.ts` formats every amount in the
+6. **`Intl` on Hermes.** `frontend/src/lib/money.ts` formats every amount in the
    app through `Intl.NumberFormat("en-IE", { currency: "EUR" })`. Hermes' `Intl`
    coverage differs by platform; Android in particular may need
    `@formatjs/intl-numberformat`. Verify in Phase 1, not later — every screen
    depends on it.
-5. **Metro and workspaces.** Metro needs explicit `watchFolders` and
+7. **Metro and workspaces.** Metro needs explicit `watchFolders` and
    `nodeModulesPaths` to resolve a sibling workspace package. Known friction
    with a documented Expo setup, but it will not work by default.
 
@@ -395,9 +496,21 @@ Two smaller ones, both worth confirming early rather than discovering in Phase 2
 3. Theme parity vs. a manual toggle (Phase 6).
 4. Mobile versioning relative to `release-please` (Phase 7).
 5. Whether Android graduates to a tested, released target (Phase 7).
+6. Whether per-device session revocation gets a Settings UI (Phase 1.5 / 6).
 
 Settled here, and recorded so they are not reopened by accident: the framework
 (React Native/Expo), the relationship to `frontend/` (add alongside, shared
 core), the styling approach (NativeWind), the API contract (OpenAPI codegen, not
 hand-written models), and CSV parsing (shared TS, neither reimplemented nor
 moved server-side).
+
+Settled while writing the Phase 0 plan, same rule — do not reopen without an
+explicit decision:
+
+- **Refresh-token model**: stateless rotating JWTs now, stored tokens with
+  revocation and reuse detection as Phase 1.5.
+- **Refresh-token storage on web**: `localStorage`, alongside the access token
+  — one code path in the shared client, no CSRF or cross-origin cookie work.
+  The cost is that an XSS on the SPA yields a long-lived credential.
+- **Query-layer scope in Phase 0**: key factory only; hooks extracted lazily,
+  swept in Phase 5.5.
