@@ -18,4 +18,13 @@ export const budgetApi = {
       method: "POST",
       body: { scope_id: scopeId },
     }),
+  moveMoney: (month: string, fromCategoryId: number, toCategoryId: number, amountCents: number) =>
+    api<void>(`/api/budget/${month}/move`, {
+      method: "POST",
+      body: {
+        from_category_id: fromCategoryId,
+        to_category_id: toCategoryId,
+        amount_cents: amountCents,
+      },
+    }),
 };

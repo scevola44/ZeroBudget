@@ -48,6 +48,12 @@ class FundGoalsRequest(BaseModel):
     scope_id: int
 
 
+class MoveMoneyRequest(BaseModel):
+    from_category_id: int
+    to_category_id: int
+    amount_cents: int
+
+
 class FundGoalsEntryResponse(BaseModel):
     category_id: int
     category_name: str

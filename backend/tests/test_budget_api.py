@@ -71,6 +71,17 @@ async def _commit_fund_goals(client: AsyncClient, headers: dict, month: str, sco
     assert r.status_code == 204, r.text
 
 
+async def _move_money(
+    client: AsyncClient, headers: dict, month: str, from_id: int, to_id: int, amount: int
+) -> None:
+    r = await client.post(
+        f"/api/budget/{month}/move",
+        json={"from_category_id": from_id, "to_category_id": to_id, "amount_cents": amount},
+        headers=headers,
+    )
+    assert r.status_code == 204, r.text
+
+
 async def _add_outflow(
     client: AsyncClient, headers: dict, account_id: int, category_id: int, amount: int, date: str
 ):
@@ -828,3 +839,196 @@ async def test_fund_goals_commit_is_a_noop_when_nothing_is_underfunded(client: A
     body = (await client.get("/api/budget/2026-04", headers=headers)).json()
     assert await ready_to_assign(client, headers, body) == 90_000
     assert body["groups"][0]["categories"][0]["assigned_cents"] == 10_000
+
+
+# --- Move money (cover overspending) --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_move_money_shifts_assigned_between_categories(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent")
+    fun = await create_category(client, headers, group, "Fun")
+
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", rent, 50_000)
+    await _assign(client, headers, "2026-04", fun, 20_000)
+
+    await _move_money(client, headers, "2026-04", fun, rent, 5_000)
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    rows = {c["name"]: c for c in body["groups"][0]["categories"]}
+    assert rows["Rent"]["assigned_cents"] == 55_000
+    assert rows["Fun"]["assigned_cents"] == 15_000
+    assert await ready_to_assign(client, headers, body) == 30_000
+
+
+@pytest.mark.asyncio
+async def test_move_money_can_cover_overspending(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    groceries = await create_category(client, headers, group, "Groceries")
+    fun = await create_category(client, headers, group, "Fun")
+
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", groceries, 4_000)
+    await _add_outflow(client, headers, account, groceries, 6_000, "2026-04-02")
+    await _assign(client, headers, "2026-04", fun, 10_000)
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    rows = {c["name"]: c for c in body["groups"][0]["categories"]}
+    shortfall = -rows["Groceries"]["balance_cents"]
+    assert shortfall == 2_000
+
+    await _move_money(client, headers, "2026-04", fun, groceries, shortfall)
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    rows = {c["name"]: c for c in body["groups"][0]["categories"]}
+    assert rows["Groceries"]["balance_cents"] == 0
+    assert rows["Fun"]["balance_cents"] == 8_000
+
+
+@pytest.mark.asyncio
+async def test_move_money_rejects_amount_exceeding_source_balance(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent")
+    fun = await create_category(client, headers, group, "Fun")
+
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", fun, 5_000)
+
+    r = await client.post(
+        "/api/budget/2026-04/move",
+        json={"from_category_id": fun, "to_category_id": rent, "amount_cents": 5_001},
+        headers=headers,
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_move_money_rejects_non_positive_amount(client: AsyncClient):
+    headers = await register_user(client)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent")
+    fun = await create_category(client, headers, group, "Fun")
+
+    for bad_amount in [0, -1]:
+        r = await client.post(
+            "/api/budget/2026-04/move",
+            json={"from_category_id": fun, "to_category_id": rent, "amount_cents": bad_amount},
+            headers=headers,
+        )
+        assert r.status_code == 400, f"expected 400 for amount={bad_amount}"
+
+
+@pytest.mark.asyncio
+async def test_move_money_rejects_same_category(client: AsyncClient):
+    headers = await register_user(client)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent")
+
+    r = await client.post(
+        "/api/budget/2026-04/move",
+        json={"from_category_id": rent, "to_category_id": rent, "amount_cents": 1_000},
+        headers=headers,
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_move_money_rejects_cross_scope_categories(client: AsyncClient):
+    headers = await register_user(client)
+    personal_account = await create_account(client, headers, "Personal", scope=PERSONAL)
+    personal_group = await create_group(client, headers, "Hobbies", scope=PERSONAL)
+    shared_group = await create_group(client, headers, "Family", scope=FAMILY)
+    hobbies = await create_category(client, headers, personal_group, "Hobbies")
+    groceries = await create_category(client, headers, shared_group, "Groceries")
+
+    await _add_inflow(client, headers, personal_account, 100_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", hobbies, 10_000)
+
+    r = await client.post(
+        "/api/budget/2026-04/move",
+        json={"from_category_id": hobbies, "to_category_id": groceries, "amount_cents": 1_000},
+        headers=headers,
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_move_money_404s_for_other_users_category(client: AsyncClient):
+    alice = await register_user(client, "alice@example.com")
+    bob = await register_user(client, "bob@example.com")
+    alice_group = await create_group(client, alice)
+    alice_rent = await create_category(client, alice, alice_group, "Rent")
+    alice_fun = await create_category(client, alice, alice_group, "Fun")
+    bob_group = await create_group(client, bob)
+    bob_cat = await create_category(client, bob, bob_group, "Bob's category")
+
+    r = await client.post(
+        "/api/budget/2026-04/move",
+        json={
+            "from_category_id": alice_fun,
+            "to_category_id": alice_rent,
+            "amount_cents": 1_000,
+        },
+        headers=bob,
+    )
+    assert r.status_code == 404
+
+    r = await client.post(
+        "/api/budget/2026-04/move",
+        json={
+            "from_category_id": bob_cat,
+            "to_category_id": alice_rent,
+            "amount_cents": 1_000,
+        },
+        headers=bob,
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_move_money_invalid_month_format_is_400(client: AsyncClient):
+    headers = await register_user(client)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent")
+    fun = await create_category(client, headers, group, "Fun")
+
+    for bad in ["2026-13", "not-a-month", "2026", "2026-04-01"]:
+        r = await client.post(
+            f"/api/budget/{bad}/move",
+            json={"from_category_id": fun, "to_category_id": rent, "amount_cents": 1_000},
+            headers=headers,
+        )
+        assert r.status_code == 400, f"expected 400 for {bad!r}, got {r.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_move_money_rejected_amount_leaves_balances_unchanged(client: AsyncClient):
+    headers = await register_user(client)
+    account = await create_account(client, headers)
+    group = await create_group(client, headers)
+    rent = await create_category(client, headers, group, "Rent")
+    fun = await create_category(client, headers, group, "Fun")
+
+    await _add_inflow(client, headers, account, 100_000, "2026-04-01")
+    await _assign(client, headers, "2026-04", rent, 50_000)
+    await _assign(client, headers, "2026-04", fun, 5_000)
+
+    r = await client.post(
+        "/api/budget/2026-04/move",
+        json={"from_category_id": fun, "to_category_id": rent, "amount_cents": 6_000},
+        headers=headers,
+    )
+    assert r.status_code == 400
+
+    body = (await client.get("/api/budget/2026-04", headers=headers)).json()
+    rows = {c["name"]: c for c in body["groups"][0]["categories"]}
+    assert rows["Rent"]["assigned_cents"] == 50_000
+    assert rows["Fun"]["assigned_cents"] == 5_000

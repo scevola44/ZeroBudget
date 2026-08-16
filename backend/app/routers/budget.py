@@ -3,6 +3,7 @@ from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import CurrentUser, DbSession, owned_scope
 from app.models import (
@@ -22,6 +23,7 @@ from app.schemas.budget import (
     FundGoalsEntryResponse,
     FundGoalsPreviewResponse,
     FundGoalsRequest,
+    MoveMoneyRequest,
     ScopeReadyToAssign,
 )
 from app.services.budget_calc import (
@@ -249,6 +251,35 @@ async def get_budget_month(
     )
 
 
+async def _upsert_assignment_amount(
+    db: AsyncSession,
+    user_id: int,
+    category_id: int,
+    target_month: date,
+    new_amount_cents: int,
+) -> None:
+    """Set ``category_id``'s assignment for ``target_month`` to
+    ``new_amount_cents``, creating the row if none exists yet. Caller commits."""
+    existing = await db.scalar(
+        select(MonthlyAssignment).where(
+            MonthlyAssignment.user_id == user_id,
+            MonthlyAssignment.category_id == category_id,
+            MonthlyAssignment.month == target_month,
+        )
+    )
+    if existing is None:
+        db.add(
+            MonthlyAssignment(
+                user_id=user_id,
+                category_id=category_id,
+                month=target_month,
+                amount_cents=new_amount_cents,
+            )
+        )
+    else:
+        existing.amount_cents = new_amount_cents
+
+
 @router.post("/{month}/assign", status_code=status.HTTP_204_NO_CONTENT)
 async def upsert_assignment(
     month: str,
@@ -262,24 +293,9 @@ async def upsert_assignment(
     if category is None or category.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
 
-    existing = await db.scalar(
-        select(MonthlyAssignment).where(
-            MonthlyAssignment.user_id == current_user.id,
-            MonthlyAssignment.category_id == payload.category_id,
-            MonthlyAssignment.month == target_month,
-        )
+    await _upsert_assignment_amount(
+        db, current_user.id, payload.category_id, target_month, payload.amount_cents
     )
-    if existing is None:
-        db.add(
-            MonthlyAssignment(
-                user_id=current_user.id,
-                category_id=payload.category_id,
-                month=target_month,
-                amount_cents=payload.amount_cents,
-            )
-        )
-    else:
-        existing.amount_cents = payload.amount_cents
     await db.commit()
 
 
@@ -352,22 +368,71 @@ async def commit_fund_goals(
         if entry.amount_cents <= 0:
             continue
         new_total = data.balances[entry.category_id].assigned_cents + entry.amount_cents
-        existing = await db.scalar(
-            select(MonthlyAssignment).where(
-                MonthlyAssignment.user_id == current_user.id,
-                MonthlyAssignment.category_id == entry.category_id,
-                MonthlyAssignment.month == target_month,
-            )
+        await _upsert_assignment_amount(
+            db, current_user.id, entry.category_id, target_month, new_total
         )
-        if existing is None:
-            db.add(
-                MonthlyAssignment(
-                    user_id=current_user.id,
-                    category_id=entry.category_id,
-                    month=target_month,
-                    amount_cents=new_total,
-                )
-            )
-        else:
-            existing.amount_cents = new_total
+    await db.commit()
+
+
+@router.post("/{month}/move", status_code=status.HTTP_204_NO_CONTENT)
+async def move_money(
+    month: str,
+    payload: MoveMoneyRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> None:
+    """Move assigned money from one category to another within the same
+    scope and month — the general mechanic behind "Cover overspending" and
+    any future "Move money" affordance. A single endpoint doing both upserts
+    before its one commit keeps this atomic: a rejected request can never
+    leave a partial write."""
+    target_month = _parse_month_or_400(month)
+    data = await _load_budget_month_data(db, current_user, target_month)
+
+    owned_category_ids = {c.id for c in data.categories}
+    if (
+        payload.from_category_id not in owned_category_ids
+        or payload.to_category_id not in owned_category_ids
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    if payload.from_category_id == payload.to_category_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Source and destination must be different categories",
+        )
+    if payload.amount_cents <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Amount must be greater than zero"
+        )
+    if (
+        data.category_scope_id[payload.from_category_id]
+        != data.category_scope_id[payload.to_category_id]
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Categories must be in the same scope",
+        )
+
+    from_balance = data.balances[payload.from_category_id]
+    to_balance = data.balances[payload.to_category_id]
+    if payload.amount_cents > from_balance.balance_cents:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Source category does not have enough available funds",
+        )
+
+    await _upsert_assignment_amount(
+        db,
+        current_user.id,
+        payload.from_category_id,
+        target_month,
+        from_balance.assigned_cents - payload.amount_cents,
+    )
+    await _upsert_assignment_amount(
+        db,
+        current_user.id,
+        payload.to_category_id,
+        target_month,
+        to_balance.assigned_cents + payload.amount_cents,
+    )
     await db.commit()
