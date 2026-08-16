@@ -3,7 +3,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { budgetApi } from "../api/budget";
 import type { BudgetCategoryRow, BudgetGroupRow, BudgetMonth, Scope } from "../api/types";
+import { CoverOverspendingModal } from "../components/CoverOverspendingModal";
 import { FundGoalsPreviewModal } from "../components/FundGoalsPreviewModal";
+import { OverspentCategoriesModal } from "../components/OverspentCategoriesModal";
 import { UnassignedTransactionsIsland } from "../components/UnassignedTransactionsIsland";
 import { availablePillClass } from "../lib/budgetAvailability";
 import { currentMonth, monthLabel, shiftMonth } from "../lib/dates";
@@ -34,6 +36,8 @@ const TABLE_VALUE_COL_PADDING = "px-2 md:px-5";
 
 const STEPPER_BUTTON_CLASS =
   "px-3 py-2 rounded-lg border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 hover:bg-stone-100 dark:hover:bg-stone-800";
+
+const OVERSPENT_PILL_CLASS = "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-100";
 
 function loadCollapsedGroups(): Set<number> {
   try {
@@ -67,6 +71,8 @@ export function BudgetPage() {
   const [month, setMonth] = useState<string>(currentMonth);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(loadCollapsedGroups);
   const [fundGoalsScopeId, setFundGoalsScopeId] = useState<number | null>(null);
+  const [overspentScopeId, setOverspentScopeId] = useState<number | null>(null);
+  const [coverCategoryId, setCoverCategoryId] = useState<number | null>(null);
   const qc = useQueryClient();
 
   useEffect(() => {
@@ -112,6 +118,15 @@ export function BudgetPage() {
     },
   });
 
+  const moveMoneyMutation = useMutation({
+    mutationFn: (vars: { fromCategoryId: number; toCategoryId: number; amountCents: number }) =>
+      budgetApi.moveMoney(month, vars.fromCategoryId, vars.toCategoryId, vars.amountCents),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["budget"] });
+      setCoverCategoryId(null);
+    },
+  });
+
   const { scopes } = useScopes();
   const readyByScopeId = new Map(
     (budgetQuery.data?.ready_to_assign ?? []).map((row) => [
@@ -130,6 +145,43 @@ export function BudgetPage() {
     groups
       .flatMap((g) => g.categories)
       .reduce((s, c) => s + (c.needed_this_month_cents ?? 0), 0);
+
+  const allCategoriesFlat = (budgetQuery.data?.groups ?? []).flatMap((g) =>
+    g.categories.map((c) => ({ ...c, groupName: g.name, scopeId: g.scope_id })),
+  );
+
+  const overspentCountByScopeId = new Map<number, number>();
+  for (const c of allCategoriesFlat) {
+    if (c.balance_cents < 0) {
+      overspentCountByScopeId.set(c.scopeId, (overspentCountByScopeId.get(c.scopeId) ?? 0) + 1);
+    }
+  }
+
+  const overspentCategoriesForModal = allCategoriesFlat
+    .filter((c) => c.scopeId === overspentScopeId && c.balance_cents < 0)
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      groupName: c.groupName,
+      assignedCents: c.assigned_cents,
+      balanceCents: c.balance_cents,
+    }));
+
+  const coverTargetCategory = allCategoriesFlat.find((c) => c.id === coverCategoryId);
+  const coverTarget = coverTargetCategory
+    ? { id: coverTargetCategory.id, name: coverTargetCategory.name, balanceCents: coverTargetCategory.balance_cents }
+    : null;
+
+  const coverSourceCandidates = coverTargetCategory
+    ? allCategoriesFlat
+        .filter(
+          (c) =>
+            c.scopeId === coverTargetCategory.scopeId &&
+            c.id !== coverTargetCategory.id &&
+            c.balance_cents > 0,
+        )
+        .map((c) => ({ id: c.id, name: c.name, groupName: c.groupName, balanceCents: c.balance_cents }))
+    : [];
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -173,14 +225,29 @@ export function BudgetPage() {
       <UnassignedTransactionsIsland />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {scopes.map((scope) => (
-          <ReadyToAssignPill
-            key={scope.id}
-            scope={scope}
-            cents={readyByScopeId.get(scope.id) ?? 0}
-            neededCents={neededCentsFor(groupsByScopeId.get(scope.id) ?? [])}
-          />
-        ))}
+        {scopes.map((scope) => {
+          const overspentCount = overspentCountByScopeId.get(scope.id) ?? 0;
+          return (
+            <div key={scope.id} className="flex gap-4">
+              <div className="flex-1">
+                <ReadyToAssignPill
+                  scope={scope}
+                  cents={readyByScopeId.get(scope.id) ?? 0}
+                  neededCents={neededCentsFor(groupsByScopeId.get(scope.id) ?? [])}
+                />
+              </div>
+              {overspentCount > 0 && (
+                <div className="flex-1">
+                  <OverspentCategoriesPill
+                    scope={scope}
+                    count={overspentCount}
+                    onClick={() => setOverspentScopeId(scope.id)}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {budgetQuery.isLoading && (
@@ -222,6 +289,36 @@ export function BudgetPage() {
         isPending={fundGoalsCommitMutation.isPending}
         error={fundGoalsCommitMutation.isError ? "Failed to fund goals." : null}
       />
+
+      <OverspentCategoriesModal
+        scopeName={scopes.find((s) => s.id === overspentScopeId)?.name ?? ""}
+        categories={overspentCategoriesForModal}
+        isOpen={overspentScopeId !== null}
+        onClose={() => {
+          setOverspentScopeId(null);
+          setCoverCategoryId(null);
+        }}
+        onSelectCategory={(categoryId) => setCoverCategoryId(categoryId)}
+      />
+      <CoverOverspendingModal
+        targetCategory={coverTarget}
+        sourceCandidates={coverSourceCandidates}
+        isOpen={coverCategoryId !== null}
+        onClose={() => setCoverCategoryId(null)}
+        onConfirm={(sourceCategoryId, amountCents) =>
+          moveMoneyMutation.mutate({
+            fromCategoryId: sourceCategoryId,
+            toCategoryId: coverCategoryId!,
+            amountCents,
+          })
+        }
+        isPending={moveMoneyMutation.isPending}
+        error={
+          moveMoneyMutation.isError
+            ? "Couldn't move money — check the amount and try again."
+            : null
+        }
+      />
     </div>
   );
 }
@@ -243,6 +340,30 @@ function ReadyToAssignPill({
       <div className="text-3xl font-semibold tabular-nums">{formatCents(cents)}</div>
       <div className="text-xs mt-1 opacity-80 tabular-nums">Needed: {formatCents(neededCents)}</div>
     </div>
+  );
+}
+
+function OverspentCategoriesPill({
+  scope,
+  count,
+  onClick,
+}: {
+  scope: Scope;
+  count: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`text-left w-full rounded-2xl p-5 ${OVERSPENT_PILL_CLASS}`}
+    >
+      <div className="text-xs uppercase tracking-wide opacity-70">Overspent — {scope.name}</div>
+      <div className="text-3xl font-semibold tabular-nums">{count}</div>
+      <div className="text-xs mt-1 opacity-80">
+        {count === 1 ? "Overspent Category" : "Overspent Categories"}
+      </div>
+    </button>
   );
 }
 
