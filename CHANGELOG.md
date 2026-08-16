@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.11.1-beta.10...v0.12.0-beta.10) (2026-08-16)
+
+
+### Features
+
+* **budget:** add per-scope overspent-categories pill and cover-overspending flow ([#149](https://github.com/scevola44/ZeroBudget/issues/149)) ([32170e7](https://github.com/scevola44/ZeroBudget/commit/32170e70fcab4dd469edb74c5d88e47041ebcee7))
+
 ## [0.11.1-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.11.0-beta.10...v0.11.1-beta.10) (2026-08-14)
 
 
