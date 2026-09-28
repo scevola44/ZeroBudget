@@ -33,6 +33,7 @@ from app.models import (
     Category,
     CategoryGroup,
     DeletedExternalTransaction,
+    Payee,
     PayeeCategoryRule,
     SyncRun,
     Transaction,
@@ -43,6 +44,7 @@ from app.services.bank_amount import (
     bank_balance_amount_to_cents,
 )
 from app.services.banking_client import BankingClient, BankingError
+from app.services.category_suggest import PayeeHistoryRow, suggest_categories
 from app.services.encryption import decrypt
 from app.services.payee_rules import CategoryRule, match_rule
 from app.services.payees import resolve_payee
@@ -282,6 +284,32 @@ async def _load_category_scope_ids(db: AsyncSession, user_id: int) -> dict[int, 
     return dict(result.all())
 
 
+async def _load_payee_history_by_scope(
+    db: AsyncSession, user_id: int, category_scope_id: dict[int, int]
+) -> dict[int, list[PayeeHistoryRow]]:
+    """Every categorized transaction's (payee, category, date), grouped by the
+    scope its category belongs to — the same grouping ``suggest_categories``
+    needs to stay within the account it's proposing a category for.
+    """
+    result = await db.execute(
+        select(Transaction.id, Payee.name, Transaction.category_id, Transaction.date)
+        .join(Payee, Transaction.payee_id == Payee.id)
+        .where(
+            Transaction.user_id == user_id,
+            Transaction.category_id.is_not(None),
+        )
+    )
+    by_scope: dict[int, list[PayeeHistoryRow]] = {}
+    for row in result.all():
+        scope_id = category_scope_id.get(row.category_id)
+        if scope_id is None:
+            continue
+        by_scope.setdefault(scope_id, []).append(
+            PayeeHistoryRow(id=row.id, payee=row.name, category_id=row.category_id, date=row.date)
+        )
+    return by_scope
+
+
 async def sync_connection(
     db: AsyncSession,
     connection: BankConnection,
@@ -333,7 +361,8 @@ async def sync_connection(
     )
     touched: set[int] = set()
     rules = await _load_category_rules(db, connection.user_id)
-    category_scope_id = await _load_category_scope_ids(db, connection.user_id) if rules else {}
+    category_scope_id = await _load_category_scope_ids(db, connection.user_id)
+    history_by_scope = await _load_payee_history_by_scope(db, connection.user_id, category_scope_id)
 
     for account in account_rows:
         if not account.bank_account_uid:
@@ -395,11 +424,20 @@ async def sync_connection(
                     and category_scope_id.get(matched_category_id) != account.scope_id
                 ):
                     matched_category_id = None
+                # No rule fired — fall back to how this payee (or one enough
+                # like it) has been categorized before. Still unattended, so
+                # cleared stays False either way.
+                if matched_category_id is None:
+                    suggested = suggest_categories(
+                        payee_text, history_by_scope.get(account.scope_id, [])
+                    )
+                    if suggested:
+                        matched_category_id = suggested[0]
                 new_txn = Transaction(
                     user_id=connection.user_id,
                     account_id=account.id,
                     category_id=matched_category_id,
-                    # Possibly rule-matched, not user-confirmed.
+                    # Possibly rule- or history-matched, not user-confirmed.
                     cleared=False,
                     date=txn_date,
                     payee_id=payee.id if payee is not None else None,

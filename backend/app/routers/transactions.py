@@ -377,6 +377,23 @@ async def import_transactions_from_ynab(
         for r in rules_result.scalars().all()
     ]
 
+    history_result = await db.execute(
+        select(Transaction.id, Payee.name, Transaction.category_id, Transaction.date)
+        .join(Payee, Transaction.payee_id == Payee.id)
+        .where(
+            Transaction.user_id == current_user.id,
+            Transaction.category_id.is_not(None),
+        )
+    )
+    history_by_scope: dict[int, list[PayeeHistoryRow]] = {}
+    for row in history_result.all():
+        scope_id = category_scope_id.get(row.category_id)
+        if scope_id is None:
+            continue
+        history_by_scope.setdefault(scope_id, []).append(
+            PayeeHistoryRow(id=row.id, payee=row.name, category_id=row.category_id, date=row.date)
+        )
+
     transactions: list[Transaction] = []
     for row in payload.rows:
         account = accounts_by_id.get(row.account_id)
@@ -396,6 +413,16 @@ async def import_transactions_from_ynab(
             if matched is not None and category_scope_id.get(matched) == account.scope_id:
                 category_id = matched
 
+        # No rule fired — fall back to how this payee (or one enough like
+        # it) has been categorized before. Still unattended, so cleared
+        # stays False regardless of how the category got filled in.
+        if category_id is None:
+            suggested = suggest_categories(
+                row.payee, history_by_scope.get(account.scope_id, [])
+            )
+            if suggested:
+                category_id = suggested[0]
+
         payee = await resolve_payee(db, current_user.id, row.payee)
 
         transactions.append(
@@ -403,7 +430,8 @@ async def import_transactions_from_ynab(
                 user_id=current_user.id,
                 account_id=row.account_id,
                 category_id=category_id,
-                # Bulk-imported and possibly rule-matched, not user-confirmed.
+                # Bulk-imported and possibly rule- or history-matched, not
+                # user-confirmed.
                 cleared=False,
                 date=row.date,
                 payee_id=payee.id if payee is not None else None,
