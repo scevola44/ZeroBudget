@@ -248,6 +248,8 @@ async def _import_opening_balance(
             account_id=account.id,
             # Sorts before every transaction imported by this sync's window.
             date=date_from - timedelta(days=1),
+            # Written unattended by the sync, not confirmed by the user yet.
+            cleared=False,
             payee_id=payee.id if payee is not None else None,
             memo=(
                 "Balance imported from the bank on connection; covers transactions "
@@ -397,6 +399,8 @@ async def sync_connection(
                     user_id=connection.user_id,
                     account_id=account.id,
                     category_id=matched_category_id,
+                    # Possibly rule-matched, not user-confirmed.
+                    cleared=False,
                     date=txn_date,
                     payee_id=payee.id if payee is not None else None,
                     memo="",

@@ -260,6 +260,7 @@ async def test_rule_matching_an_out_of_scope_category_is_skipped_not_errored(
     assert summary.added == 1
     [row] = (await db_session.execute(select(Transaction))).scalars().all()
     assert row.category_id is None
+    assert row.cleared is False
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +316,7 @@ async def test_import_ynab_applies_rule_only_when_row_has_no_category(client: As
     rows = {row["amount_cents"]: row["category_id"] for row in r.json()["items"]}
     assert rows[-999] == streaming  # no category on the row -> rule applied
     assert rows[-500] == groceries  # row already had a category -> rule skipped
+    assert all(not row["cleared"] for row in r.json()["items"])
 
 
 @pytest.mark.asyncio

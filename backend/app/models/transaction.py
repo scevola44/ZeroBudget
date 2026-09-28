@@ -29,6 +29,11 @@ class Transaction(Base):
     # exactly like any other uncategorized inflow — this only changes what the
     # "Unassigned" filter shows.
     is_ready_to_assign: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Whether the user has reviewed this row (YNAB's "cleared"). Orthogonal to
+    # category_id/is_ready_to_assign: a payee rule or bank sync can already
+    # have filled in a category, but that's a guess until the user confirms
+    # it — this is the flag that distinguishes "pre-populated" from "handled".
+    cleared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     # Nullable: no payee typed/matched. Resolved to a Payee row on write via
     # services.payees.resolve_payee — see that module for why this isn't a

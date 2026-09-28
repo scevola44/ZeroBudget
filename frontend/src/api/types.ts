@@ -66,6 +66,10 @@ export type Transaction = {
   // (a balance reconcile, a paycheck), not to await a category. Never true
   // together with a non-null category_id.
   is_ready_to_assign: boolean;
+  // Whether the user has reviewed this row (YNAB's "cleared"). Independent of
+  // category_id — a payee rule or bank sync can already have guessed a
+  // category, but that's not the same as the user having confirmed it.
+  cleared: boolean;
   date: string;
   // Denormalized display name — resolved server-side from payee_id, the same
   // way transfer_peer_account_id is denormalized from transfer_peer_id.
