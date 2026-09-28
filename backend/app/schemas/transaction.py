@@ -22,6 +22,9 @@ class TransactionCreate(BaseModel):
     account_id: int
     category_id: int | None = None
     is_ready_to_assign: bool = False
+    # Whether the user has reviewed this row. True by default: a manually
+    # entered transaction is, by definition, one the user just handled.
+    cleared: bool = True
     date: DateType
     payee: str = Field(default="", max_length=255)
     memo: str = Field(default="", max_length=500)
@@ -33,6 +36,7 @@ class TransactionUpdate(BaseModel):
     account_id: int | None = None
     category_id: int | None = None
     is_ready_to_assign: bool | None = None
+    cleared: bool | None = None
     date: DateType | None = None
     payee: str | None = Field(default=None, max_length=255)
     memo: str | None = Field(default=None, max_length=500)
@@ -50,6 +54,7 @@ class TransactionResponse(BaseModel):
     account_id: int
     category_id: int | None
     is_ready_to_assign: bool
+    cleared: bool
     date: DateType
     payee: str
     payee_id: int | None = None

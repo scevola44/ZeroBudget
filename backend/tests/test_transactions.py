@@ -36,20 +36,20 @@ async def _add_txn(
     category_id: int | None = None,
     payee: str = "",
     is_ready_to_assign: bool = False,
+    cleared: bool | None = None,
 ) -> int:
-    r = await client.post(
-        "/api/transactions",
-        json={
-            "account_id": account_id,
-            "category_id": category_id,
-            "is_ready_to_assign": is_ready_to_assign,
-            "date": date,
-            "payee": payee,
-            "memo": "",
-            "amount_cents": amount,
-        },
-        headers=headers,
-    )
+    body = {
+        "account_id": account_id,
+        "category_id": category_id,
+        "is_ready_to_assign": is_ready_to_assign,
+        "date": date,
+        "payee": payee,
+        "memo": "",
+        "amount_cents": amount,
+    }
+    if cleared is not None:
+        body["cleared"] = cleared
+    r = await client.post("/api/transactions", json=body, headers=headers)
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
@@ -242,6 +242,41 @@ async def test_update_can_clear_category(client: AsyncClient):
     )
     assert r.status_code == 200
     assert r.json()["category_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_defaults_to_cleared(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    txn_id = await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=1000)
+
+    rows = await list_transactions(client, headers)
+    assert next(r for r in rows if r["id"] == txn_id)["cleared"] is True
+
+
+@pytest.mark.asyncio
+async def test_create_can_set_cleared_false(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    txn_id = await _add_txn(
+        client, headers, account_id=a, date="2026-04-01", amount=1000, cleared=False
+    )
+
+    rows = await list_transactions(client, headers)
+    assert next(r for r in rows if r["id"] == txn_id)["cleared"] is False
+
+
+@pytest.mark.asyncio
+async def test_update_can_toggle_cleared(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    txn_id = await _add_txn(client, headers, account_id=a, date="2026-04-01", amount=1000)
+
+    r = await client.patch(
+        f"/api/transactions/{txn_id}", json={"cleared": False}, headers=headers
+    )
+    assert r.status_code == 200
+    assert r.json()["cleared"] is False
 
 
 @pytest.mark.asyncio
@@ -821,6 +856,24 @@ async def test_list_ready_to_assign_filter(client: AsyncClient):
 
     rows = await list_transactions(client, headers, ready_to_assign=True)
     assert [r["id"] for r in rows] == [rta]
+
+
+@pytest.mark.asyncio
+async def test_list_cleared_filter(client: AsyncClient):
+    headers = await register_user(client)
+    a = await create_account(client, headers)
+    uncleared = await _add_txn(
+        client, headers, account_id=a, date="2026-04-01", amount=-500, cleared=False
+    )
+    cleared = await _add_txn(
+        client, headers, account_id=a, date="2026-04-02", amount=-600, cleared=True
+    )
+
+    rows = await list_transactions(client, headers, cleared=False)
+    assert [r["id"] for r in rows] == [uncleared]
+
+    rows = await list_transactions(client, headers, cleared=True)
+    assert [r["id"] for r in rows] == [cleared]
 
 
 @pytest.mark.asyncio

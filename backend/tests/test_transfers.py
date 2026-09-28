@@ -89,6 +89,7 @@ async def test_transfer_creates_two_linked_uncategorized_legs(client: AsyncClien
     assert outflow["account_id"] == checking
     assert inflow["account_id"] == savings
     assert outflow["category_id"] is None and inflow["category_id"] is None
+    assert outflow["cleared"] is True and inflow["cleared"] is True
     assert outflow["transfer_peer_id"] == inflow["id"]
     assert inflow["transfer_peer_id"] == outflow["id"]
     # The peer's account travels on the response so a transaction list can

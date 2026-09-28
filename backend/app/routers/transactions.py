@@ -85,6 +85,7 @@ def _to_response(
         account_id=txn.account_id,
         category_id=txn.category_id,
         is_ready_to_assign=txn.is_ready_to_assign,
+        cleared=txn.cleared,
         date=txn.date,
         payee=payee_names.get(txn.payee_id, "") if txn.payee_id is not None else "",
         payee_id=txn.payee_id,
@@ -176,6 +177,7 @@ async def list_transactions(
     category_id: int | None = Query(default=None),
     unassigned: bool = Query(default=False),
     ready_to_assign: bool = Query(default=False),
+    cleared: bool | None = Query(default=None),
     q: str | None = Query(default=None, description="Free-text search over payee/memo"),
     limit: int | None = Query(default=None, ge=1, le=500),
     cursor: str | None = Query(default=None),
@@ -224,6 +226,8 @@ async def list_transactions(
         )
     if ready_to_assign:
         stmt = stmt.where(Transaction.is_ready_to_assign.is_(True))
+    if cleared is not None:
+        stmt = stmt.where(Transaction.cleared.is_(cleared))
     if q:
         stmt = stmt.outerjoin(Payee, Transaction.payee_id == Payee.id).where(
             or_(Payee.name.ilike(f"%{q}%"), Transaction.memo.ilike(f"%{q}%"))
@@ -399,6 +403,8 @@ async def import_transactions_from_ynab(
                 user_id=current_user.id,
                 account_id=row.account_id,
                 category_id=category_id,
+                # Bulk-imported and possibly rule-matched, not user-confirmed.
+                cleared=False,
                 date=row.date,
                 payee_id=payee.id if payee is not None else None,
                 memo=row.memo,
@@ -440,6 +446,8 @@ async def create_transfer(
             user_id=current_user.id,
             account_id=account_id,
             category_id=None,
+            # The user just typed this transfer themselves.
+            cleared=True,
             date=payload.date,
             payee_id=payee.id if payee is not None else None,
             memo=payload.memo,
@@ -664,6 +672,8 @@ async def link_transfer(
             user_id=current_user.id,
             account_id=target_account.id,
             category_id=None,
+            # This leg only exists because the user is explicitly linking it now.
+            cleared=True,
             date=txn.date,
             payee_id=txn.payee_id,
             memo=txn.memo,
@@ -804,6 +814,7 @@ async def create_transaction(
         account_id=payload.account_id,
         category_id=payload.category_id,
         is_ready_to_assign=payload.is_ready_to_assign,
+        cleared=payload.cleared,
         date=payload.date,
         payee_id=payee.id if payee is not None else None,
         memo=payload.memo,
@@ -865,6 +876,8 @@ async def update_transaction(
         txn.category_id = payload.category_id
     if payload.is_ready_to_assign is not None:
         txn.is_ready_to_assign = payload.is_ready_to_assign
+    if payload.cleared is not None:
+        txn.cleared = payload.cleared
     # Catches cross-field conflicts a single-field PATCH can't see on its own:
     # setting is_ready_to_assign on a row that already has a category, or
     # setting a category on a row that's already flagged. No implicit

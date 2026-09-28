@@ -11,6 +11,7 @@ import {
 import { BulkDeleteTransactionsConfirmModal } from "../components/BulkDeleteTransactionsConfirmModal";
 import { BulkSetCategoryModal } from "../components/BulkSetCategoryModal";
 import { CategoryBadge, needsCategory } from "../components/CategoryBadge";
+import { ClearedToggle } from "../components/ClearedToggle";
 import type { CategoryBudgetInfo } from "../components/CategoryPicker";
 import {
   EditTransactionModal,
@@ -43,6 +44,7 @@ function fetchTransactionsPage(params: {
   accountIds: number[];
   categoryId: string;
   q: string;
+  needsReview: boolean;
   cursor?: string;
 }): Promise<TransactionPage> {
   const search = new URLSearchParams();
@@ -55,6 +57,7 @@ function fetchTransactionsPage(params: {
   else if (params.categoryId === "rta") search.set("ready_to_assign", "true");
   else if (params.categoryId !== "") search.set("category_id", params.categoryId);
   if (params.q.trim()) search.set("q", params.q.trim());
+  if (params.needsReview) search.set("cleared", "false");
   search.set("limit", String(PAGE_SIZE));
   if (params.cursor) search.set("cursor", params.cursor);
   return api<TransactionPage>(`/api/transactions?${search.toString()}`);
@@ -66,6 +69,7 @@ export function TransactionsPage() {
   const [endDate, setEndDate] = useState(() => monthEnd(currentMonth()));
   const [selectedAccountIds, setSelectedAccountIds] = useState(() => new Set<number>());
   const [selectedCategoryId, setSelectedCategoryId] = useState("null");
+  const [needsReview, setNeedsReview] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [editingTxnId, setEditingTxnId] = useState<number | null>(null);
@@ -118,7 +122,7 @@ export function TransactionsPage() {
     // accountIdsKey is a fresh array each render; its *contents* are what
     // should drive the reset, so it's stringified for a stable dep.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, endDate, accountIdsKey.join(","), selectedCategoryId, debouncedSearch]);
+  }, [startDate, endDate, accountIdsKey.join(","), selectedCategoryId, debouncedSearch, needsReview]);
 
   const importMutation = useMutation({
     mutationFn: (rows: ImportRow[]) =>
@@ -138,6 +142,7 @@ export function TransactionsPage() {
       accountIdsKey,
       selectedCategoryId,
       debouncedSearch,
+      needsReview,
     ],
     queryFn: ({ pageParam }) =>
       fetchTransactionsPage({
@@ -146,6 +151,7 @@ export function TransactionsPage() {
         accountIds: accountIdsKey,
         categoryId: selectedCategoryId,
         q: debouncedSearch,
+        needsReview,
         cursor: pageParam,
       }),
     initialPageParam: undefined as string | undefined,
@@ -212,6 +218,12 @@ export function TransactionsPage() {
   const deleteTxn = useMutation({
     mutationFn: (txnId: number) =>
       api(`/api/transactions/${txnId}`, { method: "DELETE" }),
+    onSuccess: invalidateAfterLink,
+  });
+
+  const toggleCleared = useMutation({
+    mutationFn: ({ txnId, cleared }: { txnId: number; cleared: boolean }) =>
+      api<Transaction>(`/api/transactions/${txnId}`, { method: "PATCH", body: { cleared } }),
     onSuccess: invalidateAfterLink,
   });
 
@@ -430,6 +442,20 @@ export function TransactionsPage() {
               </div>
             </div>
           </div>
+
+          {/* Cleared */}
+          <div className="space-y-1">
+            <div className="text-sm font-medium text-stone-700 dark:text-stone-300">Review</div>
+            <label className="h-9 flex items-center gap-1.5 text-sm text-stone-700 dark:text-stone-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={needsReview}
+                onChange={(e) => setNeedsReview(e.target.checked)}
+                className="rounded accent-indigo-600"
+              />
+              Needs review
+            </label>
+          </div>
         </div>
 
         {/* Account checkboxes */}
@@ -532,6 +558,9 @@ export function TransactionsPage() {
                         setEditError(null);
                         setEditingTxnId(t.id);
                       }}
+                      onToggleCleared={() =>
+                        toggleCleared.mutate({ txnId: t.id, cleared: !t.cleared })
+                      }
                     />
                   );
                 })}
@@ -560,6 +589,7 @@ export function TransactionsPage() {
                   <th className="text-left px-5 py-2">Payee</th>
                   <th className="text-left px-5 py-2">Category</th>
                   <th className="hidden sm:table-cell text-left px-5 py-2">Memo</th>
+                  <th className="px-5 py-2 text-center">Cleared</th>
                   <th className="text-right px-5 py-2">Amount</th>
                   <th className="px-5 py-2"></th>
                 </tr>
@@ -604,6 +634,13 @@ export function TransactionsPage() {
                       </td>
                       <td className="hidden sm:table-cell px-5 py-2 text-stone-500 dark:text-stone-400">
                         {t.memo}
+                      </td>
+                      <td className="px-5 py-2 text-center">
+                        <ClearedToggle
+                          cleared={t.cleared}
+                          onToggle={() => toggleCleared.mutate({ txnId: t.id, cleared: !t.cleared })}
+                          disabled={toggleCleared.isPending}
+                        />
                       </td>
                       <td
                         className={`px-5 py-2 text-right tabular-nums ${

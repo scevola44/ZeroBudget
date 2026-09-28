@@ -1,6 +1,7 @@
 import type { Account, Transaction } from "../api/types";
 import { formatCents } from "../lib/money";
 import { CategoryBadge, needsCategory } from "./CategoryBadge";
+import { ClearedToggle } from "./ClearedToggle";
 
 export function MobileTransactionRow({
   transaction,
@@ -11,6 +12,7 @@ export function MobileTransactionRow({
   selected,
   onToggleSelect,
   onOpen,
+  onToggleCleared,
 }: {
   transaction: Transaction;
   account: Account | undefined;
@@ -20,6 +22,7 @@ export function MobileTransactionRow({
   selected: boolean;
   onToggleSelect: () => void;
   onOpen: () => void;
+  onToggleCleared: () => void;
 }) {
   const accentClass = needsCategory(transaction)
     ? "border-amber-400 dark:border-amber-600"
@@ -64,11 +67,14 @@ export function MobileTransactionRow({
           </span>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <CategoryBadge
-            transaction={transaction}
-            category={category}
-            peerAccountName={peerAccountName}
-          />
+          <div className="flex items-center gap-2 min-w-0">
+            <ClearedToggle cleared={transaction.cleared} onToggle={onToggleCleared} />
+            <CategoryBadge
+              transaction={transaction}
+              category={category}
+              peerAccountName={peerAccountName}
+            />
+          </div>
           <span className="text-xs text-stone-500 dark:text-stone-400 truncate">
             {account?.name ?? "—"}
           </span>
