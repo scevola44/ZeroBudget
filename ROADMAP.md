@@ -671,9 +671,13 @@ Listed so nobody drifts into them. Revisit only on explicit owner request.
 
 - **Multi-currency** — ZeroBudget is EUR-only by design (hard gates at the
   bank-sync boundary; no currency columns).
-- **Native mobile client scope creep on this backend** — a native iOS client
-  is being planned separately in [`IOS_ROADMAP.md`](./IOS_ROADMAP.md); that
-  document tracks its own phases and does not belong in this file.
+- **Mobile client scope creep on this backend** — a React Native client is
+  being planned separately in [`MOBILE_ROADMAP.md`](./MOBILE_ROADMAP.md); that
+  document tracks its own phases and does not belong in this file. (It
+  supersedes the on-hold native-SwiftUI plan in
+  [`IOS_ROADMAP.md`](./IOS_ROADMAP.md).) One caveat: its Phase 0 does land two
+  changes *here* — refresh tokens on `backend/app/security.py`, and OpenAPI-driven
+  type generation replacing the hand-written `frontend/src/api/types.ts`.
 - **Multi-user households / sharing** — a shared scope models the joint pool
   for a single login; real multi-login sharing is out of scope.
 - **Loan planner / investment tracking** — `loan` accounts may exist as
