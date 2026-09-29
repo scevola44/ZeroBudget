@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.12.0-beta.10...v0.13.0-beta.10) (2026-09-28)
+
+
+### Features
+
+* suggest categories from payee history on import and bank sync ([#153](https://github.com/scevola44/ZeroBudget/issues/153)) ([210d8ce](https://github.com/scevola44/ZeroBudget/commit/210d8ce3472d780e55c279603e2737886ac0a18e))
+* **transactions:** add a cleared flag to distinguish reviewed transactions ([#151](https://github.com/scevola44/ZeroBudget/issues/151)) ([d42fc9f](https://github.com/scevola44/ZeroBudget/commit/d42fc9fdd0661cec855e13a9c7852cea222804ae))
+
 ## [0.12.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.11.1-beta.10...v0.12.0-beta.10) (2026-08-16)
 
 
