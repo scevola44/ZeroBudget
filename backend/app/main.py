@@ -23,6 +23,7 @@ from app.routers import (
     insights,
     payee_rules,
     payees,
+    reset,
     scopes,
     transactions,
 )
@@ -107,6 +108,7 @@ app.include_router(payee_rules.router)
 app.include_router(budget.router)
 app.include_router(insights.router)
 app.include_router(banking.router)
+app.include_router(reset.router)
 
 
 @app.get("/api/health", tags=["health"])

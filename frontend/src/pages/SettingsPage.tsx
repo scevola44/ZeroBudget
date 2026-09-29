@@ -2,10 +2,12 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
+import { resetApi } from "../api/reset";
 import { PAYEE_RULES_QUERY_KEY, PAYEES_QUERY_KEY, payeeRulesApi, payeesApi } from "../api/payees";
 import { SCOPES_QUERY_KEY, scopesApi } from "../api/scopes";
 import type { CategoryGroup, Payee, Scope } from "../api/types";
 import { MergePayeeModal } from "../components/MergePayeeModal";
+import { ResetConfirmModal } from "../components/ResetConfirmModal";
 import { ScopeChip } from "../components/ScopeChip";
 import { useScopes } from "../lib/useScopes";
 
@@ -21,7 +23,68 @@ export function SettingsPage() {
       <ScopesCard />
       <PayeesCard />
       <PayeeRulesCard />
+      <DangerZoneCard />
     </div>
+  );
+}
+
+// Everything that can show transactions, balances or assigned amounts.
+const QUERIES_AFFECTED_BY_RESET = [
+  "accounts",
+  "transactions",
+  "budget",
+  "insights",
+  "bank-connections",
+  "sync-status",
+];
+
+function DangerZoneCard() {
+  const qc = useQueryClient();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const reset = useMutation({
+    mutationFn: resetApi.reset,
+    onSuccess: () => {
+      setIsModalOpen(false);
+      for (const queryKey of QUERIES_AFFECTED_BY_RESET) {
+        void qc.invalidateQueries({ queryKey: [queryKey] });
+      }
+    },
+  });
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">
+          Danger zone
+        </h2>
+        <p className="text-sm text-stone-600 dark:text-stone-400 mt-1">
+          Wipe budget data without reconnecting banks or rebuilding your categories.
+        </p>
+      </div>
+
+      <div className={`${CARD_CLASS} px-5 py-4 flex items-center justify-between gap-4`}>
+        <span className="text-sm">Reset transactions and/or assignments</span>
+        <button
+          type="button"
+          onClick={() => {
+            reset.reset();
+            setIsModalOpen(true);
+          }}
+          className="border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg px-4 py-2 text-sm"
+        >
+          Reset…
+        </button>
+      </div>
+
+      <ResetConfirmModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onConfirm={(options) => reset.mutate(options)}
+        isPending={reset.isPending}
+        error={reset.error ? reset.error.message : null}
+      />
+    </section>
   );
 }
 

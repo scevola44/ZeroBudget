@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import event, select
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -30,7 +30,9 @@ from app.models import (
     User,
 )
 from app.services.bank_sync import run_global_sync, select_balance, sync_connection
+from app.schemas.reset import ResetOption
 from app.services.banking_client import BankingError
+from app.services.data_reset import reset_data
 from app.services.encryption import encrypt
 from app.services.sync_quota import latest_run, quota_remaining, runs_today
 from tests.conftest import _enable_sqlite_fks, add_scope
@@ -628,3 +630,31 @@ async def test_bank_moving_a_transfer_legs_date_leaves_the_peer_alone(db_session
     assert peer.date == date(2026, 7, 1)
     assert peer.amount_cents == 500
     assert imported_leg.transfer_peer_id == peer.id
+
+
+@pytest.mark.asyncio
+async def test_transactions_reset_then_sync_realigns_balance_to_the_bank(db_session):
+    user, connection, account = await _seed(db_session)
+    client = FakeBankingClient(
+        transactions_by_uid={"uid_1": [_txn("42.50", "DBIT")]},
+        balances_by_uid={"uid_1": [_balance("1000.00")]},
+    )
+    await sync_connection(db_session, connection, client)
+    # The user deleted the opening balance earlier, leaving a tombstone that
+    # would otherwise stop the reset account from re-aligning.
+    db_session.add(
+        DeletedExternalTransaction(
+            user_id=user.id, external_transaction_id=f"{account.id}:opening_balance"
+        )
+    )
+    await db_session.commit()
+
+    await reset_data(db_session, user.id, [ResetOption.TRANSACTIONS])
+    assert connection.last_synced_at is None
+    await sync_connection(db_session, connection, client)
+    await db_session.commit()
+
+    total = await db_session.scalar(
+        select(func.sum(Transaction.amount_cents)).where(Transaction.account_id == account.id)
+    )
+    assert total == 100_000
