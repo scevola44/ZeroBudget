@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.13.0-beta.10...v0.13.1-beta.10) (2026-09-29)
+
+
+### Bug Fixes
+
+* **transfers:** stop bank-imported legs drifting from the bank ([#154](https://github.com/scevola44/ZeroBudget/issues/154)) ([041b1ca](https://github.com/scevola44/ZeroBudget/commit/041b1caa78246c111add60526858dd1f9f199e9f))
+
 ## [0.13.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.12.0-beta.10...v0.13.0-beta.10) (2026-09-28)
 
 
