@@ -16,8 +16,10 @@ from tests.conftest import (
     create_category,
     create_group,
     list_transactions,
+    mark_as_bank_imported,
     ready_to_assign,
     register_user,
+    tombstoned_external_ids,
 )
 
 TRANSFER_CENTS = 60_000
@@ -250,6 +252,137 @@ async def test_deleting_one_leg_removes_the_pair(client: AsyncClient):
 
     rows = await list_transactions(client, headers)
     assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_deleting_the_manual_leg_keeps_and_unlinks_the_bank_imported_peer(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    body = await _transfer(client, headers, checking, savings)
+    imported_outflow = body["from_transaction"]["id"]
+    manual_inflow = body["to_transaction"]["id"]
+    await mark_as_bank_imported(imported_outflow)
+
+    r = await client.delete(f"/api/transactions/{manual_inflow}", headers=headers)
+    assert r.status_code == 204, r.text
+
+    rows = await list_transactions(client, headers)
+    assert [(row["id"], row["transfer_peer_id"]) for row in rows] == [(imported_outflow, None)]
+    assert await tombstoned_external_ids() == set()
+
+
+@pytest.mark.asyncio
+async def test_deleting_the_bank_imported_leg_removes_the_manual_peer_and_tombstones_it(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    body = await _transfer(client, headers, checking, savings)
+    imported_outflow = body["from_transaction"]["id"]
+    await mark_as_bank_imported(imported_outflow)
+
+    r = await client.delete(f"/api/transactions/{imported_outflow}", headers=headers)
+    assert r.status_code == 204, r.text
+
+    assert await list_transactions(client, headers) == []
+    assert await tombstoned_external_ids() == {f"test:{imported_outflow}"}
+
+
+@pytest.mark.asyncio
+async def test_bulk_deleting_the_manual_leg_keeps_the_bank_imported_peer(client: AsyncClient):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    body = await _transfer(client, headers, checking, savings)
+    imported_outflow = body["from_transaction"]["id"]
+    await mark_as_bank_imported(imported_outflow)
+
+    r = await client.post(
+        "/api/transactions/bulk-delete",
+        json={"ids": [body["to_transaction"]["id"]]},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"deleted": 1}
+
+    rows = await list_transactions(client, headers)
+    assert [row["id"] for row in rows] == [imported_outflow]
+
+
+@pytest.mark.asyncio
+async def test_changing_the_amount_against_a_bank_imported_peer_is_rejected(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    body = await _transfer(client, headers, checking, savings)
+    imported_outflow = body["from_transaction"]["id"]
+    manual_inflow = body["to_transaction"]["id"]
+    await mark_as_bank_imported(imported_outflow)
+
+    r = await client.patch(
+        f"/api/transactions/{manual_inflow}",
+        json={"amount_cents": TRANSFER_CENTS + 500},
+        headers=headers,
+    )
+
+    assert r.status_code == 422, r.text
+    assert "bank" in r.json()["detail"].lower()
+    rows = {row["id"]: row for row in await list_transactions(client, headers)}
+    assert rows[imported_outflow]["amount_cents"] == -TRANSFER_CENTS
+    assert rows[manual_inflow]["amount_cents"] == TRANSFER_CENTS
+
+
+@pytest.mark.asyncio
+async def test_resubmitting_the_same_amount_leaves_a_bank_imported_peer_alone(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    body = await _transfer(client, headers, checking, savings)
+    imported_outflow = body["from_transaction"]["id"]
+    manual_inflow = body["to_transaction"]["id"]
+    await mark_as_bank_imported(imported_outflow)
+
+    r = await client.patch(
+        f"/api/transactions/{manual_inflow}",
+        json={"amount_cents": TRANSFER_CENTS, "memo": "monthly saving"},
+        headers=headers,
+    )
+
+    assert r.status_code == 200, r.text
+    rows = {row["id"]: row for row in await list_transactions(client, headers)}
+    assert rows[imported_outflow]["amount_cents"] == -TRANSFER_CENTS
+    assert rows[manual_inflow]["memo"] == "monthly saving"
+
+
+@pytest.mark.asyncio
+async def test_changing_a_bank_imported_legs_amount_still_mirrors_to_the_manual_peer(
+    client: AsyncClient,
+):
+    headers = await register_user(client)
+    checking = await create_account(client, headers, "Checking")
+    savings = await create_account(client, headers, "Savings")
+    body = await _transfer(client, headers, checking, savings)
+    imported_outflow = body["from_transaction"]["id"]
+    manual_inflow = body["to_transaction"]["id"]
+    await mark_as_bank_imported(imported_outflow)
+
+    r = await client.patch(
+        f"/api/transactions/{imported_outflow}",
+        json={"amount_cents": -(TRANSFER_CENTS + 500)},
+        headers=headers,
+    )
+
+    assert r.status_code == 200, r.text
+    rows = {row["id"]: row for row in await list_transactions(client, headers)}
+    assert rows[manual_inflow]["amount_cents"] == TRANSFER_CENTS + 500
 
 
 @pytest.mark.asyncio

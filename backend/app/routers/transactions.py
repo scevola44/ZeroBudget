@@ -889,6 +889,19 @@ async def update_transaction(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="A transfer leg cannot be split. Delete the transfer instead.",
         )
+    # The edit modal resubmits the amount on every save, so only a real change
+    # counts as one.
+    amount_changed = (
+        payload.amount_cents is not None and payload.amount_cents != txn.amount_cents
+    )
+    if peer is not None and amount_changed and peer.is_bank_imported:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "The other leg of this transfer is imported from a bank, which owns its "
+                "amount. Unlink the transfer to change this amount."
+            ),
+        )
 
     if payload.account_id is not None:
         await _owned_account(db, current_user.id, payload.account_id)
@@ -929,14 +942,17 @@ async def update_transaction(
 
     # Amount is the one field that defines the transfer itself: the legs must
     # stay equal and opposite or the budget math, which excludes both rather
-    # than summing them, starts inventing money.
+    # than summing them, starts inventing money. Mirrored only on a real change
+    # and never onto a bank-imported peer (rejected above): rewriting an
+    # unchanged amount would clobber a bank revision the sync applied to the
+    # other leg.
     #
     # Date is deliberately *not* mirrored. Two legs linked from bank imports each
     # carry their own bank's booking date — money leaves on the 31st and lands on
     # the 2nd — and the edit modal submits every field on every save, so
     # mirroring would overwrite the peer's real date on an unrelated memo edit.
     # Payee and memo are per-leg for the same reason.
-    if peer is not None and payload.amount_cents is not None:
+    if peer is not None and amount_changed:
         peer.amount_cents = -payload.amount_cents
 
     # Validated against the *finalized* account/category/amount above, since a
@@ -978,22 +994,33 @@ async def update_transaction(
 async def _delete_transactions_cascading(
     db, user_id: int, txns: list[Transaction]
 ) -> list[Transaction]:
-    """Expands the given owned transactions to include any transfer peers not
-    already in the set, tombstones bank-imported legs, and deletes
-    everything. Returns every leg actually deleted. Caller commits."""
+    """Expands the given owned transactions to include any manually entered
+    transfer peers not already in the set, tombstones bank-imported legs, and
+    deletes everything. Returns every leg actually deleted. Caller commits.
+
+    A bank-imported peer the caller did not ask for is unlinked and kept, not
+    deleted: it records what the bank really did, and deleting it would
+    tombstone it so no sync could ever bring it back, leaving that account's
+    balance permanently off the bank's.
+    """
     legs_by_id: dict[int, Transaction] = {txn.id: txn for txn in txns}
+    surviving_imported_peers: list[Transaction] = []
     for txn in txns:
-        # Half a transfer is never a meaningful record: drop the pair.
-        if txn.transfer_peer_id is not None and txn.transfer_peer_id not in legs_by_id:
-            peer = await db.get(Transaction, txn.transfer_peer_id)
-            if peer is not None:
-                legs_by_id[peer.id] = peer
+        if txn.transfer_peer_id is None or txn.transfer_peer_id in legs_by_id:
+            continue
+        peer = await db.get(Transaction, txn.transfer_peer_id)
+        if peer is None:
+            continue
+        if peer.is_bank_imported:
+            surviving_imported_peers.append(peer)
+        else:
+            legs_by_id[peer.id] = peer
     legs = list(legs_by_id.values())
 
     # Break the links first so neither delete trips the other's foreign key.
-    for leg in legs:
+    for leg in [*legs, *surviving_imported_peers]:
         leg.transfer_peer_id = None
-    if legs:
+    if legs or surviving_imported_peers:
         await db.flush()
 
     # Tombstone bank-imported rows so the next sync doesn't mistake "the user
@@ -1009,6 +1036,11 @@ async def _delete_transactions_cascading(
             )
     for leg in legs:
         await db.delete(leg)
+    if surviving_imported_peers:
+        # Flushed first so the deleted legs can't be offered as a match.
+        await db.flush()
+        for peer in surviving_imported_peers:
+            await sync_candidates_for(db, user_id, peer.id)
     return legs
 
 

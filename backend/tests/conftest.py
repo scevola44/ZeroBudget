@@ -21,14 +21,14 @@ from collections.abc import AsyncIterator  # noqa: E402
 
 import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
-from sqlalchemy import event  # noqa: E402
+from sqlalchemy import event, select, update  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.db import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import *  # noqa: F401,F403,E402
-from app.models import Scope  # noqa: E402 — named import for the helpers below
+from app.models import DeletedExternalTransaction, Scope, Transaction  # noqa: E402 — named imports for the helpers below
 
 
 def _enable_sqlite_fks(dbapi_connection, _connection_record) -> None:
@@ -195,3 +195,21 @@ async def list_transactions(
     r = await client.get("/api/transactions", params=params, headers=headers)
     assert r.status_code == 200, r.text
     return r.json()["items"]
+
+
+async def mark_as_bank_imported(txn_id: int) -> None:
+    """The API cannot create bank-imported rows, so give an existing one an external id."""
+    async for session in app.dependency_overrides[get_db]():
+        await session.execute(
+            update(Transaction)
+            .where(Transaction.id == txn_id)
+            .values(external_transaction_id=f"test:{txn_id}")
+        )
+        await session.commit()
+
+
+async def tombstoned_external_ids() -> set[str]:
+    async for session in app.dependency_overrides[get_db]():
+        result = await session.execute(select(DeletedExternalTransaction.external_transaction_id))
+        return set(result.scalars().all())
+    return set()

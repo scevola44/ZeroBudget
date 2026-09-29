@@ -263,6 +263,27 @@ async def _import_opening_balance(
     )
 
 
+async def _keep_transfer_peer_consistent(
+    db: AsyncSession, user_id: int, leg: Transaction
+) -> None:
+    """Reconcile a transfer's other leg after the bank changed ``leg``'s amount.
+
+    The legs must stay equal and opposite. A manually entered peer just follows
+    the bank. A bank-imported peer has an amount of its own that we can't
+    rewrite, so the pair is unlinked instead and left for the user to re-link.
+    """
+    peer = await db.get(Transaction, leg.transfer_peer_id)
+    if peer is None:
+        return
+    if not peer.is_bank_imported:
+        peer.amount_cents = -leg.amount_cents
+        return
+    leg.transfer_peer_id = None
+    peer.transfer_peer_id = None
+    await db.flush()
+    await sync_candidates_for(db, user_id, peer.id)
+
+
 async def _load_category_rules(db: AsyncSession, user_id: int) -> list[CategoryRule]:
     result = await db.execute(
         select(PayeeCategoryRule)
@@ -453,8 +474,11 @@ async def sync_connection(
             elif existing.date != txn_date or existing.amount_cents != amount_cents:
                 # Preserve user-owned fields (category_id, memo, payee_id).
                 # Update only what the bank authoritatively owns.
+                amount_changed = existing.amount_cents != amount_cents
                 existing.date = txn_date
                 existing.amount_cents = amount_cents
+                if amount_changed and existing.transfer_peer_id is not None:
+                    await _keep_transfer_peer_consistent(db, connection.user_id, existing)
                 await sync_candidates_for(db, connection.user_id, existing.id)
                 summary.modified += 1
                 touched.add(existing.account_id)
