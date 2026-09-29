@@ -532,3 +532,99 @@ async def test_yesterdays_runs_do_not_count_today(db_session):
     await db_session.flush()
 
     assert await runs_today(db_session) == 0
+
+
+async def _linked_pair(
+    db: AsyncSession,
+    user: User,
+    imported_account: Account,
+    *,
+    peer_is_bank_imported: bool,
+) -> tuple[Transaction, Transaction]:
+    """A -500 transfer leg the sync owns, linked to a +500 leg in a manual account."""
+    savings = Account(
+        user_id=user.id, name="Savings", type="savings", scope_id=imported_account.scope_id
+    )
+    db.add(savings)
+    await db.flush()
+    imported_leg = Transaction(
+        user_id=user.id,
+        account_id=imported_account.id,
+        date=date(2026, 7, 1),
+        amount_cents=-500,
+        external_transaction_id=f"{imported_account.id}:ref-1",
+    )
+    peer = Transaction(
+        user_id=user.id,
+        account_id=savings.id,
+        date=date(2026, 7, 1),
+        amount_cents=500,
+        external_transaction_id=f"{savings.id}:ref-9" if peer_is_bank_imported else None,
+    )
+    db.add_all([imported_leg, peer])
+    await db.flush()
+    imported_leg.transfer_peer_id = peer.id
+    peer.transfer_peer_id = imported_leg.id
+    await db.flush()
+    return imported_leg, peer
+
+
+@pytest.mark.asyncio
+async def test_bank_revising_a_transfer_leg_updates_the_manual_peer(db_session):
+    user, connection, account = await _seed(db_session)
+    imported_leg, peer = await _linked_pair(
+        db_session, user, account, peer_is_bank_imported=False
+    )
+    client = FakeBankingClient(
+        transactions_by_uid={"uid_1": [_txn("5.05", "DBIT", booking_date="2026-07-01")]}
+    )
+
+    summary = await sync_connection(db_session, connection, client)
+
+    assert summary.modified == 1
+    await db_session.refresh(imported_leg)
+    await db_session.refresh(peer)
+    assert imported_leg.amount_cents == -505
+    assert peer.amount_cents == 505
+    assert imported_leg.transfer_peer_id == peer.id
+    assert peer.transfer_peer_id == imported_leg.id
+
+
+@pytest.mark.asyncio
+async def test_bank_revising_a_leg_paired_with_another_bank_row_unlinks_the_pair(db_session):
+    user, connection, account = await _seed(db_session)
+    imported_leg, peer = await _linked_pair(
+        db_session, user, account, peer_is_bank_imported=True
+    )
+    client = FakeBankingClient(
+        transactions_by_uid={"uid_1": [_txn("5.05", "DBIT", booking_date="2026-07-01")]}
+    )
+
+    await sync_connection(db_session, connection, client)
+
+    await db_session.refresh(imported_leg)
+    await db_session.refresh(peer)
+    assert imported_leg.amount_cents == -505
+    assert peer.amount_cents == 500
+    assert imported_leg.transfer_peer_id is None
+    assert peer.transfer_peer_id is None
+
+
+@pytest.mark.asyncio
+async def test_bank_moving_a_transfer_legs_date_leaves_the_peer_alone(db_session):
+    user, connection, account = await _seed(db_session)
+    imported_leg, peer = await _linked_pair(
+        db_session, user, account, peer_is_bank_imported=False
+    )
+    client = FakeBankingClient(
+        transactions_by_uid={"uid_1": [_txn("5.00", "DBIT", booking_date="2026-07-03")]}
+    )
+
+    await sync_connection(db_session, connection, client)
+
+    await db_session.refresh(imported_leg)
+    await db_session.refresh(peer)
+    assert imported_leg.date == date(2026, 7, 3)
+    assert peer.date == date(2026, 7, 1)
+    assert peer.amount_cents == 500
+    assert imported_leg.transfer_peer_id == peer.id

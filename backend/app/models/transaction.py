@@ -64,3 +64,8 @@ class Transaction(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+    @property
+    def is_bank_imported(self) -> bool:
+        """The bank is the source of truth for this row's amount and existence."""
+        return self.external_transaction_id is not None
