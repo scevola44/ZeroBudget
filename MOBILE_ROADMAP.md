@@ -72,9 +72,32 @@ blocker, the Enable Banking redirect risk, and most of the open decisions.
 
 ## Current state
 
-Not started. No `mobile/` directory, no `packages/` directory, and no monorepo
-wiring exists yet — `frontend/package.json` is still the only `package.json` in
-the repository.
+**Phase 0 is implemented but not yet released** (this paragraph should become
+"shipped in vX.Y.Z" once it is). `packages/core` (`@zerobudget/core`) exists and
+`frontend/` imports from it; the lockfile lives at the repo root. There is still
+no `mobile/` directory.
+
+What Phase 0 actually moved, where it differs from the plan above:
+
+- **Moved:** the API client and the seven `api/` modules, the OpenAPI-generated
+  types, the domain helpers in `lib/` (with their tests), `useScopes`, the query
+  keys, and the YNAB parsers (now with tests).
+- **Not moved, despite the lists above:** `budgetAvailability` was split — the
+  state logic is in core, the Tailwind class mapping stayed in `frontend/`
+  (it returned Tailwind strings, so "all of `lib/` except the palettes" was not
+  platform-free). `useCountdown`/`useDebouncedValue` stay in `frontend/`; only
+  the pure `secondsRemaining` moved.
+- **The shared TanStack Query hook layer does not exist yet.** Almost all
+  queries and mutations are inlined in pages and components (none were in
+  `api/`), so there was nothing to lift. Extract them per screen as Phases 2-3
+  need them rather than up front; only the query-key constants and `useScopes`
+  live in core today.
+- **No TypeScript project references** — core is consumed as source through its
+  `exports` map, which Vite and `tsc` resolve directly.
+- **Refresh tokens are rotated and used by the web client**, not just issued:
+  access tokens last 60 minutes, refresh tokens 90 days (sliding), and the shared
+  client does single-flight 401 → refresh → retry. Phase 1 therefore only needs
+  to supply a secure-storage `TokenStore`.
 
 ---
 
