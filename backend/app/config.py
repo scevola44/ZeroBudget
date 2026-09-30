@@ -15,7 +15,11 @@ class Settings(BaseSettings):
     # JWT signing. Override in prod via env var.
     jwt_secret: str = "dev-secret-change-me"
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 60 * 24 * 7  # one week
+    # Access tokens are short-lived; clients renew them with a refresh token.
+    jwt_expire_minutes: int = 60
+    # Sliding: every rotation issues a fresh token with a full lifetime, so only
+    # a client idle for this long is logged out.
+    refresh_token_expire_days: int = 90
 
     # Where the built SPA lives when running the production image.
     # Unset/empty in dev: the frontend is served by Vite instead.

@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -13,6 +15,7 @@ settings = get_settings()
 # at the edge (min length is enforced by Pydantic, max length 72 bytes in
 # register/login flows).
 _BCRYPT_MAX_BYTES = 72
+REFRESH_TOKEN_BYTES = 32
 
 
 def _encode_password(plain: str) -> bytes:
@@ -40,6 +43,26 @@ def create_access_token(user_id: int) -> str:
         "exp": int((now + timedelta(minutes=settings.jwt_expire_minutes)).timestamp()),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def access_token_lifetime_seconds() -> int:
+    return settings.jwt_expire_minutes * 60
+
+
+def refresh_token_lifetime() -> timedelta:
+    return timedelta(days=settings.refresh_token_expire_days)
+
+
+def generate_refresh_token() -> str:
+    # Opaque rather than a JWT: it is only ever looked up by hash, so it cannot
+    # be mistaken for an access token and needs no signature.
+    return secrets.token_urlsafe(REFRESH_TOKEN_BYTES)
+
+
+def hash_refresh_token(token: str) -> str:
+    # Plain SHA-256 (not bcrypt): the token is 256 bits of randomness, so there
+    # is nothing to brute-force, and it is hashed on every refresh request.
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def decode_access_token(token: str) -> int:

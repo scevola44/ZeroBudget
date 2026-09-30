@@ -66,15 +66,23 @@ async def client() -> AsyncIterator[AsyncClient]:
     await engine.dispose()
 
 
-async def register_user(
+async def register_tokens(
     client: AsyncClient, email: str = "user@example.com", password: str = "supersecret"
-) -> dict[str, str]:
-    """Register a user and return an Authorization header dict."""
+) -> dict[str, object]:
+    """Register a user and return the full token response body."""
     r = await client.post(
         "/api/auth/register", json={"email": email, "password": password}
     )
     assert r.status_code == 201, r.text
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+    return r.json()
+
+
+async def register_user(
+    client: AsyncClient, email: str = "user@example.com", password: str = "supersecret"
+) -> dict[str, str]:
+    """Register a user and return an Authorization header dict."""
+    tokens = await register_tokens(client, email, password)
+    return {"Authorization": f"Bearer {tokens['access_token']}"}
 
 
 PERSONAL = "Personal"

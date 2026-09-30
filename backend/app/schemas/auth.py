@@ -11,9 +11,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
+    # Seconds until access_token expires, so clients can renew before a 401.
+    expires_in: int
 
 
 class UserResponse(BaseModel):
