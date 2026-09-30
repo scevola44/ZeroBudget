@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.base import ResponseModel
+
 GoalKind = Literal["monthly", "yearly", "target_date"]
 
 
@@ -89,7 +91,7 @@ class CategoryResponse(BaseModel):
     goal_target_month: date | None
 
 
-class CategoryGroupResponse(BaseModel):
+class CategoryGroupResponse(ResponseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int

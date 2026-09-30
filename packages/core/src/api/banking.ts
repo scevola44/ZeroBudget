@@ -2,67 +2,18 @@
 // pages can import from one place.
 
 import { api } from "./client";
+import type { components } from "../generated/schema";
 
-export type Aspsp = {
-  name: string;
-  country: string;
-  logo: string | null;
-};
+type Schemas = components["schemas"];
 
-export type BankConnection = {
-  id: number;
-  aspsp_name: string;
-  aspsp_country: string;
-  valid_until: string | null;
-  last_synced_at: string | null;
-  last_error_code: string | null;
-};
-
-export type ConnectResponse = {
-  authorization_url: string;
-  state: string;
-};
-
-export type SkippedAccount = {
-  name: string;
-  reason: string;
-};
-
-export type ConnectionSyncResult = {
-  connection_id: number;
-  aspsp_name: string;
-  added: number;
-  modified: number;
-  skipped_pending: number;
-  skipped_non_eur: number;
-  skipped_unknown_account: number;
-  skipped_unparseable_date: number;
-  skipped_deleted: number;
-  error_code: string | null;
-  touched_account_ids: number[];
-};
-
-export type SyncStatus = {
-  mode: "manual" | "auto";
-  max_per_day: number;
-  used_today: number;
-  remaining_today: number;
-  last_run_at: string | null;
-  next_auto_sync_at: string | null;
-};
-
-export type GlobalSyncResponse = {
-  status: "ok" | "partial" | "error";
-  connections: ConnectionSyncResult[];
-  quota: SyncStatus;
-};
-
-export type CallbackResponse = {
-  connection: BankConnection;
-  account_ids: number[];
-  skipped_accounts: SkippedAccount[];
-  sync: ConnectionSyncResult;
-};
+export type Aspsp = Schemas["AspspResponse"];
+export type BankConnection = Schemas["BankConnectionResponse"];
+export type ConnectResponse = Schemas["ConnectResponse"];
+export type SkippedAccount = Schemas["SkippedAccount"];
+export type ConnectionSyncResult = Schemas["ConnectionSyncResult"];
+export type SyncStatus = Schemas["SyncStatusResponse"];
+export type GlobalSyncResponse = Schemas["GlobalSyncResponse"];
+export type CallbackResponse = Schemas["CallbackResponse"];
 
 export const bankingApi = {
   listAspsps: () => api<Aspsp[]>("/api/banking/aspsps"),

@@ -8,7 +8,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "gen:types": "openapi-typescript openapi.json -o src/generated/schema.d.ts"
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5.59.0",
@@ -16,6 +17,7 @@
   },
   "devDependencies": {
     "@types/react": "^18.3.11",
+    "openapi-typescript": "^7.13.0",
     "typescript": "^5.6.3",
     "vitest": "^2.1.3"
   }

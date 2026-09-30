@@ -106,7 +106,12 @@
           "id",
           "name",
           "type",
-          "scope_id"
+          "scope_id",
+          "balance_cents",
+          "closed",
+          "bank_connection_id",
+          "bank_account_mask",
+          "institution_name"
         ],
         "title": "AccountResponse",
         "type": "object"
@@ -188,7 +193,8 @@
         },
         "required": [
           "name",
-          "country"
+          "country",
+          "logo"
         ],
         "title": "AspspResponse",
         "type": "object"
@@ -637,7 +643,8 @@
           "id",
           "name",
           "sort_order",
-          "scope_id"
+          "scope_id",
+          "categories"
         ],
         "title": "CategoryGroupResponse",
         "type": "object"
@@ -1121,6 +1128,7 @@
           "skipped_unknown_account",
           "skipped_unparseable_date",
           "skipped_deleted",
+          "error_code",
           "touched_account_ids"
         ],
         "title": "ConnectionSyncResult",
@@ -1682,6 +1690,10 @@
             "type": "integer"
           }
         },
+        "required": [
+          "deleted_transactions",
+          "deleted_assignments"
+        ],
         "title": "ResetResponse",
         "type": "object"
       },
@@ -2012,6 +2024,7 @@
         "required": [
           "access_token",
           "refresh_token",
+          "token_type",
           "expires_in"
         ],
         "title": "TokenResponse",
@@ -2179,7 +2192,8 @@
           }
         },
         "required": [
-          "items"
+          "items",
+          "next_cursor"
         ],
         "title": "TransactionPage",
         "type": "object"
@@ -2279,8 +2293,12 @@
           "cleared",
           "date",
           "payee",
+          "payee_id",
           "memo",
-          "amount_cents"
+          "amount_cents",
+          "transfer_peer_id",
+          "transfer_peer_account_id",
+          "splits"
         ],
         "title": "TransactionResponse",
         "type": "object"

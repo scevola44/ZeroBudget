@@ -46,6 +46,10 @@ jobs:
         run: npm ci
       - name: Unit tests
         run: npm test
+      - name: Generated API types are up to date
+        run: |
+          npm run gen:types -w @zerobudget/core
+          git diff --exit-code -- packages/core/src/generated
       - name: Type-check core
         run: npm run typecheck -w @zerobudget/core
       - name: Type-check + build

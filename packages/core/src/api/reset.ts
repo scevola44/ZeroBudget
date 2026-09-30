@@ -1,11 +1,10 @@
+import type { components } from "../generated/schema";
 import { api } from "./client";
 
-export type ResetOption = "transactions" | "assignments";
+type Schemas = components["schemas"];
 
-export type ResetResult = {
-  deleted_transactions: number;
-  deleted_assignments: number;
-};
+export type ResetOption = Schemas["ResetOption"];
+export type ResetResult = Schemas["ResetResponse"];
 
 export const resetApi = {
   reset: (options: ResetOption[]) =>

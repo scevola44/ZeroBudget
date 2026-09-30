@@ -2,8 +2,10 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.base import ResponseModel
 
-class AspspResponse(BaseModel):
+
+class AspspResponse(ResponseModel):
     name: str
     country: str
     logo: str | None = None
@@ -41,7 +43,7 @@ class BankConnectionResponse(BaseModel):
     last_error_code: str | None
 
 
-class ConnectionSyncResult(BaseModel):
+class ConnectionSyncResult(ResponseModel):
     connection_id: int
     aspsp_name: str
     added: int

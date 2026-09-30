@@ -2,6 +2,8 @@ from datetime import date as DateType
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.base import ResponseModel
+
 
 class TransactionSplitInput(BaseModel):
     category_id: int | None = None
@@ -47,7 +49,7 @@ class TransactionUpdate(BaseModel):
     splits: list[TransactionSplitInput] | None = None
 
 
-class TransactionResponse(BaseModel):
+class TransactionResponse(ResponseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -150,7 +152,7 @@ class BulkSetCategoryResponse(BaseModel):
     updated: int
 
 
-class TransactionPage(BaseModel):
+class TransactionPage(ResponseModel):
     items: list[TransactionResponse]
     # Present when more rows exist past this page; pass back as ``cursor`` to
     # fetch the next one. None when this page reached the end (or the caller

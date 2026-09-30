@@ -1,8 +1,13 @@
-// Shapes that mirror the FastAPI Pydantic responses. These are hand-written
-// for the skeleton; later we can codegen from the OpenAPI schema.
+import type { components } from "../generated/schema";
 
-export type User = { id: number; email: string };
+// Aliases over the types generated from the backend's OpenAPI schema
+// (`npm run gen:types -w @zerobudget/core`), so call sites keep short names.
+// Do not hand-write response shapes here: change the backend and regenerate.
+type Schemas = components["schemas"];
 
+export type User = Schemas["UserResponse"];
+
+// The backend accepts any string; these are just the values the UI offers.
 export type AccountType = "checking" | "savings" | "cash" | "credit" | "loan" | string;
 
 export const MANUAL_ACCOUNT_TYPES: { value: string; label: string }[] = [
@@ -15,275 +20,51 @@ export const MANUAL_ACCOUNT_TYPES: { value: string; label: string }[] = [
 
 // A budget pool. Users create, rename and delete their own; the two a new
 // account starts with ("Personal", "Family") are seeds, not fixed values.
-// `sort_order` is both the display order and the palette slot — see
-// lib/scopeColors.ts.
-export type Scope = { id: number; name: string; sort_order: number };
+// `sort_order` is both the display order and the palette slot.
+export type Scope = Schemas["ScopeResponse"];
 
-export type Account = {
-  id: number;
-  name: string;
-  type: AccountType;
-  scope_id: number;
-  balance_cents: number;
-  closed: boolean;
-  bank_connection_id: number | null;
-  bank_account_mask: string | null;
-  institution_name: string | null;
-};
+export type Account = Schemas["AccountResponse"];
 
-export type GoalKind = "monthly" | "yearly" | "target_date";
+export type GoalKind = Schemas["CategoryResponse"]["goal_kind"];
+export type Category = Schemas["CategoryResponse"];
+export type CategoryGroup = Schemas["CategoryGroupResponse"];
 
-export type Category = {
-  id: number;
-  group_id: number;
-  name: string;
-  sort_order: number;
-  goal_kind: GoalKind;
-  goal_amount_cents: number;
-  goal_target_month: string | null; // ISO "YYYY-MM-DD", first-of-month
-};
-
-export type CategoryGroup = {
-  id: number;
-  name: string;
-  sort_order: number;
-  scope_id: number;
-  categories: Category[];
-};
-
-export type TransactionSplit = {
-  id: number;
-  category_id: number | null;
-  amount_cents: number;
-  memo: string;
-};
-
-export type Transaction = {
-  id: number;
-  account_id: number;
-  category_id: number | null;
-  // Deliberately uncategorized: its purpose is only to move Ready to Assign
-  // (a balance reconcile, a paycheck), not to await a category. Never true
-  // together with a non-null category_id.
-  is_ready_to_assign: boolean;
-  // Whether the user has reviewed this row (YNAB's "cleared"). Independent of
-  // category_id — a payee rule or bank sync can already have guessed a
-  // category, but that's not the same as the user having confirmed it.
-  cleared: boolean;
-  date: string;
-  // Denormalized display name — resolved server-side from payee_id, the same
-  // way transfer_peer_account_id is denormalized from transfer_peer_id.
-  payee: string;
-  payee_id: number | null;
-  memo: string;
-  amount_cents: number;
-  // Set on both legs of a transfer, each pointing at the other.
-  transfer_peer_id: number | null;
-  // The account holding the other leg, for labelling transfer rows.
-  transfer_peer_account_id: number | null;
-  // Non-empty means this transaction is split across categories; category_id
-  // is then always null at the parent level — see SplitEditor.
-  splits: TransactionSplit[];
-};
+export type TransactionSplit = Schemas["TransactionSplitResponse"];
+export type Transaction = Schemas["TransactionResponse"];
 
 /** GET /api/transactions' response envelope: a page of rows plus a cursor to
  * fetch the next one, when there is one. */
-export type TransactionPage = {
-  items: Transaction[];
-  next_cursor: string | null;
-};
+export type TransactionPage = Schemas["TransactionPage"];
 
-export type Payee = { id: number; name: string };
+export type Payee = Schemas["PayeeResponse"];
+export type PayeeCategoryRule = Schemas["PayeeCategoryRuleResponse"];
 
-export type PayeeCategoryRule = {
-  id: number;
-  category_id: number;
-  contains_text: string;
-  sort_order: number;
-};
+export type Transfer = Schemas["TransferResponse"];
+export type TransferCandidate = Schemas["TransferCandidate"];
+export type TransferSuggestion = Schemas["TransferSuggestion"];
+export type PayeeTransferSuggestion = Schemas["PayeeTransferSuggestion"];
 
-export type Transfer = {
-  from_transaction: Transaction;
-  to_transaction: Transaction;
-};
+export type BudgetCategoryRow = Schemas["BudgetCategoryRow"];
+export type BudgetGroupRow = Schemas["BudgetGroupRow"];
+export type ScopeReadyToAssign = Schemas["ScopeReadyToAssign"];
+export type BudgetMonth = Schemas["BudgetMonthResponse"];
+export type FundGoalsEntry = Schemas["FundGoalsEntryResponse"];
+export type FundGoalsPreview = Schemas["FundGoalsPreviewResponse"];
 
-// A transaction that could be the other leg of one being linked.
-export type TransferCandidate = {
-  transaction: Transaction;
-  // Signed, relative to the transaction being linked: -2 means two days earlier.
-  date_offset_days: number;
-};
+export type InsightsPeriod = Schemas["InsightsPeriod"];
+export type CategorySpendingRow = Schemas["CategorySpendingRow"];
+export type GroupSpendingRow = Schemas["GroupSpendingRow"];
+export type ScopeBreakdown = Schemas["ScopeBreakdown"];
+export type ScopeSplitRow = Schemas["ScopeSplitRow"];
+export type ScopeSplit = Schemas["ScopeSplit"];
+export type SpendingBreakdown = Schemas["SpendingBreakdown"];
+export type MonthFlowRow = Schemas["MonthFlowRow"];
+export type ScopeFlow = Schemas["ScopeFlow"];
+export type CategoryTrendRow = Schemas["CategoryTrendRow"];
+export type OverspendFlag = CategoryTrendRow["flags"][number];
+export type ScopeOverspending = Schemas["ScopeOverspending"];
+export type Overspending = Schemas["Overspending"];
+export type Insights = Schemas["InsightsResponse"];
 
-// Two imported rows that look like the two halves of one transfer. Always a
-// suggestion — the user confirms before anything is linked.
-export type TransferSuggestion = {
-  outflow: Transaction;
-  inflow: Transaction;
-};
-
-// A row whose payee names another (unsynced) account of the user's. Always a
-// suggestion — confirming it creates the missing leg there.
-export type PayeeTransferSuggestion = {
-  transaction: Transaction;
-  to_account_id: number;
-  to_account_name: string;
-};
-
-export type BudgetCategoryRow = {
-  id: number;
-  name: string;
-  assigned_cents: number;
-  activity_cents: number;
-  balance_cents: number;
-  goal_kind: GoalKind;
-  goal_amount_cents: number;
-  goal_target_month: string | null;
-  needed_this_month_cents: number | null;
-};
-
-export type BudgetGroupRow = {
-  id: number;
-  name: string;
-  scope_id: number;
-  categories: BudgetCategoryRow[];
-};
-
-export type ScopeReadyToAssign = {
-  scope_id: number;
-  ready_to_assign_cents: number;
-};
-
-export type BudgetMonth = {
-  month: string;
-  // One entry per scope, in the user's own scope order.
-  ready_to_assign: ScopeReadyToAssign[];
-  groups: BudgetGroupRow[];
-};
-
-export type FundGoalsEntry = {
-  category_id: number;
-  category_name: string;
-  // Full suggested amount vs. what will actually be assigned — differ when
-  // the scope's Ready to Assign ran out partway through the plan.
-  needed_cents: number;
-  amount_cents: number;
-};
-
-export type FundGoalsPreview = {
-  scope_id: number;
-  ready_to_assign_cents: number;
-  entries: FundGoalsEntry[];
-  total_amount_cents: number;
-};
-
-export type InsightsPeriod = {
-  start_month: string;
-  end_month: string;
-  month_count: number;
-  baseline_start_month: string;
-  baseline_end_month: string;
-};
-
-export type CategorySpendingRow = {
-  category_id: number;
-  name: string;
-  group_id: number;
-  group_name: string;
-  spent_cents: number;
-  refund_cents: number;
-  activity_cents: number;
-};
-
-export type GroupSpendingRow = {
-  group_id: number;
-  name: string;
-  spent_cents: number;
-  sort_index: number;
-};
-
-export type ScopeBreakdown = {
-  scope_id: number;
-  total_spent_cents: number;
-  groups: GroupSpendingRow[];
-  categories: CategorySpendingRow[];
-};
-
-export type ScopeSplitRow = {
-  scope_id: number;
-  spent_cents: number;
-};
-
-export type ScopeSplit = {
-  scopes: ScopeSplitRow[];
-  total_spent_cents: number;
-};
-
-export type SpendingBreakdown = {
-  scope_split: ScopeSplit;
-  scopes: ScopeBreakdown[];
-};
-
-export type MonthFlowRow = {
-  month: string;
-  income_cents: number;
-  spent_cents: number;
-  refund_cents: number;
-  net_cents: number;
-};
-
-export type ScopeFlow = {
-  scope_id: number;
-  income_cents: number;
-  spent_cents: number;
-  refund_cents: number;
-  net_cents: number;
-  months: MonthFlowRow[];
-};
-
-export type OverspendFlag =
-  | "spent_above_usual"
-  | "assigned_above_usual"
-  | "new_spending"
-  | "available_negative";
-
-export type CategoryTrendRow = {
-  category_id: number;
-  name: string;
-  group_name: string;
-  assigned_cents: number;
-  expected_assigned_cents: number | null;
-  assigned_delta_cents: number | null;
-  assigned_delta_pct: number | null;
-  spent_cents: number;
-  expected_spent_cents: number | null;
-  spent_delta_cents: number | null;
-  spent_delta_pct: number | null;
-  baseline_month_count: number;
-  has_baseline: boolean;
-  worst_balance_cents: number;
-  worst_balance_month: string | null;
-  flags: OverspendFlag[];
-};
-
-export type ScopeOverspending = {
-  scope_id: number;
-  categories: CategoryTrendRow[];
-  on_track_count: number;
-};
-
-export type Insights = {
-  period: InsightsPeriod;
-  breakdown: SpendingBreakdown;
-  income_vs_spending: ScopeFlow[];
-  overspending: Overspending;
-};
-
-export type Overspending = {
-  threshold_pct: number;
-  min_notable_cents: number;
-  min_baseline_months: number;
-  scopes: ScopeOverspending[];
-};
-
-export type YnabImportRow = { group: string; category: string };
-export type YnabImportResponse = { groups_created: number; categories_created: number };
+export type YnabImportRow = Schemas["YnabImportRow"];
+export type YnabImportResponse = Schemas["YnabImportResponse"];

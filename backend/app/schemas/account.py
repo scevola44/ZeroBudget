@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.base import ResponseModel
+
 
 
 class AccountCreate(BaseModel):
@@ -19,7 +21,7 @@ class AccountBalanceUpdate(BaseModel):
     balance_cents: int
 
 
-class AccountResponse(BaseModel):
+class AccountResponse(ResponseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int

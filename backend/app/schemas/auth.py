@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from app.schemas.base import ResponseModel
+
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -15,7 +17,7 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
-class TokenResponse(BaseModel):
+class TokenResponse(ResponseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
