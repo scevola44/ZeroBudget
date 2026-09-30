@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { formatCents, parseAmountToCents } from "../lib/money";
+import { formatCents, parseAmountToCents } from "@zerobudget/core";
 
 export type CoverOverspendingTarget = { id: number; name: string; balanceCents: number };
 export type CoverSourceCandidate = { id: number; name: string; groupName: string; balanceCents: number };

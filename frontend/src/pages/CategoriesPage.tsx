@@ -16,8 +16,7 @@ import {
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-import { api } from "../api/client";
-import { type Category, type CategoryGroup, type GoalKind, type YnabImportRow, type YnabImportResponse } from "../api/types";
+import { api, type Category, type CategoryGroup, formatGoal, type GoalKind, parseAmountToCents, useScopes, type YnabImportResponse, type YnabImportRow } from "@zerobudget/core";
 import { DragHandle } from "../components/DragHandle";
 import { ScopeChip } from "../components/ScopeChip";
 import { ScopeSelect } from "../components/ScopeSelect";
@@ -25,9 +24,6 @@ import { EditGroupModal } from "../components/EditGroupModal";
 import { DeleteGroupConfirmModal } from "../components/DeleteGroupConfirmModal";
 import { DeleteCategoryConfirmModal } from "../components/DeleteCategoryConfirmModal";
 import { YnabImportModal } from "./YnabImportModal";
-import { formatGoal } from "../lib/goal";
-import { parseAmountToCents } from "../lib/money";
-import { useScopes } from "../lib/useScopes";
 
 function SortableGroupHeader({
   group,

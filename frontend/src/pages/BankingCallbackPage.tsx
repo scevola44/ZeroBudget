@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { bankingApi } from "../api/banking";
-import type { CallbackResponse } from "../api/banking";
+import { bankingApi, type CallbackResponse } from "@zerobudget/core";
 
 type CallbackState =
   | { phase: "working" }

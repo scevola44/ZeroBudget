@@ -1,6 +1,5 @@
 import { useRef, useState } from "react";
-import type { CategoryGroup } from "../api/types";
-import type { YnabImportRow } from "../api/types";
+import { type CategoryGroup, type YnabImportRow } from "@zerobudget/core";
 
 type ParsedRow = { group: string; category: string };
 

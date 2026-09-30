@@ -1,12 +1,7 @@
+import { secondsRemaining } from "@zerobudget/core";
 import { useEffect, useState } from "react";
 
 const TICK_MS = 250;
-const MS_PER_SECOND = 1000;
-
-/** Whole seconds still to wait; rounds up so "0" only shows once the wait is truly over. */
-export function secondsRemaining(totalSeconds: number, elapsedMs: number): number {
-  return Math.max(Math.ceil(totalSeconds - elapsedMs / MS_PER_SECOND), 0);
-}
 
 /**
  * Seconds left of ``totalSeconds``, restarting whenever ``isActive`` turns on.

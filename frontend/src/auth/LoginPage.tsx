@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { ApiError } from "../api/client";
+import { ApiError } from "@zerobudget/core";
 import { useAuth } from "./AuthContext";
 
 export function LoginPage() {

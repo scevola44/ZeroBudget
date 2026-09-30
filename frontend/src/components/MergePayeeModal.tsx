@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import type { Payee } from "../api/types";
+import { type Payee } from "@zerobudget/core";
 
 export function MergePayeeModal({
   source,

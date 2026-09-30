@@ -1,0 +1,8 @@
+# Keep the build context small and stop host installs leaking into the image.
+.git
+**/node_modules
+**/dist
+**/__pycache__
+**/*.tsbuildinfo
+backend/.venv
+backend/*.db

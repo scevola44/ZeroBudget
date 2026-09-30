@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
-import { api } from "../api/client";
+import { api } from "@zerobudget/core";
 
 /**
  * All-time count of transactions that still need a category — not just

@@ -1,8 +1,7 @@
+import type { ResetOption } from "@zerobudget/core";
 import { useEffect, useState } from "react";
 
 import { useCountdown } from "../lib/useCountdown";
-
-export type ResetOption = "transactions" | "assignments";
 
 const CONFIRM_DELAY_SECONDS = 5;
 

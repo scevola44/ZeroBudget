@@ -1,5 +1,5 @@
 import { Select } from "./Select";
-import { useScopes } from "../lib/useScopes";
+import { useScopes } from "@zerobudget/core";
 
 export function ScopeSelect({
   value,

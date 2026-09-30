@@ -1,8 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
-import { api, getToken, setToken } from "../api/client";
-import type { User } from "../api/types";
+import { api, getToken, setToken, type User } from "@zerobudget/core";
 
 type AuthState = {
   user: User | null;

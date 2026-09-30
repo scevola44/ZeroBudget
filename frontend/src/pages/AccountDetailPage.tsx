@@ -2,15 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "../api/client";
-import type {
-  Account,
-  BudgetMonth,
-  CategoryGroup,
-  Transaction,
-  TransactionPage,
-  Transfer,
-} from "../api/types";
+import { type Account, api, type BudgetMonth, type CategoryGroup, categorySelectValue, currentMonth, formatCents, parseAmountToCents, parseCategorySelectValue, partitionSuggested, READY_TO_ASSIGN_OPTION_VALUE, todayISO, type Transaction, type TransactionPage, type Transfer, TRANSFER_OPTION_PREFIX, transferTargetId } from "@zerobudget/core";
 import type { CategoryBudgetInfo } from "../components/CategoryPicker";
 import {
   EditTransactionModal,
@@ -19,15 +11,6 @@ import {
 import { LinkTransferModal } from "../components/LinkTransferModal";
 import { PayeeAutocomplete } from "../components/PayeeAutocomplete";
 import { ScopeChip } from "../components/ScopeChip";
-import { partitionSuggested } from "../lib/categorySuggestions";
-import { currentMonth, todayISO } from "../lib/dates";
-import { formatCents, parseAmountToCents } from "../lib/money";
-import {
-  READY_TO_ASSIGN_OPTION_VALUE,
-  categorySelectValue,
-  parseCategorySelectValue,
-} from "../lib/readyToAssignOption";
-import { TRANSFER_OPTION_PREFIX, transferTargetId } from "../lib/transferOption";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
 
 export function AccountDetailPage() {

@@ -1,5 +1,6 @@
 import { api } from "./client";
-import type { ResetOption } from "../components/ResetConfirmModal";
+
+export type ResetOption = "transactions" | "assignments";
 
 export type ResetResult = {
   deleted_transactions: number;

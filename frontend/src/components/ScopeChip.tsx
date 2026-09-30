@@ -1,4 +1,4 @@
-import { useScopes } from "../lib/useScopes";
+import { useScopes } from "@zerobudget/core";
 import { scopeChipClass } from "../lib/scopeColors";
 
 export function ScopeChip({ scopeId }: { scopeId: number }) {
