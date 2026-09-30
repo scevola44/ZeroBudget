@@ -1,7 +1,16 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
-import { api, getToken, setToken, type User } from "@zerobudget/core";
+import {
+  api,
+  hasStoredSession,
+  login as loginRequest,
+  logout as logoutRequest,
+  register as registerRequest,
+  subscribeToSessionExpiry,
+  type User,
+} from "@zerobudget/core";
 
 type AuthState = {
   user: User | null;
@@ -14,20 +23,21 @@ type AuthState = {
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState<boolean>(Boolean(getToken()));
+  const [loading, setLoading] = useState<boolean>(true);
 
   const loadMe = useCallback(async () => {
-    if (!getToken()) {
+    if (!(await hasStoredSession())) {
       setUser(null);
       setLoading(false);
       return;
     }
     try {
-      const me = await api<User>("/api/auth/me");
-      setUser(me);
+      setUser(await api<User>("/api/auth/me"));
     } catch {
-      setToken(null);
+      // A rejected session is already cleared by the client; anything else
+      // (server down) leaves the stored session alone for the next attempt.
       setUser(null);
     } finally {
       setLoading(false);
@@ -38,13 +48,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void loadMe();
   }, [loadMe]);
 
+  const clearSessionState = useCallback(() => {
+    setUser(null);
+    // Cached responses belong to the account that just left.
+    queryClient.clear();
+  }, [queryClient]);
+
+  useEffect(() => subscribeToSessionExpiry(clearSessionState), [clearSessionState]);
+
   const login = useCallback(
     async (email: string, password: string) => {
-      const { access_token } = await api<{ access_token: string }>("/api/auth/login", {
-        method: "POST",
-        body: { email, password },
-      });
-      setToken(access_token);
+      await loginRequest(email, password);
       await loadMe();
     },
     [loadMe],
@@ -52,20 +66,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(
     async (email: string, password: string) => {
-      const { access_token } = await api<{ access_token: string }>("/api/auth/register", {
-        method: "POST",
-        body: { email, password },
-      });
-      setToken(access_token);
+      await registerRequest(email, password);
       await loadMe();
     },
     [loadMe],
   );
 
   const logout = useCallback(() => {
-    setToken(null);
-    setUser(null);
-  }, []);
+    clearSessionState();
+    void logoutRequest();
+  }, [clearSessionState]);
 
   const value = useMemo<AuthState>(
     () => ({ user, loading, login, register, logout }),
