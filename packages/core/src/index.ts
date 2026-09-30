@@ -17,3 +17,6 @@ export * from "./lib/readyToAssignOption";
 export * from "./lib/budgetAvailability";
 export * from "./lib/secondsRemaining";
 export * from "./lib/useScopes";
+export * from "./ynab/categories";
+export * from "./ynab/csv";
+export * from "./ynab/transactions";

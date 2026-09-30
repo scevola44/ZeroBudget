@@ -1,85 +1,12 @@
 import { useRef, useState } from "react";
-import { type CategoryGroup, type YnabImportRow } from "@zerobudget/core";
+import {
+  buildPreview,
+  parseYnabCsv,
+  type CategoryGroup,
+  type PreviewGroup,
+  type YnabImportRow,
+} from "@zerobudget/core";
 
-type ParsedRow = { group: string; category: string };
-
-type PreviewGroup = {
-  name: string;
-  isNew: boolean;
-  categories: Array<{ name: string; isNew: boolean }>;
-};
-
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
-  let i = 0;
-  while (i <= line.length) {
-    if (line[i] === '"') {
-      i++;
-      let field = "";
-      while (i < line.length) {
-        if (line[i] === '"' && line[i + 1] === '"') {
-          field += '"';
-          i += 2;
-        } else if (line[i] === '"') {
-          i++;
-          break;
-        } else {
-          field += line[i++];
-        }
-      }
-      fields.push(field);
-      if (line[i] === ",") i++;
-    } else {
-      let field = "";
-      while (i < line.length && line[i] !== ",") field += line[i++];
-      fields.push(field.trim());
-      if (line[i] === ",") i++;
-    }
-  }
-  return fields;
-}
-
-function parseYnabCsv(text: string): ParsedRow[] {
-  const lines = text.split(/\r?\n/);
-  const rows: ParsedRow[] = [];
-  for (const line of lines.slice(1)) {
-    if (!line.trim()) continue;
-    const cols = parseCsvLine(line);
-    const group = (cols[1] ?? "").trim();
-    const category = (cols[2] ?? "").trim();
-    if (group && category) rows.push({ group, category });
-  }
-  return rows;
-}
-
-function buildPreview(
-  parsed: ParsedRow[],
-  existingGroups: CategoryGroup[]
-): PreviewGroup[] {
-  const existingGroupByName = new Map(existingGroups.map((g) => [g.name, g]));
-
-  const groupMap = new Map<string, PreviewGroup>();
-  for (const row of parsed) {
-    if (!groupMap.has(row.group)) {
-      const existing = existingGroupByName.get(row.group);
-      groupMap.set(row.group, {
-        name: row.group,
-        isNew: !existing,
-        categories: [],
-      });
-    }
-    const previewGroup = groupMap.get(row.group)!;
-    const existingGroup = existingGroupByName.get(row.group);
-    const categoryExists =
-      !!existingGroup &&
-      existingGroup.categories.some((c) => c.name === row.category);
-    if (!previewGroup.categories.some((c) => c.name === row.category)) {
-      previewGroup.categories.push({ name: row.category, isNew: !categoryExists });
-    }
-  }
-
-  return Array.from(groupMap.values());
-}
 
 export function YnabImportModal({
   existingGroups,

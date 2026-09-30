@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 
-import { type Account, api, type BudgetMonth, type CategoryGroup, currentMonth, formatCents, formatDateHeading, type Transaction, type TransactionPage } from "@zerobudget/core";
+import { type Account, api, type BudgetMonth, type CategoryGroup, currentMonth, formatCents, formatDateHeading, type ImportRow, type Transaction, type TransactionPage } from "@zerobudget/core";
 import {
   AddTransactionModal,
   type TransactionCreateInput,
@@ -21,7 +21,7 @@ import { MobileTransactionRow } from "../components/MobileTransactionRow";
 import { TransferSuggestionsBanner } from "../components/TransferSuggestionsBanner";
 import { UnassignedTransactionsIsland } from "../components/UnassignedTransactionsIsland";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
-import { YnabTransactionImportModal, type ImportRow } from "./YnabTransactionImportModal";
+import { YnabTransactionImportModal } from "./YnabTransactionImportModal";
 
 const PAGE_SIZE = 100;
 
