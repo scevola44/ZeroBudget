@@ -26,6 +26,10 @@ type OptionRow = {
 type HeaderRow = { type: "header"; key: string; label: string };
 type Row = OptionRow | HeaderRow;
 
+function transferOptionLabel(account: Account): string {
+  return `Transfer : ${account.name}`;
+}
+
 /**
  * Grouped, searchable replacement for a native `<select>` category field.
  * Needed because per-option coloring (the remaining-budget pill) can't be
@@ -144,7 +148,9 @@ export function CategoryPicker({
     rows.push(...filtered.map(categoryOption));
   }
 
-  const filteredTransferTargets = (transferTargets ?? []).filter((a) => matches(a.name));
+  const filteredTransferTargets = (transferTargets ?? []).filter((a) =>
+    matches(transferOptionLabel(a)),
+  );
   if (filteredTransferTargets.length > 0) {
     rows.push({ type: "header", key: "hdr-transfer", label: "Transfer" });
     rows.push(
@@ -152,7 +158,7 @@ export function CategoryPicker({
         type: "option" as const,
         key: `transfer-${a.id}`,
         value: `${TRANSFER_OPTION_PREFIX}${a.id}`,
-        label: `Transfer : ${a.name}`,
+        label: transferOptionLabel(a),
       })),
     );
   }
@@ -297,7 +303,7 @@ function describeSelectedValue(
   const transferAccountId = transferTargetId(value);
   if (transferAccountId !== null) {
     const account = transferTargets?.find((a) => a.id === transferAccountId);
-    return account ? `Transfer : ${account.name}` : unassignedLabel;
+    return account ? transferOptionLabel(account) : unassignedLabel;
   }
   const category = categories.find((c) => String(c.id) === value);
   return category ? `${category.groupName} › ${category.name}` : unassignedLabel;
