@@ -1,4 +1,4 @@
-import type { Transaction } from "../api/types";
+import { type Transaction } from "@zerobudget/core";
 
 export function BulkDeleteTransactionsConfirmModal({
   selectedTransactions,

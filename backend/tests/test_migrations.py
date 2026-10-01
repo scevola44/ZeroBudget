@@ -192,3 +192,20 @@ def test_downgrade_restores_the_legacy_strings(db_path: Path) -> None:
         assert scope == (LEGACY_SHARED if name.endswith(LEGACY_SHARED) else LEGACY_PERSONAL)
 
     assert fetch_all(db_path, "SELECT name FROM sqlite_master WHERE name = 'scopes'") == []
+
+
+def table_names(db_path: Path) -> set[str]:
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    finally:
+        conn.close()
+    return {name for (name,) in rows}
+
+
+def test_refresh_tokens_migration_upgrades_and_downgrades(db_path: Path) -> None:
+    run_alembic(db_path, "upgrade", "head")
+    assert "refresh_tokens" in table_names(db_path)
+
+    run_alembic(db_path, "downgrade", "0016")
+    assert "refresh_tokens" not in table_names(db_path)

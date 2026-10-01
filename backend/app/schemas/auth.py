@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from app.schemas.base import ResponseModel
+
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -11,9 +13,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class TokenResponse(BaseModel):
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class TokenResponse(ResponseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
+    # Seconds until access_token expires, so clients can renew before a 401.
+    expires_in: int
 
 
 class UserResponse(BaseModel):

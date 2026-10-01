@@ -47,6 +47,9 @@ and the app tells you how much is still waiting to be assigned.
 ```
 backend/       FastAPI app, models, migrations, tests
 frontend/      React + TS Vite app
+packages/core/ @zerobudget/core — API client, generated API types, domain logic
+               and YNAB CSV parsers shared by every TypeScript client
+package.json   npm workspaces root (frontend + packages/core)
 Dockerfile     Prod image: build SPA, bundle it into the FastAPI image
 docker-compose.yml   Local dev: postgres + backend (hot reload) + frontend (Vite)
 fly.toml       Fly.io deployment config
@@ -81,10 +84,11 @@ uvicorn app.main:app --reload
 
 ### Frontend
 
+The JavaScript side is an npm workspace: install once from the repo root.
+
 ```bash
-cd frontend
 npm install
-npm run dev
+npm run dev -w frontend
 ```
 
 ## Running tests
@@ -93,6 +97,20 @@ npm run dev
 cd backend
 pip install -e ".[dev]"
 pytest
+```
+
+```bash
+npm test                                # Vitest in every workspace
+npm run typecheck -w @zerobudget/core
+```
+
+The web app's API types are generated from the backend's OpenAPI schema. After
+changing a route or response schema, refresh the snapshot and the types (CI
+fails if either is stale):
+
+```bash
+cd backend && python -m scripts.dump_openapi
+npm run gen:types -w @zerobudget/core
 ```
 
 The most important test is `tests/test_budget_calc.py`, which pins down the

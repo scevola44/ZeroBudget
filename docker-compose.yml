@@ -42,10 +42,12 @@ services:
     environment:
       VITE_API_PROXY: http://backend:8000
     volumes:
-      - ./frontend:/app
+      # The whole repo, not just ./frontend: the workspace links
+      # @zerobudget/core from ./packages/core.
+      - .:/app
     ports:
       - "5173:5173"
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    command: sh -c "npm install && npm run dev -w frontend -- --host 0.0.0.0"
 
 volumes:
   zerobudget_pgdata:

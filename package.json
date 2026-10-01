@@ -1,0 +1,13 @@
+{
+  "name": "zerobudget",
+  "private": true,
+  "version": "0.13.1-beta.10",
+  "workspaces": [
+    "packages/*",
+    "frontend"
+  ],
+  "scripts": {
+    "test": "npm test --workspaces --if-present",
+    "build": "npm run build -w frontend"
+  }
+}

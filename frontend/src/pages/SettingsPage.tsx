@@ -1,15 +1,10 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "../api/client";
-import { resetApi } from "../api/reset";
-import { PAYEE_RULES_QUERY_KEY, PAYEES_QUERY_KEY, payeeRulesApi, payeesApi } from "../api/payees";
-import { SCOPES_QUERY_KEY, scopesApi } from "../api/scopes";
-import type { CategoryGroup, Payee, Scope } from "../api/types";
+import { api, type CategoryGroup, type Payee, PAYEE_RULES_QUERY_KEY, payeeRulesApi, PAYEES_QUERY_KEY, payeesApi, resetApi, type Scope, SCOPES_QUERY_KEY, scopesApi, useScopes } from "@zerobudget/core";
 import { MergePayeeModal } from "../components/MergePayeeModal";
 import { ResetConfirmModal } from "../components/ResetConfirmModal";
 import { ScopeChip } from "../components/ScopeChip";
-import { useScopes } from "../lib/useScopes";
 
 const CARD_CLASS =
   "bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl";

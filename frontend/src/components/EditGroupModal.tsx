@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { type CategoryGroup } from "../api/types";
+import { type CategoryGroup } from "@zerobudget/core";
 import { ScopeSelect } from "./ScopeSelect";
 
 export function EditGroupModal({

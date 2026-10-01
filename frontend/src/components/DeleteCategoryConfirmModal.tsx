@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { Category } from "../api/types";
+import { type Category } from "@zerobudget/core";
 
 export type ReassignTarget = { id: number; name: string; groupName: string };
 

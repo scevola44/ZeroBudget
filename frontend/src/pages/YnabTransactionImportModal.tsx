@@ -1,113 +1,13 @@
 import { useRef, useState } from "react";
-import type { Account, CategoryGroup } from "../api/types";
-import { formatCents } from "../lib/money";
-
-type ParsedRow = {
-  csvAccount: string;
-  date: string; // YYYY-MM-DD
-  payee: string;
-  categoryGroup: string;
-  category: string;
-  memo: string;
-  amount_cents: number;
-};
-
-export type ImportRow = {
-  account_id: number;
-  category_id: number | null;
-  date: string;
-  payee: string;
-  memo: string;
-  amount_cents: number;
-};
-
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
-  let i = 0;
-  while (i <= line.length) {
-    if (line[i] === '"') {
-      i++;
-      let field = "";
-      while (i < line.length) {
-        if (line[i] === '"' && line[i + 1] === '"') {
-          field += '"';
-          i += 2;
-        } else if (line[i] === '"') {
-          i++;
-          break;
-        } else {
-          field += line[i++];
-        }
-      }
-      fields.push(field);
-      if (line[i] === ",") i++;
-    } else {
-      let field = "";
-      while (i < line.length && line[i] !== ",") field += line[i++];
-      fields.push(field.trim());
-      if (line[i] === ",") i++;
-    }
-  }
-  return fields;
-}
-
-function parseCurrencyToCents(raw: string): number {
-  const stripped = raw.replace(/[^0-9.,]/g, "");
-  if (!stripped) return 0;
-  let normalized: string;
-  if (stripped.includes(".") && stripped.includes(",")) {
-    // "1.234,56" → European format: "." is thousands separator
-    normalized = stripped.replace(/\./g, "").replace(",", ".");
-  } else {
-    normalized = stripped.replace(",", ".");
-  }
-  const value = parseFloat(normalized);
-  return isNaN(value) ? 0 : Math.round(value * 100);
-}
-
-function parseYnabDate(raw: string): string {
-  // "28/07/2026" → "2026-07-28"
-  const parts = raw.split("/");
-  if (parts.length !== 3) return raw;
-  const [day, month, year] = parts;
-  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-}
-
-function parseYnabTransactionCsv(text: string): ParsedRow[] {
-  const lines = text.split(/\r?\n/);
-  const rows: ParsedRow[] = [];
-  for (const line of lines.slice(1)) {
-    if (!line.trim()) continue;
-    const cols = parseCsvLine(line);
-    // Columns: Account[0], Flag[1], Date[2], Payee[3], CatGroupCat[4], CategoryGroup[5], Category[6], Memo[7], Outflow[8], Inflow[9], Cleared[10]
-    const csvAccount = (cols[0] ?? "").trim();
-    const date = parseYnabDate((cols[2] ?? "").trim());
-    const payee = (cols[3] ?? "").trim().slice(0, 255);
-    const categoryGroup = (cols[5] ?? "").trim();
-    const category = (cols[6] ?? "").trim();
-    const memo = (cols[7] ?? "").trim().slice(0, 500);
-    const outflow = parseCurrencyToCents(cols[8] ?? "");
-    const inflow = parseCurrencyToCents(cols[9] ?? "");
-    const amount_cents = inflow - outflow;
-
-    if (!csvAccount || !date) continue;
-    rows.push({ csvAccount, date, payee, categoryGroup, category, memo, amount_cents });
-  }
-  return rows;
-}
-
-function resolveCategoryId(
-  categoryGroup: string,
-  category: string,
-  accountScopeId: number,
-  categoryGroups: CategoryGroup[],
-): number | null {
-  if (!categoryGroup || !category) return null;
-  const group = categoryGroups.find((g) => g.name === categoryGroup);
-  if (!group || group.scope_id !== accountScopeId) return null;
-  const cat = group.categories.find((c) => c.name === category);
-  return cat?.id ?? null;
-}
+import {
+  formatCents,
+  parseYnabTransactionCsv,
+  resolveCategoryId,
+  type Account,
+  type CategoryGroup,
+  type ImportRow,
+  type ParsedTransactionRow,
+} from "@zerobudget/core";
 
 const SKIP_VALUE = "__skip__";
 
@@ -125,7 +25,7 @@ export function YnabTransactionImportModal({
   onClose: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const [parsedRows, setParsedRows] = useState<ParsedRow[] | null>(null);
+  const [parsedRows, setParsedTransactionRows] = useState<ParsedTransactionRow[] | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   // Maps csvAccountName → account_id (string) or SKIP_VALUE
   const [mappings, setMappings] = useState<Record<string, string>>({});
@@ -133,7 +33,7 @@ export function YnabTransactionImportModal({
 
   function handleFile(file: File) {
     setFileError(null);
-    setParsedRows(null);
+    setParsedTransactionRows(null);
     setMappings({});
     setStep(1);
     const reader = new FileReader();
@@ -153,7 +53,7 @@ export function YnabTransactionImportModal({
         initialMappings[name] = match ? String(match.id) : "";
       }
       setMappings(initialMappings);
-      setParsedRows(rows);
+      setParsedTransactionRows(rows);
     };
     reader.readAsText(file);
   }

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import type { Transaction } from "../api/types";
+import { type Transaction } from "@zerobudget/core";
 import { type CategoryBudgetInfo, type CategoryChoice, CategoryPicker } from "./CategoryPicker";
 
 export function BulkSetCategoryModal({

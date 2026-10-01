@@ -1,30 +1,11 @@
 import { useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
-import { api } from "../api/client";
-import type {
-  CategoryTrendRow,
-  Insights,
-  ScopeBreakdown,
-  ScopeFlow,
-  ScopeOverspending,
-  ScopeSplitRow,
-} from "../api/types";
+import { api, type CategoryTrendRow, currentMonth, formatCents, type Insights, monthLabel, monthsInPreset, RANGE_PRESETS, rangeLabel, type RangePreset, resolveRange, type ScopeBreakdown, type ScopeFlow, type ScopeOverspending, type ScopeSplitRow, shiftMonth, shortMonthLabel, useScopes } from "@zerobudget/core";
 
 import { ScopeChip } from "../components/ScopeChip";
 import { OTHER_SERIES_CLASS, seriesClass } from "../lib/chartColors";
 import { scopeBarClass } from "../lib/scopeColors";
-import { useScopes } from "../lib/useScopes";
-import { currentMonth, monthLabel, shiftMonth } from "../lib/dates";
-import type { RangePreset } from "../lib/insightsRange";
-import {
-  RANGE_PRESETS,
-  monthsInPreset,
-  rangeLabel,
-  resolveRange,
-  shortMonthLabel,
-} from "../lib/insightsRange";
-import { formatCents } from "../lib/money";
 
 const CARD_CLASS =
   "bg-white dark:bg-stone-900 border border-stone-200 dark:border-stone-700 rounded-2xl";

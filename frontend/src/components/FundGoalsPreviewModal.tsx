@@ -1,5 +1,4 @@
-import type { FundGoalsPreview } from "../api/types";
-import { formatCents } from "../lib/money";
+import { formatCents, type FundGoalsPreview } from "@zerobudget/core";
 
 export function FundGoalsPreviewModal({
   scopeName,

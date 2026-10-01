@@ -11,6 +11,7 @@ from app.models.category import Category, CategoryGroup
 from app.models.deleted_external_transaction import DeletedExternalTransaction
 from app.models.payee import Payee
 from app.models.payee_category_rule import PayeeCategoryRule
+from app.models.refresh_token import RefreshToken
 from app.models.scope import Scope
 from app.models.sync_run import SyncRun
 from app.models.transaction import Transaction
@@ -28,6 +29,7 @@ __all__ = [
     "MonthlyAssignment",
     "Payee",
     "PayeeCategoryRule",
+    "RefreshToken",
     "Scope",
     "SyncRun",
     "Transaction",

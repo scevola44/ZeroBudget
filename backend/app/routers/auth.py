@@ -1,11 +1,18 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 
 from app.deps import CurrentUser, DbSession
 from app.models import Scope, User
 from app.models.scope import DEFAULT_SCOPE_NAMES
-from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserResponse
-from app.security import create_access_token, hash_password, verify_password
+from app.schemas.auth import (
+    LoginRequest,
+    RefreshRequest,
+    RegisterRequest,
+    TokenResponse,
+    UserResponse,
+)
+from app.security import hash_password, verify_password
+from app.services.refresh_tokens import issue_session, revoke_session, rotate_session
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -29,7 +36,7 @@ async def register(payload: RegisterRequest, db: DbSession) -> TokenResponse:
     )
     await db.commit()
     await db.refresh(user)
-    return TokenResponse(access_token=create_access_token(user.id))
+    return await issue_session(db, user.id)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -39,7 +46,25 @@ async def login(payload: LoginRequest, db: DbSession) -> TokenResponse:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
         )
-    return TokenResponse(access_token=create_access_token(user.id))
+    return await issue_session(db, user.id)
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh(payload: RefreshRequest, db: DbSession) -> TokenResponse:
+    tokens = await rotate_session(db, payload.refresh_token)
+    if tokens is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
+        )
+    return tokens
+
+
+# Authenticated by the refresh token itself: logging out must work after the
+# short-lived access token has already expired.
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(payload: RefreshRequest, db: DbSession) -> Response:
+    await revoke_session(db, payload.refresh_token)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me", response_model=UserResponse)

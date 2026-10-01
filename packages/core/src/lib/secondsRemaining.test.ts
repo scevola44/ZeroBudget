@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { secondsRemaining } from "./useCountdown";
+import { secondsRemaining } from "./secondsRemaining";
 
 describe("secondsRemaining", () => {
   it("starts at the full duration", () => {

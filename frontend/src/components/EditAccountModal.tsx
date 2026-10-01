@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { MANUAL_ACCOUNT_TYPES, type Account } from "../api/types";
+import { type Account, MANUAL_ACCOUNT_TYPES } from "@zerobudget/core";
 import { ScopeSelect } from "./ScopeSelect";
 
 export type AccountEdit = {

@@ -62,7 +62,7 @@ export function PrivacyPage() {
           <li>The bank consent session created by Enable Banking is encrypted at rest in the database.</li>
           <li>Other stored data — your email, transactions, and account details — is stored as plain fields in the database. Protecting the database itself (disk encryption, access control, backup security) is the responsibility of whoever operates your instance.</li>
           <li>Your password is never stored in plain text; it's hashed with bcrypt, which is one-way and can't be reversed to recover your password.</li>
-          <li>After you sign in, your session is a token (JWT) held in your browser's local storage, not a cookie. Anyone with access to your browser's storage on a shared or compromised device could use it until it expires.</li>
+          <li>After you sign in, your session is a pair of tokens (a short-lived access token and a longer-lived refresh token) held in your browser's local storage, not a cookie. Anyone with access to your browser's storage on a shared or compromised device could use them until they expire or you sign out, which revokes the refresh token.</li>
         </ul>
       </LegalSection>
 

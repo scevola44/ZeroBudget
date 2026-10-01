@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { api } from "../api/client";
-import type { Payee } from "../api/types";
+import { api, type Payee } from "@zerobudget/core";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
 
 /**

@@ -1,4 +1,4 @@
-import { type CategoryGroup } from "../api/types";
+import { type CategoryGroup } from "@zerobudget/core";
 
 export function DeleteGroupConfirmModal({
   group,

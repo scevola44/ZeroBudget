@@ -1,5 +1,4 @@
-import { formatCents, parseAmountToCents } from "../lib/money";
-import { computeSplitRemaining } from "../lib/splitRemaining";
+import { computeSplitRemaining, formatCents, parseAmountToCents } from "@zerobudget/core";
 import { type CategoryBudgetInfo, type CategoryChoice, CategoryPicker } from "./CategoryPicker";
 
 export type SplitLineDraft = {

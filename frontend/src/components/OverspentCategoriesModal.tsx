@@ -1,5 +1,5 @@
 import { availablePillClass } from "../lib/budgetAvailability";
-import { formatCents } from "../lib/money";
+import { formatCents } from "@zerobudget/core";
 
 export type OverspentCategoryRow = {
   id: number;

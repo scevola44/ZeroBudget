@@ -2,15 +2,10 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, ApiError } from "../api/client";
-import { bankingApi } from "../api/banking";
-import type { Aspsp, BankConnection, SyncStatus } from "../api/banking";
-import { MANUAL_ACCOUNT_TYPES, type Account } from "../api/types";
+import { type Account, api, ApiError, type Aspsp, type BankConnection, bankingApi, formatCents, MANUAL_ACCOUNT_TYPES, type SyncStatus, useScopes } from "@zerobudget/core";
 import { EditAccountModal, type AccountEdit } from "../components/EditAccountModal";
 import { ScopeChip } from "../components/ScopeChip";
 import { ScopeSelect } from "../components/ScopeSelect";
-import { useScopes } from "../lib/useScopes";
-import { formatCents } from "../lib/money";
 
 const CONSENT_EXPIRY_WARNING_DAYS = 7;
 

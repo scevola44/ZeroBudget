@@ -3,10 +3,14 @@
 # Stage 1 — build the React SPA
 # ---------------------------------------------------------------------------
 FROM node:20-alpine AS frontend
-WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install --no-audit --no-fund
-COPY frontend/ ./
+WORKDIR /app
+# Manifests first so the dependency layer is cached until a package.json changes.
+COPY package.json package-lock.json ./
+COPY frontend/package.json ./frontend/
+COPY packages/core/package.json ./packages/core/
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./frontend/
+COPY packages/core/ ./packages/core/
 RUN npm run build
 
 # ---------------------------------------------------------------------------
