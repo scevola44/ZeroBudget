@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.13.1-beta.10...v0.14.0-beta.10) (2026-10-01)
+
+
+### Features
+
+* add selectable data reset (transactions, assignments) ([#156](https://github.com/scevola44/ZeroBudget/issues/156)) ([59f7c40](https://github.com/scevola44/ZeroBudget/commit/59f7c40f0879526b77d065d13120c92181e7af9e))
+* **auth:** add rotating refresh tokens ([#158](https://github.com/scevola44/ZeroBudget/issues/158)) ([1a741f7](https://github.com/scevola44/ZeroBudget/commit/1a741f73c9a8130558111609527669f88794adf3))
+
 ## [0.13.1-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.13.0-beta.10...v0.13.1-beta.10) (2026-09-29)
 
 
