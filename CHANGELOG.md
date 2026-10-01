@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.14.0-beta.10...v0.14.1-beta.10) (2026-10-01)
+
+
+### Bug Fixes
+
+* let the category picker search find "Transfer" options ([#159](https://github.com/scevola44/ZeroBudget/issues/159)) ([2ffc230](https://github.com/scevola44/ZeroBudget/commit/2ffc2305934955809277f3bbc515cb3dbccb330c))
+
 ## [0.14.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.13.1-beta.10...v0.14.0-beta.10) (2026-10-01)
 
 
