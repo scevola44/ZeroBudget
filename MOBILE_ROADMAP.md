@@ -72,10 +72,11 @@ blocker, the Enable Banking redirect risk, and most of the open decisions.
 
 ## Current state
 
-**Phase 0 is implemented but not yet released** (this paragraph should become
-"shipped in vX.Y.Z" once it is). `packages/core` (`@zerobudget/core`) exists and
-`frontend/` imports from it; the lockfile lives at the repo root. There is still
-no `mobile/` directory.
+**Phases 0 and 1 are implemented but not yet released** (this paragraph should
+become "shipped in vX.Y.Z" once they are). `packages/core` (`@zerobudget/core`)
+exists and both `frontend/` and `mobile/` import from it; the lockfile lives at
+the repo root. See *What Phase 1 actually did* under Phase 1 for where it
+differs from its plan.
 
 What Phase 0 actually moved, where it differs from the plan above:
 
@@ -216,6 +217,49 @@ land on a home screen, backed by real network calls.
 - Killing and relaunching preserves the session via the refresh token.
 - `npm run build`-equivalent typecheck passes for `mobile/` on both platforms in
   CI.
+
+### What Phase 1 actually did
+
+- **Stack:** Expo SDK 57 (React Native 0.86, React 19.2.3), Expo Router with
+  routes in `mobile/src/app/` (the SDK's current convention), NativeWind 4 on
+  Tailwind 3.4 — the web app's Tailwind major.
+- **React 19 everywhere.** SDK 57 requires React 19.2.3, and a hoisted React 18
+  would have put two React copies in the mobile bundle (the shared
+  `@tanstack/react-query` resolves React from the root). The web app was
+  upgraded first, and the root `package.json` `overrides` pins `react`,
+  `react-dom`, `react-native-reanimated` and `react-native-worklets` once for
+  every workspace. Consequence: **the web app's React version now moves with
+  Expo SDK upgrades.**
+- **Server identity.** `/api/health` now returns
+  `{status, service: "zerobudget", version}`; onboarding rejects a reachable
+  server that isn't ZeroBudget, and tells a server that answers without the
+  marker (an older ZeroBudget) to update.
+- **HTTP policy (settled):** HTTPS by default; `http://` only after an explicit
+  "Allow insecure local server" switch. That switch is enforced in the UI —
+  the binary itself allows cleartext (iOS `NSAllowsArbitraryLoads`, Android
+  `usesCleartextTraffic`), which App Review will want justified before any
+  public submission. Self-signed certificates need no app code: trust the CA
+  in the device's settings.
+- **Sessions.** Tokens live in `expo-secure-store`, the server URL in
+  AsyncStorage. Because the iOS Keychain survives an uninstall, a missing
+  server URL at launch means "fresh install" and clears any surviving tokens.
+  Unlike the web app, being offline at launch keeps the session (a "can't
+  reach your server" screen with retry) instead of signing out.
+- **Home screen** shows Ready to Assign per scope for the current month — the
+  first real use of `formatCents` (`Intl.NumberFormat`) and `monthLabel`
+  (`toLocaleString`) on Hermes.
+- **Tests:** Jest (`jest-expo` + React Native Testing Library) in `mobile/`,
+  because component tests can't run under Vitest; core keeps Vitest. Note that
+  jest-expo stubs `fetch`, so tests mock it explicitly.
+- **CI:** `mobile` (typecheck + `expo export` for iOS and Android) and
+  `mobile-android` (`expo prebuild` + `gradlew assembleDebug`). iOS native
+  builds stay on the owner's Mac.
+- **Still owed to an on-device check** (the CI runners and the agent's
+  container can't do these): Hermes `Intl` output on iOS and Android, Keychain
+  persistence across relaunch and reinstall, and the HTTP opt-in against a real
+  LAN server.
+- **Placeholder app identifier** `io.github.scevola44.zerobudget` in
+  `mobile/app.config.ts` — confirm it before Phase 7 registers anything.
 
 ---
 
@@ -400,27 +444,34 @@ the same change as the conversion or CI and the image build go red.
 
 Two smaller ones, both worth confirming early rather than discovering in Phase 2:
 
-4. **`Intl` on Hermes.** `frontend/src/lib/money.ts` formats every amount in the
-   app through `Intl.NumberFormat("en-IE", { currency: "EUR" })`. Hermes' `Intl`
-   coverage differs by platform; Android in particular may need
-   `@formatjs/intl-numberformat`. Verify in Phase 1, not later — every screen
-   depends on it.
-5. **Metro and workspaces.** Metro needs explicit `watchFolders` and
-   `nodeModulesPaths` to resolve a sibling workspace package. Known friction
-   with a documented Expo setup, but it will not work by default.
+4. **`Intl` on Hermes.** `packages/core/src/lib/money.ts` formats every amount
+   in the app through `Intl.NumberFormat("en-IE", { currency: "EUR" })`.
+   Hermes' `Intl` coverage differs by platform; Android in particular may need
+   `@formatjs/intl-numberformat`. *Phase 1 status:* the home screen exercises
+   it, but it can only be confirmed on a device or simulator — add the
+   polyfill only if the output is wrong there.
+5. **Metro and workspaces.** *Resolved in Phase 1:* `expo/metro-config` has
+   configured npm-workspace monorepos automatically since SDK 52, so
+   `metro.config.js` only adds NativeWind. The real hazard turned out to be
+   duplicate packages (React, Reanimated), handled by the root `overrides`.
+6. **The web image's install.** With `mobile` in the workspaces, the
+   `Dockerfile` installs with `--workspace frontend --include-workspace-root`
+   so the Expo toolchain never enters the image build. PR CI doesn't run
+   `docker build` (only pushes to `main`/`develop` do), so check it locally
+   when touching the workspace layout.
 
 ---
 
 ## Open decisions to settle as they come up
 
-1. HTTP/self-signed-certificate policy for self-hosted instances (Phase 1).
-2. Single vs. multiple saved server profiles (Phase 6).
-3. Theme parity vs. a manual toggle (Phase 6).
-4. Mobile versioning relative to `release-please` (Phase 7).
-5. Whether Android graduates to a tested, released target (Phase 7).
+1. Single vs. multiple saved server profiles (Phase 6).
+2. Theme parity vs. a manual toggle (Phase 6).
+3. Mobile versioning relative to `release-please` (Phase 7).
+4. Whether Android graduates to a tested, released target (Phase 7).
 
 Settled here, and recorded so they are not reopened by accident: the framework
 (React Native/Expo), the relationship to `frontend/` (add alongside, shared
 core), the styling approach (NativeWind), the API contract (OpenAPI codegen, not
-hand-written models), and CSV parsing (shared TS, neither reimplemented nor
-moved server-side).
+hand-written models), CSV parsing (shared TS, neither reimplemented nor
+moved server-side), and the HTTP policy (HTTPS by default, explicit opt-in for
+an insecure local server — see Phase 1).

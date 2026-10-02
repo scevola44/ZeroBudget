@@ -7,6 +7,8 @@ type Schemas = components["schemas"];
 
 export type User = Schemas["UserResponse"];
 
+export type HealthResponse = Schemas["HealthResponse"];
+
 // The backend accepts any string; these are just the values the UI offers.
 export type AccountType = "checking" | "savings" | "cash" | "credit" | "loan" | string;
 
