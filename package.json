@@ -4,7 +4,8 @@
   "version": "0.14.1-beta.10",
   "workspaces": [
     "packages/*",
-    "frontend"
+    "frontend",
+    "mobile"
   ],
   "scripts": {
     "test": "npm test --workspaces --if-present",
@@ -12,6 +13,8 @@
   },
   "overrides": {
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "react-native-reanimated": "4.5.1",
+    "react-native-worklets": "0.10.1"
   }
 }

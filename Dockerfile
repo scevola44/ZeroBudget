@@ -8,7 +8,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY frontend/package.json ./frontend/
 COPY packages/core/package.json ./packages/core/
-RUN npm ci --no-audit --no-fund
+# The root lockfile also covers the Expo app in mobile/, which the image never
+# needs: install only the web app and what it depends on (@zerobudget/core).
+RUN npm ci --workspace frontend --include-workspace-root --no-audit --no-fund
 COPY frontend/ ./frontend/
 COPY packages/core/ ./packages/core/
 RUN npm run build

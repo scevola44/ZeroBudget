@@ -38,6 +38,8 @@ and the app tells you how much is still waiting to be assigned.
 
 - **Backend:** FastAPI, SQLAlchemy 2 (async), Alembic, Pydantic v2, JWT auth
 - **Frontend:** React + TypeScript (Vite), React Router, TanStack Query, Tailwind
+- **Mobile (in progress):** Expo / React Native, Expo Router, NativeWind — see
+  [`MOBILE_ROADMAP.md`](./MOBILE_ROADMAP.md)
 - **DB:** PostgreSQL in prod, SQLite for local dev without Docker
 - **Prod packaging:** single multi-stage Dockerfile — FastAPI serves the built
   SPA and the `/api/*` routes from one process (easy free-tier deploy).
@@ -47,9 +49,10 @@ and the app tells you how much is still waiting to be assigned.
 ```
 backend/       FastAPI app, models, migrations, tests
 frontend/      React + TS Vite app
+mobile/        Expo (React Native) app that connects to any ZeroBudget server
 packages/core/ @zerobudget/core — API client, generated API types, domain logic
                and YNAB CSV parsers shared by every TypeScript client
-package.json   npm workspaces root (frontend + packages/core)
+package.json   npm workspaces root (frontend + mobile + packages/core)
 Dockerfile     Prod image: build SPA, bundle it into the FastAPI image
 docker-compose.yml   Local dev: postgres + backend (hot reload) + frontend (Vite)
 fly.toml       Fly.io deployment config
@@ -86,14 +89,29 @@ uvicorn app.main:app --reload
 
 The JavaScript side is an npm workspace: install once from the repo root.
 React is pinned once for every workspace, by the root `package.json`
-`overrides`, to the exact version the upcoming Expo mobile app's SDK requires —
-two React copies in one bundle break hooks. Bump it only together with an Expo
-SDK upgrade.
+`overrides`, to the exact version the mobile app's Expo SDK requires — two
+React copies in one bundle break hooks. Bump it only together with an Expo SDK
+upgrade.
 
 ```bash
 npm install
 npm run dev -w frontend
 ```
+
+### Mobile app
+
+The Expo app lives in `mobile/` and shares `@zerobudget/core` with the web app.
+On first launch it asks for your server's address (e.g. `budget.example.com`)
+and checks it via `/api/health` before showing sign-in.
+
+```bash
+npm install
+npm run start -w zerobudget-mobile   # scan the QR code with Expo Go, or press i for the iOS Simulator
+```
+
+A phone can't reach `localhost`: point it at your machine's LAN address
+(e.g. `http://192.168.1.20:8000`, with **Allow insecure local server** switched
+on, since a local backend has no TLS) and start uvicorn with `--host 0.0.0.0`.
 
 ## Running tests
 
@@ -104,8 +122,9 @@ pytest
 ```
 
 ```bash
-npm test                                # Vitest in every workspace
+npm test                                # Vitest (web, core) and Jest (mobile)
 npm run typecheck -w @zerobudget/core
+npm run typecheck -w zerobudget-mobile
 ```
 
 The web app's API types are generated from the backend's OpenAPI schema. After
