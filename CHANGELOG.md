@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.14.1-beta.10...v0.15.0-beta.10) (2026-10-02)
+
+
+### Features
+
+* **api:** identify ZeroBudget in the health check ([#162](https://github.com/scevola44/ZeroBudget/issues/162)) ([478e962](https://github.com/scevola44/ZeroBudget/commit/478e9629c6aef1a2d5279f2b4253f068c2f1e491))
+
 ## [0.14.1-beta.10](https://github.com/scevola44/ZeroBudget/compare/v0.14.0-beta.10...v0.14.1-beta.10) (2026-10-01)
 
 
