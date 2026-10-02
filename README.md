@@ -85,6 +85,10 @@ uvicorn app.main:app --reload
 ### Frontend
 
 The JavaScript side is an npm workspace: install once from the repo root.
+React is pinned once for every workspace, by the root `package.json`
+`overrides`, to the exact version the upcoming Expo mobile app's SDK requires —
+two React copies in one bundle break hooks. Bump it only together with an Expo
+SDK upgrade.
 
 ```bash
 npm install
