@@ -27,6 +27,7 @@ from app.routers import (
     scopes,
     transactions,
 )
+from app.schemas.health import HealthResponse
 from app.services.banking_client import get_banking_client
 from app.services.sync_scheduler import scheduler_loop
 
@@ -112,8 +113,8 @@ app.include_router(reset.router)
 
 
 @app.get("/api/health", tags=["health"])
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health() -> HealthResponse:
+    return HealthResponse(status="ok", service="zerobudget", version=app.version)
 
 
 # ---------------------------------------------------------------------------
